@@ -3,6 +3,8 @@ from typing import Optional
 import os
 import sqlite3
 
+from .pictures import Pictures
+
 
 class Vault:
     """
@@ -26,6 +28,7 @@ class Vault:
             self.set_metadata("image_root", image_root)
         if description:
             self.set_metadata("description", description)
+        self.pictures = Pictures(self.connection)
 
     def __repr__(self):
         return f"Vault(db_path='{self.db_path}')"
@@ -35,12 +38,34 @@ class Vault:
         Create initial tables in the database. Extend as needed.
         """
         cursor = self.connection.cursor()
-        cursor.execute("""
+        # Metadata table
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-        """)
+            """
+        )
+        # Pictures table
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pictures (
+                id TEXT PRIMARY KEY,
+                file_path TEXT NOT NULL,
+                character_id TEXT,
+                title TEXT,
+                description TEXT,
+                tags TEXT,
+                width INTEGER,
+                height INTEGER,
+                format TEXT,
+                created_at TEXT,
+                quality TEXT,
+                thumbnail BLOB
+            )
+            """
+        )
         self.connection.commit()
 
     def set_metadata(self, key: str, value: str):
