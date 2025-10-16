@@ -42,7 +42,7 @@ class Picture:
         self.height = height
         self.format = format
         self.created_at = created_at
-        self.thumbnail_array = thumbnail  # NumPy array (H, W, C), dtype=uint8
+        self._thumbnail_array = thumbnail  # NumPy array (H, W, C), dtype=uint8
         self.quality = PictureQuality()
 
     @property
@@ -51,9 +51,22 @@ class Picture:
         Returns a PIL Image object for the thumbnail, or None if not available.
         """
         try:
-            if self.thumbnail_array is None:
-                self.thumbnail_array = self.generate_thumbnail().toarray()
-            return Image.fromarray(self.thumbnail_array)
+            if self._thumbnail_array is None:
+                self._thumbnail_array = np.array(self.generate_thumbnail())
+            return Image.fromarray(self._thumbnail_array)
+        except Exception as e:
+            logger.error(f"Error getting thumbnail: {e}")
+            return None
+
+    @property
+    def thumbnail_array(self) -> Optional[np.ndarray]:
+        """
+        Returns a NumPy array for the thumbnail, or None if not available.
+        """
+        try:
+            if self._thumbnail_array is None:
+                self._thumbnail_array = np.array(self.generate_thumbnail())
+            return self._thumbnail_array
         except Exception as e:
             logger.error(f"Error getting thumbnail: {e}")
             return None
@@ -74,7 +87,7 @@ class Picture:
         """
         try:
             image = Image.open(self.file_path)
-            self.quality = PictureQuality.calculate_metrics(image.toarray())
+            self.quality = np.array(PictureQuality.calculate_metrics(image))
         except Exception as e:
             logger.error(f"Error calculating quality metrics: {e}")
 

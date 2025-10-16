@@ -74,7 +74,7 @@ class Pictures:
                 getattr(picture, "format", None),
                 getattr(picture, "created_at", None),
                 quality_json,
-                getattr(picture, "thumbnail", None),
+                getattr(picture, "thumbnail_array", None),
             ),
         )
         self.connection.commit()
