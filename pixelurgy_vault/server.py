@@ -60,7 +60,6 @@ class Server:
                     "id": pic.id,
                     "file_path": pic.file_path,
                     "character_id": pic.character_id,
-                    "title": pic.title,
                     "description": pic.description,
                     "tags": pic.tags,
                     "width": pic.width,
@@ -81,7 +80,6 @@ class Server:
         def import_picture(
             file_path: str = Body(...),
             character_id: str = Body(...),
-            title: str = Body(...),
             description: str = Body(None),
             tags: list = Body(None),
         ):
@@ -90,7 +88,7 @@ class Server:
             # Destination folder: image_root/character_id
             dest_folder = os.path.join(self.vault.get_image_root(), character_id)
             os.makedirs(dest_folder, exist_ok=True)
-            dest_filename = f"{title}{ext}"
+            dest_filename = f"{os.path.splitext(os.path.basename(file_path))[0]}{ext}"
             dest_path = os.path.join(dest_folder, dest_filename)
             shutil.copy2(file_path, dest_path)
             # Calculate width, height, and format automatically
@@ -101,7 +99,6 @@ class Server:
             pic = Picture(
                 file_path=dest_path,
                 character_id=character_id,
-                title=title,
                 description=description,
                 tags=tags,
                 width=width,
@@ -119,7 +116,6 @@ class Server:
                     "id": pic.id,
                     "file_path": pic.file_path,
                     "character_id": pic.character_id,
-                    "title": pic.title,
                     "description": pic.description,
                     "tags": pic.tags,
                     "width": pic.width,

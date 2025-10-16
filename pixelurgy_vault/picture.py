@@ -14,7 +14,6 @@ class Picture:
         self,
         file_path: str,
         character_id: Optional[str] = None,
-        title: Optional[str] = None,
         description: Optional[str] = None,
         tags: Optional[List[str]] = None,
         width: Optional[int] = None,
@@ -26,7 +25,6 @@ class Picture:
         self.id = str(uuid.uuid4())  # Unique ID not tied to path
         self.file_path = file_path  # Path to image file on disk
         self.character_id = character_id  # Reference to Character
-        self.title = title
         self.description = description
         self.tags = tags or []
         self.width = width
