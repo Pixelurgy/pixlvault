@@ -45,6 +45,7 @@ class Vault:
             pic = Picture(
                 file_path=logo_dest,
                 character_id="logo",
+                title="Logo",
                 description="Vault Logo",
                 tags=["logo"],
                 format="png",
@@ -76,6 +77,7 @@ class Vault:
                 id TEXT PRIMARY KEY,
                 file_path TEXT NOT NULL,
                 character_id TEXT,
+                title TEXT,
                 description TEXT,
                 tags TEXT,
                 width INTEGER,

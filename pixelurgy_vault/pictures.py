@@ -16,18 +16,19 @@ class Pictures:
             raise KeyError(f"Picture with id {picture_id} not found.")
         tags = json.loads(row[5]) if row[5] else []
         quality = None
-        if row[9]:
-            quality = PictureQuality(**json.loads(row[9]))
+        if row[10]:
+            quality = PictureQuality(**json.loads(row[10]))
         pic = Picture(
             file_path=row[1],
             character_id=row[2],
-            description=row[3],
+            title=row[3],
+            description=row[4],
             tags=tags,
-            width=row[5],
-            height=row[6],
-            format=row[7],
-            created_at=row[8],
-            thumbnail=row[10],
+            width=row[6],
+            height=row[7],
+            format=row[8],
+            created_at=row[9],
+            thumbnail=row[11],
         )
         pic.id = row[0]
         pic.quality = quality
@@ -60,13 +61,14 @@ class Pictures:
         cursor.execute(
             """
             INSERT INTO pictures (
-                id, file_path, character_id, description, tags, width, height, format, created_at, quality, thumbnail
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, file_path, character_id, title, description, tags, width, height, format, created_at, quality, thumbnail
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 picture.id,
                 picture.file_path,
                 getattr(picture, "character_id", None),
+                getattr(picture, "title", None),
                 getattr(picture, "description", None),
                 tags_json,
                 getattr(picture, "width", None),
@@ -110,7 +112,8 @@ class Pictures:
             pic = Picture(
                 file_path=row[1],
                 character_id=row[2],
-                description=row[3],
+                title=row[3],
+                description=row[4],
                 tags=tags,
                 width=row[4],
                 height=row[5],
