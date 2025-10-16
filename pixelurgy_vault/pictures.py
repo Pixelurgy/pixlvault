@@ -76,10 +76,18 @@ class Pictures:
                 getattr(picture, "format", None),
                 getattr(picture, "created_at", None),
                 quality_json,
-                getattr(picture, "thumbnail", None),
+                getattr(picture, "thumbnail_array", None),
             ),
         )
         self.connection.commit()
+
+    def contains(self, picture):
+        """
+        Check if a Picture with the same id exists in the database.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT 1 FROM pictures WHERE id = ?", (picture.id,))
+        return cursor.fetchone() is not None
 
     def find(self, **kwargs):
         """
@@ -107,11 +115,11 @@ class Pictures:
                 title=row[3],
                 description=row[4],
                 tags=tags,
-                width=row[6],
-                height=row[7],
-                format=row[8],
-                created_at=row[9],
-                thumbnail=row[11],
+                width=row[4],
+                height=row[5],
+                format=row[6],
+                created_at=row[7],
+                thumbnail=row[10],
             )
             pic.id = row[0]
             pic.quality = quality

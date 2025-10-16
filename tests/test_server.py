@@ -1,9 +1,159 @@
+import time
+import os
+import tempfile
+import numpy as np
+from PIL import Image
+import pytest
 from fastapi.testclient import TestClient
-from pixelurgy_vault.server import app
+from pixelurgy_vault.server import Server
+
+
+def test_post_logo_altered_pixel_upload():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        vault_path = os.path.join(temp_dir, "vault.db")
+        image_root = os.path.join(temp_dir, "images")
+        os.makedirs(image_root, exist_ok=True)
+        server = Server(vault_db_path=vault_path, image_root=image_root)
+        client = TestClient(server.app)
+        logo_path = os.path.join(os.path.dirname(__file__), "../Logo.png")
+        img = Image.open(logo_path).convert("RGBA")
+        arr = np.array(img)
+        arr[0, 0] = [255, 0, 0, 255]  # Red pixel
+        altered_img = Image.fromarray(arr)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            altered_img.save(tmp.name)
+            tmp_path = tmp.name
+        with open(tmp_path, "rb") as f:
+            files = {"image": ("altered_logo.png", f, "image/png")}
+            data = {
+                "character_id": "test",
+                "description": "altered pixel",
+                "tags": "[]",
+            }
+            r = client.post("/pictures", files=files, data=data)
+        os.remove(tmp_path)
+        assert r.status_code == 200
+        resp = r.json()
+        assert resp.get("status") == "success"
+        assert resp.get("id")
+        assert resp.get("file_path")
+
+
+def test_benchmark_add_100_images_by_path():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        vault_path = os.path.join(temp_dir, "vault.db")
+        image_root = os.path.join(temp_dir, "images")
+        os.makedirs(image_root, exist_ok=True)
+        server = Server()
+        server.vault.db_path = vault_path
+        server.vault.image_root = image_root
+        client = TestClient(server.app)
+        # Create 100 random images
+        image_paths = []
+        total_bytes = 0
+        for i in range(100):
+            arr = np.random.randint(0, 256, (1024, 1024, 3), dtype=np.uint8)
+            img = Image.fromarray(arr)
+            img_path = os.path.join(temp_dir, f"image_{i:04d}.png")
+            img.save(img_path)
+            image_paths.append(img_path)
+            total_bytes += os.path.getsize(img_path)
+        start = time.time()
+        for i, img_path in enumerate(image_paths):
+            json_data = {
+                "file_path": img_path,
+                "character_id": "bench",
+                "description": f"benchmark image {i}",
+                "tags": [],
+            }
+            r = client.post("/pictures", data=json_data)
+            assert r.status_code == 200
+            resp = r.json()
+            assert resp.get("status") == "success"
+            assert resp.get("id")
+            assert resp.get("file_path")
+        end = time.time()
+        print(
+            f"Path Benchmark: Added 100 images in {end - start:.2f} seconds or {total_bytes / (end - start) / 1024 / 1024:.2f} MB/s"
+        )
+
+
+def test_benchmark_add_100_images_by_binary_upload():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        vault_path = os.path.join(temp_dir, "vault.db")
+        image_root = os.path.join(temp_dir, "images")
+        os.makedirs(image_root, exist_ok=True)
+        server = Server()
+        server.vault.db_path = vault_path
+        server.vault.image_root = image_root
+        client = TestClient(server.app)
+        # Create 100 random images
+        images = []
+        total_bytes = 0
+        for i in range(100):
+            arr = np.random.randint(0, 256, (1024, 1024, 3), dtype=np.uint8)
+            img = Image.fromarray(arr)
+            img_path = os.path.join(temp_dir, f"image_{i:04d}.png")
+            total_bytes += img.size[0] * img.size[1] * 3  # Rough estimate of bytes)
+        start = time.time()
+        for i, img in enumerate(images):
+            json_data = {
+                "image": img,
+                "character_id": "bench",
+                "description": f"benchmark image {i}",
+                "tags": [],
+            }
+            r = client.post("/pictures", data=json_data)
+            assert r.status_code == 200
+            resp = r.json()
+            assert resp.get("status") == "success"
+            assert resp.get("id")
+            assert resp.get("file_path")
+        end = time.time()
+        print(
+            f"Path Benchmark: Added 100 images in {end - start:.2f} seconds or {total_bytes / (end - start) / 1024 / 1024:.2f} MB/s"
+        )
+
+
+def test_post_logo_altered_pixel_path():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        vault_path = os.path.join(temp_dir, "vault.db")
+        image_root = os.path.join(temp_dir, "images")
+        os.makedirs(image_root, exist_ok=True)
+        server = Server(vault_db_path=vault_path, image_root=image_root)
+        client = TestClient(server.app)
+        logo_path = os.path.join(os.path.dirname(__file__), "../Logo.png")
+        img = Image.open(logo_path).convert("RGBA")
+        arr = np.array(img)
+        arr[0, 1] = [0, 255, 0, 255]  # Green pixel
+        altered_img = Image.fromarray(arr)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            altered_img.save(tmp.name)
+            tmp_path = tmp.name
+        json_data = {
+            "file_path": tmp_path,
+            "character_id": "test",
+            "description": "altered pixel path",
+            "tags": [],
+        }
+        r = client.post("/pictures", data=json_data)
+        os.remove(tmp_path)
+        assert r.status_code == 200
+        resp = r.json()
+        assert resp.get("status") == "success"
+        assert resp.get("id")
+        assert resp.get("file_path")
 
 
 def test_read_root():
-    client = TestClient(app)
-    response = client.get("/")
-    assert response.status_code == 200
-    assert response.json() == {"message": "Pixelurgy Vault REST API"}
+    with tempfile.TemporaryDirectory() as temp_dir:
+        vault_path = os.path.join(temp_dir, "vault.db")
+        image_root = os.path.join(temp_dir, "images")
+        server = Server(vault_db_path=vault_path, image_root=image_root)
+        client = TestClient(server.app)
+        response = client.get("/")
+        assert response.status_code == 200
+        assert response.json() == {
+            "message": "Pixelurgy Vault REST API",
+            "version": "0.1.0",
+        }

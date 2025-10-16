@@ -1,5 +1,6 @@
-from fastapi import FastAPI, Body, Query
+from fastapi import Body, FastAPI, File, Form, Request, UploadFile, Query
 from fastapi.responses import FileResponse
+
 import uvicorn
 import os
 import json
@@ -15,8 +16,11 @@ CONFIG_FILENAME = "config.json"
 
 
 class Server:
-    def __init__(self):
+    def __init__(self, vault_db_path=None, image_root=None, description=None):
         self.config = self.init_config()
+        self.config["db_path"] = vault_db_path or self.config.get("db_path")
+        self.config["image_root"] = image_root or self.config.get("image_root")
+        self.config["description"] = description or self.config.get("description")
         self.vault = Vault(
             db_path=self.config["db_path"],
             image_root=self.config["image_root"],
@@ -78,21 +82,53 @@ class Server:
             return FileResponse(favicon_path)
 
         @self.app.post("/pictures")
-        def import_picture(
-            file_path: str = Body(...),
-            character_id: str = Body(...),
-            title: str = Body(...),
+        async def import_picture(
+            request: Request,
+            file_path: str = Body(None),
+            character_id: str = Body(None),
+            title: str = Body(None),
             description: str = Body(None),
             tags: list = Body(None),
+            image: UploadFile = File(None),
+            character_id_form: str = Form(None),
+            description_form: str = Form(None),
+            tags_form: str = Form(None),
         ):
-            # Determine extension
-            ext = os.path.splitext(file_path)[1]
-            # Destination folder: image_root/character_id
-            dest_folder = os.path.join(self.vault.get_image_root(), character_id)
-            os.makedirs(dest_folder, exist_ok=True)
-            dest_filename = f"{title}{ext}"
-            dest_path = os.path.join(dest_folder, dest_filename)
-            shutil.copy2(file_path, dest_path)
+            if character_id is None and character_id_form is None:
+                return {"error": "character_id is required"}
+
+            # Detect content type and dispatch
+            content_type = request.headers.get("content-type", "")
+            if content_type.startswith("multipart/form-data") and image is not None:
+                # Handle image upload
+                ext = os.path.splitext(image.filename)[1]
+                character_id = (
+                    character_id_form if character_id is None else character_id
+                )
+                description = description_form if description is None else description
+                tags = json.loads(tags_form) if tags_form else []
+                print("TAGS:", tags, "CHARACTER_ID:", character_id)
+                dest_folder = os.path.join(self.vault.get_image_root(), character_id)
+                os.makedirs(dest_folder, exist_ok=True)
+                dest_filename = (
+                    f"{os.path.splitext(os.path.basename(image.filename))[0]}{ext}"
+                )
+                dest_path = os.path.join(dest_folder, dest_filename)
+                with open(dest_path, "wb") as f:
+                    f.write(await image.read())
+            elif file_path:
+                # Handle file path string
+                ext = os.path.splitext(file_path)[1]
+                dest_folder = os.path.join(self.vault.get_image_root(), character_id)
+                os.makedirs(dest_folder, exist_ok=True)
+                dest_filename = (
+                    f"{os.path.splitext(os.path.basename(file_path))[0]}{ext}"
+                )
+                dest_path = os.path.join(dest_folder, dest_filename)
+                shutil.copy2(file_path, dest_path)
+            else:
+                return {"error": "No image or file_path provided"}
+
             # Calculate width, height, and format automatically
             with Image.open(dest_path) as img:
                 width, height = img.size
@@ -149,3 +185,6 @@ class Server:
 if __name__ == "__main__":
     server = Server()
     uvicorn.run(server.app, host="127.0.0.1", port=8765)
+
+# Expose FastAPI app for testing
+app = Server().app
