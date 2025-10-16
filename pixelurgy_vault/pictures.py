@@ -79,6 +79,14 @@ class Pictures:
         )
         self.connection.commit()
 
+    def contains(self, picture):
+        """
+        Check if a Picture with the same id exists in the database.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT 1 FROM pictures WHERE id = ?", (picture.id,))
+        return cursor.fetchone() is not None
+
     def find(self, **kwargs):
         """
         Find and return a list of Picture objects matching all provided attribute=value pairs.
@@ -102,13 +110,13 @@ class Pictures:
             pic = Picture(
                 file_path=row[1],
                 character_id=row[2],
-                description=row[4],
+                description=row[3],
                 tags=tags,
-                width=row[6],
-                height=row[7],
-                format=row[8],
-                created_at=row[9],
-                thumbnail=row[11],
+                width=row[4],
+                height=row[5],
+                format=row[6],
+                created_at=row[7],
+                thumbnail=row[10],
             )
             pic.id = row[0]
             pic.quality = quality
