@@ -1,3 +1,4 @@
+import uuid
 from typing import List, Tuple
 
 
@@ -8,17 +9,20 @@ class Character:
 
     def __init__(
         self,
+        id: str,
         trigger_word: str,
         original_seed: int,
         original_prompt: str,
         lora_model_paths: List[Tuple[str, float]],
     ):
         """
+        :param id: Unique identifier for the character
         :param trigger_word: Unique ID or keyword for the character
         :param original_seed: Seed used for original generation
         :param original_prompt: Prompt used for original generation
         :param lora_model_paths: List of tuples (model_path, fractional_ranking)
         """
+        self.id = id if id else uuid.uuid4().hex
         self.trigger_word = trigger_word
         self.original_seed = original_seed
         self.original_prompt = original_prompt
