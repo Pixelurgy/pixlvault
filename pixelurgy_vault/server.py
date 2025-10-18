@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import Body, FastAPI, File, Form, Request, UploadFile, Query
 from fastapi.responses import FileResponse
 
@@ -42,7 +43,6 @@ class Server:
             description (str, optional): Vault description.
             log_file (str, optional): Path to the log file (or None for stdout).
         """
-        print (f"Loading log file from {log_file}")
         self.config = self.init_config(config_path, vault_db_path, image_root, description, log_file)
         # Override config values with explicit arguments
         if vault_db_path is not None:
@@ -61,8 +61,16 @@ class Server:
             image_root=self.config["image_root"],
             description=self.config["description"],
         )
-        self.app = FastAPI()
+        self.app = FastAPI(lifespan=self.lifespan)
         self.setup_routes()
+
+    @asynccontextmanager
+    async def lifespan(self, app):
+        # Startup logic (if needed)
+        yield
+        # Shutdown logic
+        if hasattr(self, "vault"):
+            self.vault.close()
 
     def init_config(self, config_path=CONFIG_PATH, vault_db_path=None, image_root=None, description="Pixelurgy Vault default configuration", log_file=None):
         """
@@ -79,6 +87,7 @@ class Server:
                 "image_root": image_root or os.path.join(config_dir, "images"),
                 "description": description,
                 "log_file": log_file,
+                "port": 9537,
             }   
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=2)
@@ -90,7 +99,7 @@ class Server:
 
     def setup_routes(self):
         """
-        Set up all FastAPI routes for the application.
+        Set up all FastAPI routes for the application and register shutdown cleanup.
         """
 
         @self.app.get("/characters")

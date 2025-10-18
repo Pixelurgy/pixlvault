@@ -18,6 +18,14 @@ logger = get_logger(__name__)
 
 
 class Vault:
+    def close(self):
+        """
+        Cleanly close the vault, including stopping background workers and closing DB connection.
+        """
+        if hasattr(self, 'iterations') and hasattr(self.iterations, 'stop_quality_worker'):
+            self.iterations.stop_quality_worker()
+        if hasattr(self, 'connection') and self.connection:
+            self.connection.close()
     """
     Represents a vault for storing images and metadata.
 
@@ -68,6 +76,7 @@ class Vault:
         self.characters = Characters(self.connection)
         if not db_exists:
             self._import_default_data()
+        self.iterations.start_quality_worker()
 
     def __repr__(self):
         """

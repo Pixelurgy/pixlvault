@@ -26,12 +26,33 @@ class PictureQuality:
     def calculate_metrics(image: np.ndarray) -> "PictureQuality":
         """
         Calculate objective metrics from a NumPy image array.
+        Logs timing for each metric calculation.
         """
+        import time
+        timings = {}
+
+        t0 = time.time()
         sharpness = PictureQuality._calculate_sharpness(image)
+        timings['sharpness'] = time.time() - t0
+
+        t0 = time.time()
         edge_density = PictureQuality._calculate_edge_density(image)
+        timings['edge_density'] = time.time() - t0
+
+        t0 = time.time()
         contrast = PictureQuality._calculate_contrast(image)
+        timings['contrast'] = time.time() - t0
+
+        t0 = time.time()
         brightness = PictureQuality._calculate_brightness(image)
+        timings['brightness'] = time.time() - t0
+
+        t0 = time.time()
         noise_level = PictureQuality._calculate_noise_level(image)
+        timings['noise_level'] = time.time() - t0
+
+        print(f"PictureQuality.calculate_metrics timings: {timings}")
+
         return PictureQuality(
             sharpness=sharpness,
             edge_density=edge_density,
@@ -71,12 +92,22 @@ class PictureQuality:
 
     @staticmethod
     def _calculate_noise_level(image: np.ndarray) -> float:
-        # Simple noise estimate: difference between image and median-filtered image
+        # Optimized: grayscale and quarter resolution
         from scipy.ndimage import median_filter
+        import cv2
 
+        # Convert to grayscale
         if image.ndim == 3:
-            diff = np.abs(image - median_filter(image, size=(3, 3, 1)))
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         else:
-            diff = np.abs(image - median_filter(image, size=3))
+            gray = image
+
+        # Downscale to quarter resolution
+        h, w = gray.shape
+        gray_small = cv2.resize(gray, (w // 2, h // 2), interpolation=cv2.INTER_AREA)
+
+        # Apply median filter
+        filtered = median_filter(gray_small, size=3)
+        diff = np.abs(gray_small - filtered)
         noise = diff.mean() / 255.0
         return min(noise, 1.0)
