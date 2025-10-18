@@ -58,6 +58,7 @@ def test_esmeralda_vault_character_and_logo():
         assert img_resp.content == logo_bytes, (
             "EsmeraldaVault's picture does not match Logo.png"
         )
+        server.vault.close()  # Ensure cleanup before temp_dir is deleted
 
 
 def test_create_and_get_default_character():
@@ -91,6 +92,7 @@ def test_create_and_get_default_character():
         assert char["id"] == char_id
         assert char["name"] == char_name
         assert char["description"] == char_desc
+        server.vault.close()  # Ensure cleanup before temp_dir is deleted
 
 
 def test_upload_iteration_to_existing_picture():
@@ -148,6 +150,7 @@ def test_upload_iteration_to_existing_picture():
         it3 = r5.json()
         assert it3["picture_id"] == picture_id
         assert it3["transform_metadata"] == '{"filter":"blur"}'
+        server.vault.close()  # Ensure cleanup before temp_dir is deleted
 
 TEST_SIZE = 50
 random_images = []
@@ -192,6 +195,7 @@ def test_post_logo_altered_pixel_upload():
         assert resp["results"][0]["status"] == "success"
         assert resp["results"][0]["picture_id"]
         assert resp["results"][0]["iteration_id"]
+        server.vault.close()  # Ensure cleanup before temp_dir is deleted
 
 
 def test_post_logo_altered_pixel_path():
@@ -222,6 +226,7 @@ def test_post_logo_altered_pixel_path():
         assert "results" in resp
         assert resp["results"][0]["status"] == "success"
         assert resp["results"][0]["picture_id"]
+        server.vault.close()  # Ensure cleanup before temp_dir is deleted
 
 
 def test_read_root():
@@ -237,6 +242,7 @@ def test_read_root():
             "message": "Pixelurgy Vault REST API",
             "version": expected_version,
         }
+        server.vault.close()  # Ensure cleanup before temp_dir is deleted
 
 
 def test_benchmark_add_images_by_binary_upload():
@@ -275,6 +281,7 @@ def test_benchmark_add_images_by_binary_upload():
             img_resp = client.get(f"/pictures/{pic_id}")
             assert img_resp.status_code == 200
             assert img_resp.content[:1024] == random_images[check_idx][:1024]
+        server.vault.close()  # Ensure cleanup before temp_dir is deleted
 
 
 def test_benchmark_add_images_by_path():
@@ -322,6 +329,7 @@ def test_benchmark_add_images_by_path():
             with open(image_paths[check_idx], "rb") as f:
                 image = f.read()
             assert img_resp.content[:1024] == image[:1024]
+        server.vault.close()  # Ensure cleanup before temp_dir is deleted
 
 
 def test_benchmark_add_images_by_directory():
@@ -372,3 +380,4 @@ def test_benchmark_add_images_by_directory():
             with open(os.path.join(image_path, file_name), "rb") as f:
                 image = f.read()
             assert img_resp.content[:1024] == image[:1024]
+        server.vault.close()  # Ensure cleanup before temp_dir is deleted

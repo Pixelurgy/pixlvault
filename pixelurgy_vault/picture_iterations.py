@@ -1,3 +1,5 @@
+import threading
+from pixelurgy_vault.logging import get_logger
 import json
 from pixelurgy_vault.picture_iteration import PictureIteration
 from pixelurgy_vault.picture_quality import PictureQuality
@@ -6,6 +8,51 @@ import time
 
 
 class PictureIterations:
+    def start_quality_worker(self, interval=1):
+        if hasattr(self, '_quality_worker') and self._quality_worker.is_alive():
+            return
+        self._quality_worker_stop = threading.Event()
+        self._quality_worker = threading.Thread(target=self._quality_worker_loop, args=(interval,), daemon=True)
+        self._quality_worker.start()
+
+    def stop_quality_worker(self):
+        if hasattr(self, '_quality_worker_stop'):
+            self._quality_worker_stop.set()
+        if hasattr(self, '_quality_worker'):
+            self._quality_worker.join(timeout=5)  # Wait for thread to exit
+
+    def _quality_worker_loop(self, interval):
+        import numpy as np
+        from PIL import Image
+        logger = get_logger(__name__)
+        while not self._quality_worker_stop.is_set():
+            try:
+                cursor = self.connection.cursor()
+                cursor.execute("SELECT id, file_path FROM picture_iterations WHERE quality IS NULL")
+                rows = cursor.fetchall()
+                logger.info(f"Quality worker found {len(rows)} iterations needing quality calculation.")
+                for row in rows:
+                    logger.info(f"Doing row {row}")
+                    if self._quality_worker_stop.is_set():
+                        break
+                    logger.info("Checked stop event for iteration")
+                    it_id, file_path = row
+                    try:
+                        logger.info(f"Opening file {file_path} for quality calculation")
+                        with Image.open(file_path) as img:
+                            image_np = np.array(img.convert("RGB"))
+                        logger.info(f"Calculating quality for iteration {it_id}")
+                        quality = PictureQuality.calculate_metrics(image_np)
+                        it = self[it_id]
+                        it.quality = quality
+                        logger.info(f"Calculated quality for iteration {it.id}")
+                        self.import_iterations([it])
+                        logger.info(f"Re-imported iteration {it.id} with new quality")
+                    except Exception as e:
+                        logger.error(f"Failed to calculate quality for {it_id}: {e}")
+            except Exception as e:
+                logger.error(f"Quality worker error: {e}")
+            self._quality_worker_stop.wait(interval)
     def __init__(self, connection):
         self.connection = connection
 
@@ -83,7 +130,7 @@ class PictureIterations:
             )
         cursor.executemany(
             """
-            INSERT INTO picture_iterations (
+            INSERT OR REPLACE INTO picture_iterations (
                 id, picture_id, file_path, format, width, height, size_bytes, created_at, is_master,
                 derived_from, transform_metadata, thumbnail, quality, score, pixel_sha
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
