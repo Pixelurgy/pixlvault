@@ -30,14 +30,19 @@ class Server:
         app (FastAPI): FastAPI application instance.
     """
 
-    def __init__(self, config_path=CONFIG_PATH):
+    def __init__(self, config_path=CONFIG_PATH, vault_db_path=None, image_root=None, description=None):
         """
         Initialize the Server instance.
 
         Args:
-            config_path (str, optional): Path to the config file.
+            vault_db_path (str, optional): Path to the vault database file.
+            image_root (str, optional): Path to the image root directory.
+            description (str, optional): Vault description.
         """
         self.config = self.init_config(config_path)
+        self.config["db_path"] = vault_db_path or self.config.get("db_path")
+        self.config["image_root"] = image_root or self.config.get("image_root")
+        self.config["description"] = description or self.config.get("description")
         self.vault = Vault(
             db_path=self.config["db_path"],
             image_root=self.config["image_root"],

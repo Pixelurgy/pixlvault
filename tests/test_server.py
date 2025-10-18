@@ -284,7 +284,7 @@ def test_read_root():
         assert response.status_code == 200
         assert response.json() == {
             "message": "Pixelurgy Vault REST API",
-            "version": "0.1.0",
+            "version": "0.2.0",
         }
 
 
