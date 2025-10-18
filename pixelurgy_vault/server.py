@@ -5,6 +5,7 @@ import uvicorn
 import os
 import json
 import uuid
+import time
 
 from platformdirs import user_config_dir
 from pixelurgy_vault.vault import Vault
@@ -49,11 +50,15 @@ class Server:
     def setup_routes(self):
         @self.app.get("/iterations/{iteration_id}")
         async def get_iteration(iteration_id: str):
+            import base64
             try:
-                it = self.vault.pictures.get_iteration(iteration_id)
+                it = self.vault.iterations[iteration_id]
             except KeyError:
                 return {"error": "Iteration not found"}
-            # Return all fields as dict
+            # Base64 encode thumbnail if present
+            thumbnail_b64 = (
+                base64.b64encode(it.thumbnail).decode("ascii") if it.thumbnail else None
+            )
             return {
                 "id": it.id,
                 "picture_id": it.picture_id,
@@ -66,16 +71,18 @@ class Server:
                 "is_master": it.is_master,
                 "derived_from": it.derived_from,
                 "transform_metadata": it.transform_metadata,
-                "thumbnail": it.thumbnail,
+                "thumbnail": thumbnail_b64,
                 "quality": it.quality.__dict__ if it.quality else None,
                 "score": it.score,
                 "pixel_sha": getattr(it, "pixel_sha", None),
             }
 
+
         @self.app.post("/iterations/")
         async def upload_iteration(
             picture_id: str = Body(...),
-            file: UploadFile = File(...),
+            file: UploadFile = File(None),
+            file_path: str = Body(None),
             is_master: int = Body(0),
             derived_from: str = Body(None),
             transform_metadata: str = Body(None),
@@ -85,34 +92,32 @@ class Server:
                 _ = self.vault.pictures[picture_id]
             except KeyError:
                 return {"error": "picture_id does not exist"}
-            # Read image bytes
-            img_bytes = await file.read()
-            # Use PictureIteration.create_from_bytes if available, else minimal fields
 
             dest_folder = self.vault.get_image_root()
             os.makedirs(dest_folder, exist_ok=True)
-            # Save file to disk
-            file_path = os.path.join(dest_folder, file.filename)
-            with open(file_path, "wb") as f:
-                f.write(img_bytes)
 
-            iteration = PictureIteration(
-                id=str(uuid.uuid4()),
-                picture_id=picture_id,
-                file_path=file_path,
-                format=os.path.splitext(file.filename)[-1].lstrip("."),
-                width=None,
-                height=None,
-                size_bytes=len(img_bytes),
-                created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                is_master=is_master,
-                derived_from=derived_from,
-                transform_metadata=transform_metadata,
-                thumbnail=None,
-                quality=None,
-                score=None,
-                pixel_sha=None,
-            )
+            if file is not None:
+                img_bytes = await file.read()
+                _, iteration = PictureIteration.create_from_bytes(
+                    image_root_path=dest_folder,
+                    image_bytes=img_bytes,
+                    picture_id=picture_id,
+                    derived_from=derived_from,
+                    transform_metadata=transform_metadata,
+                    is_master=bool(is_master),
+                )
+            elif file_path:
+                _, iteration = PictureIteration.create_from_file(
+                    image_root_path=dest_folder,
+                    source_file_path=file_path,
+                    picture_id=picture_id,
+                    derived_from=derived_from,
+                    transform_metadata=transform_metadata,
+                    is_master=bool(is_master),
+                )
+            else:
+                return {"error": "No file upload or file_path provided"}
+
             self.vault.iterations.import_iterations([iteration])
             return {"status": "success", "iteration_id": iteration.id}
 

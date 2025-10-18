@@ -1,3 +1,58 @@
+def test_upload_iteration_to_existing_picture():
+    """Test uploading additional iterations to an existing picture."""
+    import uuid
+    with tempfile.TemporaryDirectory() as temp_dir:
+        vault_path = os.path.join(temp_dir, "vault.db")
+        image_root = os.path.join(temp_dir, "images")
+        os.makedirs(image_root, exist_ok=True)
+        server = Server(vault_db_path=vault_path, image_root=image_root)
+        client = TestClient(server.app)
+
+        # Create a new picture with a master iteration
+        img_bytes = random_images[0]
+        files = {"image": ("master.png", img_bytes, "image/png")}
+        data = {
+            "character_id": "testchar",
+            "description": "original master",
+            "tags": "[]",
+        }
+        r = client.post("/pictures", files=files, data=data)
+        assert r.status_code == 200
+        resp = r.json()
+        assert resp["results"][0]["status"] == "success"
+        picture_id = resp["results"][0]["picture_id"]
+
+        # Upload a new iteration to the same picture
+        img_bytes2 = random_images[1]
+        files2 = {"file": ("iteration2.png", img_bytes2, "image/png")}
+        data2 = {"picture_id": picture_id}
+        r2 = client.post("/iterations/", files=files2, data=data2)
+        assert r2.status_code == 200
+        resp2 = r2.json()
+        assert resp2["status"] == "success"
+        iteration_id = resp2["iteration_id"]
+
+        # Fetch the new iteration and check association
+        r3 = client.get(f"/iterations/{iteration_id}")
+        assert r3.status_code == 200
+        it = r3.json()
+        assert it["picture_id"] == picture_id
+        assert it["id"] == iteration_id
+
+        # Upload a third iteration with transform metadata
+        img_bytes3 = random_images[2]
+        files3 = {"file": ("iteration3.png", img_bytes3, "image/png")}
+        data3 = {"picture_id": picture_id, "transform_metadata": "{\"filter\":\"blur\"}"}
+        r4 = client.post("/iterations/", files=files3, data=data3)
+        assert r4.status_code == 200
+        resp4 = r4.json()
+        assert resp4["status"] == "success"
+        iteration_id3 = resp4["iteration_id"]
+        r5 = client.get(f"/iterations/{iteration_id3}")
+        assert r5.status_code == 200
+        it3 = r5.json()
+        assert it3["picture_id"] == picture_id
+        assert it3["transform_metadata"] == "{\"filter\":\"blur\"}"
 import time
 import os
 import tempfile

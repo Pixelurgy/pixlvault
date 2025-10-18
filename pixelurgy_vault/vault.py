@@ -53,6 +53,18 @@ class Vault:
             )
             """
         )
+
+        # Characters table
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS characters (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT
+            )
+            """
+        )
+
         # Pictures (master assets) table
         cursor.execute(
             """
@@ -62,7 +74,8 @@ class Vault:
                 title TEXT,
                 description TEXT,
                 tags TEXT,
-                created_at TEXT
+                created_at TEXT,
+                FOREIGN KEY(character_id) REFERENCES characters(id)
             )
             """
         )
@@ -146,4 +159,4 @@ class Vault:
             )
             # Import iteration (will create master picture row if missing)
             self.pictures.import_pictures([picture])
-            self.pictures.import_iterations([iteration])
+            self.iterations.import_iterations([iteration])
