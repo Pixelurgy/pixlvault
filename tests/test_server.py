@@ -1,6 +1,16 @@
+import time
+import os
+import tempfile
+import numpy as np
+from PIL import Image
+from fastapi.testclient import TestClient
+from pixelurgy_vault.server import Server
+import random
+from io import BytesIO
+
+
 def test_esmeralda_vault_character_and_logo():
     """Test that EsmeraldaVault exists and her picture matches Logo.png exactly."""
-    import base64
 
     with tempfile.TemporaryDirectory() as temp_dir:
         vault_path = os.path.join(temp_dir, "vault.db")
@@ -77,7 +87,6 @@ def test_create_and_get_default_character():
 
 def test_upload_iteration_to_existing_picture():
     """Test uploading additional iterations to an existing picture."""
-    import uuid
 
     with tempfile.TemporaryDirectory() as temp_dir:
         vault_path = os.path.join(temp_dir, "vault.db")
@@ -132,19 +141,6 @@ def test_upload_iteration_to_existing_picture():
         assert it3["picture_id"] == picture_id
         assert it3["transform_metadata"] == '{"filter":"blur"}'
 
-
-import time
-import os
-import tempfile
-import numpy as np
-from PIL import Image
-import pytest
-from fastapi.testclient import TestClient
-from pixelurgy_vault.server import Server, Picture
-import random
-from io import BytesIO
-
-
 TEST_SIZE = 50
 random_images = []
 total_bytes = 0
@@ -188,60 +184,6 @@ def test_post_logo_altered_pixel_upload():
         assert resp["results"][0]["status"] == "success"
         assert resp["results"][0]["picture_id"]
         assert resp["results"][0]["iteration_id"]
-
-
-def test_benchmark_add_images_by_path():
-    with tempfile.TemporaryDirectory() as temp_dir:
-        vault_path = os.path.join(temp_dir, "vault.db")
-        image_root = os.path.join(temp_dir, "images")
-        os.makedirs(image_root, exist_ok=True)
-        server = Server(vault_db_path=vault_path, image_root=image_root)
-        client = TestClient(server.app)
-        image_paths = []
-        total_bytes = 0
-        for i, img in enumerate(random_images):
-            img_path = os.path.join(temp_dir, f"image_{i:04d}.png")
-            with open(img_path, "wb") as f:
-                f.write(img)
-            image_paths.append(img_path)
-            total_bytes += os.path.getsize(img_path)
-        start = time.time()
-        ids = []
-        for i, img_path in enumerate(image_paths):
-            data = {
-                "file_path": img_path,
-                "character_id": "bench",
-                "description": f"benchmark image {i}",
-                "tags": "[]",
-            }
-            r = client.post("/pictures", data=data)
-            assert r.status_code == 200
-            resp = r.json()
-            assert "results" in resp
-            assert resp["results"][0]["status"] == "success"
-            ids.append(resp["results"][0]["picture_id"])
-        end = time.time()
-        print(
-            f"Path Benchmark: Added {TEST_SIZE} images in {end - start:.2f} seconds or {total_bytes / (end - start) / 1024 / 1024:.2f} MB/s"
-        )
-
-        # Read back and check a few images
-        random_indices = random.sample(range(TEST_SIZE), 3)
-        for check_idx in random_indices:
-            title = f"benchmark image {check_idx}"
-            # Query metadata to get id
-            resp = client.get(f"/pictures?description={title}")
-            assert resp.status_code == 200
-            results = resp.json()
-            assert len(results) > 0
-            pic_id = results[0]["ids"][0]
-            # Fetch image by id
-            img_resp = client.get(f"/pictures/{pic_id}")
-            assert img_resp.status_code == 200
-            # Compare first 1024 bytes for speed
-            with open(image_paths[check_idx], "rb") as f:
-                image = f.read()
-            assert img_resp.content[:1024] == image[:1024]
 
 
 def test_post_logo_altered_pixel_path():
@@ -392,7 +334,7 @@ def test_benchmark_add_images_by_directory():
         data = {
             "file_path": image_path,
             "character_id": "bench",
-            "description": f"benchmark images from directory",
+            "description": "benchmark images from directory",
             "tags": "[]",
         }
         r = client.post("/pictures", data=data)
