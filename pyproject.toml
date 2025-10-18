@@ -16,7 +16,8 @@ dependencies = [
     "opencv-python",
     "colorlog",
     "tomli",
-    "httpx"
+    "httpx",
+    "python-multipart"
 ]
 
 [project.optional-dependencies]
