@@ -1,10 +1,9 @@
+
 name: CI
 
 on:
   push:
-    branches: [ simplified ]
   pull_request:
-    branches: [ simplified ]
 
 jobs:
   build:
