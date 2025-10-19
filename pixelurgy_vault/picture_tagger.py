@@ -33,7 +33,7 @@ SUB_DIR_FILES = ["variables.data-00000-of-00001", "variables.index"]
 CSV_FILE = FILES[-1]
 MODEL_DIR = "wd14_tagger_model"
 BATCH_SIZE = 1
-MAX_DATA_LOADER_N_WORKERS = None
+MAX_DATA_LOADER_N_WORKERS = 8
 CAPTION_EXTENSION = ".txt"
 GENERAL_THRESHOLD = 0.35
 CHARACTER_THRESHOLD = 0.35
@@ -193,8 +193,6 @@ class PictureTagger:
             files.extend(glob.glob(os.path.join(str(path), f'{pattern}.{ext}'), recursive=recursive))
         return files
 
-
-
     def _collate_fn_remove_corrupted(self, batch):
         """Collate function that allows to remove corrupted examples in the
         dataloader. It expects that the dataloader returns 'None' when that occurs.
@@ -204,10 +202,63 @@ class PictureTagger:
         batch = list(filter(lambda x: x is not None, batch))
         return batch
 
+    def _run_batch(self, path_imgs, tag_freq, caption_separator, undesired_tags, always_first_tags):
+        imgs = np.array([im for _, im in path_imgs])
+        probs = self.ort_sess.run(None, {self.input_name: imgs})[0]  # onnx output numpy
+        probs = probs[: len(path_imgs)]
+        result = {}
+        for (image_path, _), prob in zip(path_imgs, probs):
+            print(f"[WD14 DEBUG] Image: {image_path}")
+            print("[WD14 DEBUG] ONNX output scores (first 20):", prob[:20])
+            print("[WD14 DEBUG] Max score:", np.max(prob), "Min score:", np.min(prob))
+            # Build all tags (general, character, rating) with their probabilities
+            tag_probs = []
+            # Ratings
+            if USE_RATING_TAGS or USE_RATING_TAGS_AS_LAST_TAG:
+                ratings_probs = prob[:4]
+                rating_index = ratings_probs.argmax()
+                found_rating = self.rating_tags[rating_index]
+                if found_rating not in undesired_tags:
+                    tag_probs.append((found_rating, ratings_probs[rating_index]))
+                    tag_freq[found_rating] = tag_freq.get(found_rating, 0) + 1
+            # General tags
+            for i, p in enumerate(prob[4:4+len(self.general_tags)]):
+                tag_name = self.general_tags[i]
+                if p >= GENERAL_THRESHOLD and tag_name not in undesired_tags:
+                    tag_probs.append((tag_name, p))
+                    tag_freq[tag_name] = tag_freq.get(tag_name, 0) + 1
+            # Character tags
+            for i, p in enumerate(prob[4+len(self.general_tags):]):
+                tag_name = self.character_tags[i]
+                if p >= CHARACTER_THRESHOLD and tag_name not in undesired_tags:
+                    tag_probs.append((tag_name, p))
+                    tag_freq[tag_name] = tag_freq.get(tag_name, 0) + 1
+            # Sort all tags by probability
+            all_tags_sorted = sorted(tag_probs, key=lambda x: x[1], reverse=True)
+            print("[WD14 DEBUG] Tags above threshold (ordered):")
+            for tag, val in all_tags_sorted:
+                print(f"  {tag}: {val:.3f}")
+            combined_tags = [tag for tag, _ in all_tags_sorted]
+            # Move always_first_tags to the front if present
+            if always_first_tags is not None:
+                for tag in reversed(always_first_tags):
+                    if tag in combined_tags:
+                        combined_tags.remove(tag)
+                        combined_tags.insert(0, tag)
+            # Instead of writing to file, store tags in result dict
+            result[image_path] = combined_tags
+            if DEBUG:
+                logger.info("")
+                logger.info(f"{image_path}:")
+                logger.info(f"\tTags: {combined_tags}")
+        return result
+
     def tag_training_directory(self, train_data_dir="."):
-        # ...existing code...
         train_data_dir_path = Path(train_data_dir)
         image_paths = self._glob_images_pathlib(train_data_dir_path, RECURSIVE)
+        return self.tag_images(image_paths)
+
+    def tag_images(self, image_paths):
         logger.info(f"found {len(image_paths)} images.")
 
         tag_freq = {}
@@ -220,108 +271,6 @@ class PictureTagger:
         always_first_tags = None
         if ALWAYS_FIRST_TAGS is not None:
             always_first_tags = [tag for tag in ALWAYS_FIRST_TAGS.split(stripped_caption_separator) if tag.strip() != ""]
-
-        def run_batch(path_imgs):
-            imgs = np.array([im for _, im in path_imgs])
-
-            probs = self.ort_sess.run(None, {self.input_name: imgs})[0]  # onnx output numpy
-            probs = probs[: len(path_imgs)]
-
-            for (image_path, _), prob in zip(path_imgs, probs):
-                # Debug: print ONNX output scores, max/min, and tags above threshold
-                print(f"[WD14 DEBUG] Image: {image_path}")
-                print("[WD14 DEBUG] ONNX output scores (first 20):", prob[:20])
-                print("[WD14 DEBUG] Max score:", np.max(prob), "Min score:", np.min(prob))
-                # Show only tags above threshold, ordered by probability
-                all_tags = list(zip(self.general_tags + self.character_tags, list(prob[4:4+len(self.general_tags)]) + list(prob[4+len(self.general_tags):])))
-                all_tags_above = [(tag, val) for tag, val in all_tags if val >= min(GENERAL_THRESHOLD, CHARACTER_THRESHOLD)]
-                all_tags_sorted = sorted(all_tags_above, key=lambda x: x[1], reverse=True)
-                print("[WD14 DEBUG] Tags above threshold (ordered):")
-                for tag, val in all_tags_sorted:
-                    print(f"  {tag}: {val:.3f}")
-                combined_tags = []
-                rating_tag_text = ""
-                character_tag_text = ""
-                general_tag_text = ""
-
-                # ...existing code...
-                # First 4 labels are ratings, the rest are tags: pick any where prediction confidence >= threshold
-                for i, p in enumerate(prob[4:]):
-                    if i < len(self.general_tags) and p >= GENERAL_THRESHOLD:
-                        tag_name = self.general_tags[i]
-
-                        if tag_name not in undesired_tags:
-                            tag_freq[tag_name] = tag_freq.get(tag_name, 0) + 1
-                            general_tag_text += caption_separator + tag_name
-                            combined_tags.append(tag_name)
-                    elif i >= len(self.general_tags) and p >= CHARACTER_THRESHOLD:
-                        tag_name = self.character_tags[i - len(self.general_tags)]
-
-                        if tag_name not in undesired_tags:
-                            tag_freq[tag_name] = tag_freq.get(tag_name, 0) + 1
-                            character_tag_text += caption_separator + tag_name
-                            if CHARACTER_TAGS_FIRST: # insert to the beginning
-                                combined_tags.insert(0, tag_name)
-                            else:
-                                combined_tags.append(tag_name)
-
-                # ...existing code...
-                # First 4 labels are actually ratings: pick one with argmax
-                if USE_RATING_TAGS or USE_RATING_TAGS_AS_LAST_TAG:
-                    ratings_probs = prob[:4]
-                    rating_index = ratings_probs.argmax()
-                    found_rating = self.rating_tags[rating_index]
-
-                    if found_rating not in undesired_tags:
-                        tag_freq[found_rating] = tag_freq.get(found_rating, 0) + 1
-                        rating_tag_text = found_rating
-                        if USE_RATING_TAGS:
-                            combined_tags.insert(0, found_rating) # insert to the beginning
-                        else:
-                            combined_tags.append(found_rating)
-
-                # ...existing code...
-                # Always put some tags at the beginning
-                if always_first_tags is not None:
-                    for tag in always_first_tags:
-                        if tag in combined_tags:
-                            combined_tags.remove(tag)
-                            combined_tags.insert(0, tag)
-
-                # ...existing code...
-                if len(general_tag_text) > 0:
-                    general_tag_text = general_tag_text[len(caption_separator) :]
-                if len(character_tag_text) > 0:
-                    character_tag_text = character_tag_text[len(caption_separator) :]
-
-                caption_file = os.path.splitext(image_path)[0] + CAPTION_EXTENSION
-
-                tag_text = caption_separator.join(combined_tags)
-
-                if APPEND_TAGS:
-                    # Check if file exists
-                    if os.path.exists(caption_file):
-                        with open(caption_file, "rt", encoding="utf-8") as f:
-                            # Read file and remove new lines
-                            existing_content = f.read().strip("\n")  # Remove newlines
-
-                        # Split the content into tags and store them in a list
-                        existing_tags = [tag.strip() for tag in existing_content.split(stripped_caption_separator) if tag.strip()]
-
-                        # Check and remove repeating tags in tag_text
-                        new_tags = [tag for tag in combined_tags if tag not in existing_tags]
-
-                        # Create new tag_text
-                        tag_text = caption_separator.join(existing_tags + new_tags)
-
-                with open(caption_file, "wt", encoding="utf-8") as f:
-                    f.write(tag_text + "\n")
-                    if DEBUG:
-                        logger.info("")
-                        logger.info(f"{image_path}:")
-                        logger.info(f"\tRating tags: {rating_tag_text}")
-                        logger.info(f"\tCharacter tags: {character_tag_text}")
-                        logger.info(f"\tGeneral tags: {general_tag_text}")
 
         # ...existing code...
         if MAX_DATA_LOADER_N_WORKERS is not None:
@@ -338,6 +287,7 @@ class PictureTagger:
             data = [[(None, ip)] for ip in image_paths]
 
         b_imgs = []
+        all_results = {}
         for data_entry in tqdm(data, smoothing=0.0):
             for data in data_entry:
                 if data is None:
@@ -357,12 +307,14 @@ class PictureTagger:
 
                 if len(b_imgs) >= BATCH_SIZE:
                     b_imgs = [(str(image_path), image) for image_path, image in b_imgs]  # Convert image_path to string
-                    run_batch(b_imgs)
+                    batch_result = self._run_batch(b_imgs, tag_freq, caption_separator, undesired_tags, always_first_tags)
+                    all_results.update(batch_result)
                     b_imgs.clear()
 
         if len(b_imgs) > 0:
             b_imgs = [(str(image_path), image) for image_path, image in b_imgs]  # Convert image_path to string
-            run_batch(b_imgs)
+            batch_result = self._run_batch(b_imgs, tag_freq, caption_separator, undesired_tags, always_first_tags)
+            all_results.update(batch_result)
 
         if FREQUENCY_TAGS:
             sorted_tags = sorted(tag_freq.items(), key=lambda x: x[1], reverse=True)
@@ -371,3 +323,4 @@ class PictureTagger:
                 print(f"{tag}: {freq}")
 
         logger.info("done!")
+        return all_results
