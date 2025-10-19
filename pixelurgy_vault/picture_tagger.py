@@ -33,8 +33,7 @@ SUB_DIR_FILES = ["variables.data-00000-of-00001", "variables.index"]
 CSV_FILE = FILES[-1]
 MODEL_DIR = "wd14_tagger_model"
 BATCH_SIZE = 1
-MAX_DATA_LOADER_N_WORKERS = 8
-CAPTION_EXTENSION = ".txt"
+MAX_CONCURRENT_IMAGES = 32
 GENERAL_THRESHOLD = 0.35
 CHARACTER_THRESHOLD = 0.35
 RECURSIVE = False
@@ -64,12 +63,12 @@ def preprocess_image(image):
     pad_t = pad_y // 2
     image = np.pad(image, ((pad_t, pad_y - pad_t), (pad_l, pad_x - pad_l), (0, 0)), mode="constant", constant_values=255)
 
-    image = resize_image(image, image.shape[0], image.shape[1], IMAGE_SIZE, IMAGE_SIZE)
+    image = resize_image(image, IMAGE_SIZE, IMAGE_SIZE)
 
     image = image.astype(np.float32)
     return image
 
-def resize_image(image, h_in, w_in, h_out, w_out):
+def resize_image(image, h_out, w_out):
     return cv2.resize(image, (w_out, h_out), interpolation=cv2.INTER_AREA)
 
 
@@ -94,16 +93,17 @@ class ImageLoadingPrepDataset(torch.utils.data.Dataset):
         return (image, img_path)
 
 class PictureTagger:
-    def __init__(self, model_location=os.path.join(MODEL_DIR, DEFAULT_WD14_TAGGER_REPO.replace("/", "_")), force_download=False):
+    def __init__(self, model_location=os.path.join(MODEL_DIR, DEFAULT_WD14_TAGGER_REPO.replace("/", "_")), force_download=False, silent=True):
         self.model_location = model_location
+        self.silent = silent
         self._ensure_model_files(force_download=force_download)
         self._init_onnx_session()
         self._load_and_preprocess_tags()
 
     def _init_onnx_session(self):
         onnx_path = f"{self.model_location}/model.onnx"
-        logger.info("Running wd14 tagger with onnx")
-        logger.info(f"loading onnx model: {onnx_path}")
+        logger.debug("Running wd14 tagger with onnx")
+        logger.debug(f"loading onnx model: {onnx_path}")
         if not os.path.exists(onnx_path):
             raise Exception(
                 f"onnx model not found: {onnx_path}, please redownload the model with --force_download"
@@ -208,9 +208,6 @@ class PictureTagger:
         probs = probs[: len(path_imgs)]
         result = {}
         for (image_path, _), prob in zip(path_imgs, probs):
-            print(f"[WD14 DEBUG] Image: {image_path}")
-            print("[WD14 DEBUG] ONNX output scores (first 20):", prob[:20])
-            print("[WD14 DEBUG] Max score:", np.max(prob), "Min score:", np.min(prob))
             # Build all tags (general, character, rating) with their probabilities
             tag_probs = []
             # Ratings
@@ -235,9 +232,6 @@ class PictureTagger:
                     tag_freq[tag_name] = tag_freq.get(tag_name, 0) + 1
             # Sort all tags by probability
             all_tags_sorted = sorted(tag_probs, key=lambda x: x[1], reverse=True)
-            print("[WD14 DEBUG] Tags above threshold (ordered):")
-            for tag, val in all_tags_sorted:
-                print(f"  {tag}: {val:.3f}")
             combined_tags = [tag for tag, _ in all_tags_sorted]
             # Move always_first_tags to the front if present
             if always_first_tags is not None:
@@ -247,10 +241,9 @@ class PictureTagger:
                         combined_tags.insert(0, tag)
             # Instead of writing to file, store tags in result dict
             result[image_path] = combined_tags
-            if DEBUG:
-                logger.info("")
-                logger.info(f"{image_path}:")
-                logger.info(f"\tTags: {combined_tags}")
+            logger.debug("")
+            logger.debug(f"{image_path}:")
+            logger.debug(f"\tTags: {combined_tags}")
         return result
 
     def tag_training_directory(self, train_data_dir="."):
@@ -259,8 +252,6 @@ class PictureTagger:
         return self.tag_images(image_paths)
 
     def tag_images(self, image_paths):
-        logger.info(f"found {len(image_paths)} images.")
-
         tag_freq = {}
 
         caption_separator = CAPTION_SEPARATOR
@@ -273,13 +264,13 @@ class PictureTagger:
             always_first_tags = [tag for tag in ALWAYS_FIRST_TAGS.split(stripped_caption_separator) if tag.strip() != ""]
 
         # ...existing code...
-        if MAX_DATA_LOADER_N_WORKERS is not None:
+        if MAX_CONCURRENT_IMAGES is not None:
             dataset = ImageLoadingPrepDataset(image_paths)
             data = torch.utils.data.DataLoader(
                 dataset,
                 batch_size=BATCH_SIZE,
                 shuffle=False,
-                num_workers=MAX_DATA_LOADER_N_WORKERS,
+                num_workers=MAX_CONCURRENT_IMAGES,
                 collate_fn=self._collate_fn_remove_corrupted,
                 drop_last=False,
             )
@@ -288,7 +279,7 @@ class PictureTagger:
 
         b_imgs = []
         all_results = {}
-        for data_entry in tqdm(data, smoothing=0.0):
+        for data_entry in tqdm(data, smoothing=0.0, disable=self.silent):
             for data in data_entry:
                 if data is None:
                     continue
@@ -318,9 +309,8 @@ class PictureTagger:
 
         if FREQUENCY_TAGS:
             sorted_tags = sorted(tag_freq.items(), key=lambda x: x[1], reverse=True)
-            print("Tag frequencies:")
+            logger.debug("Tag frequencies:")
             for tag, freq in sorted_tags:
-                print(f"{tag}: {freq}")
+                logger.debug(f"{tag}: {freq}")
 
-        logger.info("done!")
         return all_results
