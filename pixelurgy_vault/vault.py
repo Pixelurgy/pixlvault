@@ -60,6 +60,7 @@ class Vault:
         db_exists = os.path.exists(self.db_path)
         self.logger.info(f"Vault init, db_path={self.db_path}, db_exists={db_exists}")
         self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.connection.row_factory = sqlite3.Row
         if not db_exists:
             self.logger.info("Creating tables and importing default data...")
             self._create_tables()
@@ -184,7 +185,7 @@ class Vault:
         cursor = self.connection.cursor()
         cursor.execute("SELECT value FROM metadata WHERE key = ?", (key,))
         row = cursor.fetchone()
-        return row[0] if row else None
+        return row['value'] if row else None
 
     def _import_default_data(self):
         """

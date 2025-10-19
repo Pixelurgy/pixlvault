@@ -18,17 +18,17 @@ class Pictures:
         if not row:
             raise KeyError(f"Picture with id {picture_id} not found.")
         tags = []
-        if row[3]:
+        if row['tags']:
             try:
-                tags = json.loads(row[3])
+                tags = json.loads(row['tags'])
             except Exception:
                 tags = []
         pic = Picture(
-            id=row[0],
-            character_id=row[1],
-            description=row[2],
+            id=row['id'],
+            character_id=row['character_id'],
+            description=row['description'],
             tags=tags,
-            created_at=row[4],
+            created_at=row['created_at'],
         )
         return pic
 
@@ -45,7 +45,7 @@ class Pictures:
         cursor = self.connection.cursor()
         cursor.execute("SELECT id FROM pictures")
         for row in cursor.fetchall():
-            yield row[0]
+            yield row['id']
 
     def import_pictures(self, pictures):
         """Import a list of Picture instances into the database using executemany for efficiency."""
@@ -97,13 +97,12 @@ class Pictures:
         rows = cursor.fetchall()
         result = []
         for row in rows:
-            # pictures table: id, character_id, description, tags, created_at
             pic = Picture(
-                id=row[0],
-                character_id=row[1],
-                description=row[2],
-                tags=json.loads(row[3]) if row[3] else [],
-                created_at=row[4],
+                id=row['id'],
+                character_id=row['character_id'],
+                description=row['description'],
+                tags=json.loads(row['tags']) if row['tags'] else [],
+                created_at=row['created_at'],
             )
             result.append(pic)
         return result

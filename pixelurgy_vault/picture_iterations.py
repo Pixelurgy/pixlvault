@@ -1,10 +1,10 @@
-import threading
-from pixelurgy_vault.logging import get_logger
 import json
+import threading
+import time
+from pixelurgy_vault.logging import get_logger
 from pixelurgy_vault.picture_iteration import PictureIteration
 from pixelurgy_vault.picture_quality import PictureQuality
 from typing import List
-import time
 
 
 class PictureIterations:
@@ -60,8 +60,7 @@ class PictureIterations:
         cursor = self.connection.cursor()
         cursor.execute(
             """
-            SELECT id, picture_id, file_path, format, width, height, size_bytes, created_at, is_master, derived_from, transform_metadata, thumbnail, quality, score, pixel_sha
-            FROM picture_iterations WHERE id = ?
+            SELECT * FROM picture_iterations WHERE id = ?
             """,
             (iteration_id,),
         )
@@ -69,27 +68,28 @@ class PictureIterations:
         if not row:
             raise KeyError(f"PictureIteration with id {iteration_id} not found.")
         quality = None
-        if row[12]:
+        if row['quality']:
             try:
-                quality = PictureQuality(**json.loads(row[12]))
+                quality = PictureQuality(**json.loads(row['quality']))
             except Exception:
                 quality = None
         it = PictureIteration(
-            id=row[0],
-            picture_id=row[1],
-            file_path=row[2],
-            format=row[3],
-            width=row[4],
-            height=row[5],
-            size_bytes=row[6],
-            created_at=row[7],
-            is_master=row[8],
-            derived_from=row[9],
-            transform_metadata=row[10],
-            thumbnail=row[11],
+            id=row['id'],
+            picture_id=row['picture_id'],
+            file_path=row['file_path'],
+            format=row['format'],
+            width=row['width'],
+            height=row['height'],
+            size_bytes=row['size_bytes'],
+            created_at=row['created_at'],
+            is_master=row['is_master'],
+            derived_from=row['derived_from'],
+            transform_metadata=row['transform_metadata'],
+            thumbnail=row['thumbnail'],
             quality=quality,
-            score=row[13],
-            pixel_sha=row[14],
+            score=row['score'],
+            pixel_sha=row['pixel_sha'],
+            character_id=row['character_id'] if 'character_id' in row.keys() else None,
         )
         return it
 
@@ -97,7 +97,7 @@ class PictureIterations:
         cursor = self.connection.cursor()
         cursor.execute("SELECT id FROM picture_iterations")
         for row in cursor.fetchall():
-            yield row[0]
+            yield row['id']
 
     def import_iterations(self, iterations: List[PictureIteration]):
         cursor = self.connection.cursor()
@@ -157,6 +157,7 @@ class PictureIterations:
         self.connection.commit()
 
     def find(self, **kwargs):
+        # Use named columns for safety
         cursor = self.connection.cursor()
         if not kwargs:
             cursor.execute("SELECT * FROM picture_iterations")
@@ -168,23 +169,24 @@ class PictureIterations:
         rows = cursor.fetchall()
         result = []
         for row in rows:
-            quality = PictureQuality(**json.loads(row[12])) if row[12] else None
+            quality = PictureQuality(**json.loads(row['quality'])) if row['quality'] else None
             it = PictureIteration(
-                id=row[0],
-                picture_id=row[1],
-                file_path=row[2],
-                format=row[3],
-                width=row[4],
-                height=row[5],
-                size_bytes=row[6],
-                created_at=row[7],
-                is_master=row[8],
-                derived_from=row[9],
-                transform_metadata=row[10],
-                thumbnail=row[11],
+                id=row['id'],
+                picture_id=row['picture_id'],
+                file_path=row['file_path'],
+                format=row['format'],
+                width=row['width'],
+                height=row['height'],
+                size_bytes=row['size_bytes'],
+                created_at=row['created_at'],
+                is_master=row['is_master'],
+                derived_from=row['derived_from'],
+                transform_metadata=row['transform_metadata'],
+                thumbnail=row['thumbnail'],
                 quality=quality,
-                score=row[13],
-                pixel_sha=row[14],
+                score=row['score'],
+                pixel_sha=row['pixel_sha'],
+                character_id=row['character_id'],
             )
             result.append(it)
         return result

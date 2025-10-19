@@ -51,15 +51,3 @@ class Character:
             ranking (float): Fractional ranking for the model.
         """
         self.lora_model.append((model_name, ranking))
-
-    def get_top_lora(self, n: int = 1) -> List[Tuple[str, float]]:
-        """
-        Get the top n LoRA models by ranking.
-
-        Args:
-            n (int): Number of top models to return.
-
-        Returns:
-            List[Tuple[str, float]]: List of (model_name, ranking) tuples.
-        """
-        return sorted(self.lora_model, key=lambda x: x[1], reverse=True)[:n]

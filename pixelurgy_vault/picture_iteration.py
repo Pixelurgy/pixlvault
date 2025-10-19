@@ -1,6 +1,6 @@
 import hashlib
-from typing import Optional, Tuple
 import os
+from typing import Optional, Tuple
 from PIL import Image
 from .picture_quality import PictureQuality
 from dataclasses import dataclass
@@ -29,6 +29,7 @@ class PictureIteration:
     quality: Optional[PictureQuality] = None
     score: Optional[int] = None
     pixel_sha: Optional[str] = None
+    character_id: Optional[str] = None
 
     @staticmethod
     def _generate_thumbnail_bytes(
