@@ -24,6 +24,8 @@ class Vault:
         """
         if hasattr(self, 'iterations') and hasattr(self.iterations, 'stop_quality_worker'):
             self.iterations.stop_quality_worker()
+        if hasattr(self, 'pictures') and hasattr(self.pictures, 'stop_tag_worker'):
+            self.pictures.stop_tag_worker()
         if hasattr(self, 'connection') and self.connection:
             self.connection.close()
     """
@@ -72,12 +74,13 @@ class Vault:
             self.set_metadata("image_root", image_root)
         if description:
             self.set_metadata("description", description)
-        self.pictures = Pictures(self.connection)
         self.iterations = PictureIterations(self.connection)
+        self.pictures = Pictures(self.connection, self.iterations)
         self.characters = Characters(self.connection)
         if not db_exists:
             self._import_default_data()
         self.iterations.start_quality_worker()
+        self.pictures.start_tag_worker()
 
     def __repr__(self):
         """
