@@ -2,7 +2,7 @@
 import logging
 from uvicorn.logging import ColourizedFormatter
 
-LOG_FORMAT = "%(levelprefix)s %(name)s: %(message)s"
+LOG_FORMAT = "%(asctime)s %(levelprefix)s %(name)s: %(message)s"
 LOG_LEVEL = logging.INFO
 
 def setup_logging(log_file=None):
@@ -15,7 +15,7 @@ def setup_logging(log_file=None):
     if log_file:
         handler = logging.FileHandler(log_file)
         # Use standard format for file logging
-        formatter = logging.Formatter(fmt="%(levelname)s %(name)s: %(message)s")
+        formatter = logging.Formatter(fmt="%(asctime)s %(levelname)s %(name)s: %(message)s")
     else:
         handler = logging.StreamHandler()
         formatter = ColourizedFormatter(fmt=LOG_FORMAT, use_colors=True)

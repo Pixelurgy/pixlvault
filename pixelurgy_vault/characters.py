@@ -22,7 +22,11 @@ class Characters:
         row = cursor.fetchone()
         if not row:
             raise KeyError(f"Character {character_id} not found")
-        return Character(*row)
+        return Character(
+            id=row['id'],
+            name=row['name'],
+            description=row['description']
+        )
 
     def add(self, character: Character):
         cursor = self.connection.cursor()
@@ -52,7 +56,7 @@ class Characters:
         cursor = self.connection.cursor()
         cursor.execute("SELECT id, name, description FROM characters")
         rows = cursor.fetchall()
-        return [Character(*row) for row in rows]
+        return [Character(id=row['id'], name=row['name'], description=row['description']) for row in rows]
 
     def find(self, name: Optional[str] = None) -> List[Character]:
         cursor = self.connection.cursor()
@@ -64,4 +68,4 @@ class Characters:
         else:
             cursor.execute("SELECT id, name, description FROM characters")
         rows = cursor.fetchall()
-        return [Character(*row) for row in rows]
+        return [Character(id=row['id'], name=row['name'], description=row['description']) for row in rows]

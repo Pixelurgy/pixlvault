@@ -18,6 +18,14 @@ logger = get_logger(__name__)
 
 
 class Vault:
+    def close(self):
+        """
+        Cleanly close the vault, including stopping background workers and closing DB connection.
+        """
+        if hasattr(self, 'iterations') and hasattr(self.iterations, 'stop_quality_worker'):
+            self.iterations.stop_quality_worker()
+        if hasattr(self, 'connection') and self.connection:
+            self.connection.close()
     """
     Represents a vault for storing images and metadata.
 
@@ -52,6 +60,7 @@ class Vault:
         db_exists = os.path.exists(self.db_path)
         self.logger.info(f"Vault init, db_path={self.db_path}, db_exists={db_exists}")
         self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.connection.row_factory = sqlite3.Row
         if not db_exists:
             self.logger.info("Creating tables and importing default data...")
             self._create_tables()
@@ -68,6 +77,7 @@ class Vault:
         self.characters = Characters(self.connection)
         if not db_exists:
             self._import_default_data()
+        self.iterations.start_quality_worker()
 
     def __repr__(self):
         """
@@ -116,6 +126,7 @@ class Vault:
                 description TEXT,
                 tags TEXT,
                 created_at TEXT,
+                is_reference INTEGER DEFAULT 0 CHECK(is_reference BETWEEN 0 AND 1),
                 FOREIGN KEY(character_id) REFERENCES characters(id)
             )
             """
@@ -127,20 +138,23 @@ class Vault:
             CREATE TABLE IF NOT EXISTS picture_iterations (
                 id TEXT PRIMARY KEY,
                 picture_id TEXT NOT NULL,
+                character_id TEXT,
                 file_path TEXT NOT NULL,
                 format TEXT,
                 width INTEGER,
                 height INTEGER,
                 size_bytes INTEGER,
                 created_at TEXT,
-                is_master INTEGER DEFAULT 0,
+                is_master INTEGER DEFAULT 0 CHECK(is_master BETWEEN 0 AND 1),
                 derived_from TEXT,
                 transform_metadata TEXT,
                 thumbnail BLOB,
                 quality TEXT,
                 score INTEGER CHECK(score BETWEEN 0 AND 5),
+                character_likeness FLOAT CHECK(character_likeness >= 0.0 AND character_likeness <= 1.0),
                 pixel_sha TEXT,
-                FOREIGN KEY(picture_id) REFERENCES pictures(id)
+                FOREIGN KEY(picture_id) REFERENCES pictures(id),
+                FOREIGN KEY(character_id) REFERENCES characters(id)
             )
             """
         )
@@ -171,7 +185,7 @@ class Vault:
         cursor = self.connection.cursor()
         cursor.execute("SELECT value FROM metadata WHERE key = ?", (key,))
         row = cursor.fetchone()
-        return row[0] if row else None
+        return row['value'] if row else None
 
     def _import_default_data(self):
         """

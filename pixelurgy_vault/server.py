@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import Body, FastAPI, File, Form, Request, UploadFile, Query
 from fastapi.responses import FileResponse
 
@@ -42,7 +43,6 @@ class Server:
             description (str, optional): Vault description.
             log_file (str, optional): Path to the log file (or None for stdout).
         """
-        print (f"Loading log file from {log_file}")
         self.config = self.init_config(config_path, vault_db_path, image_root, description, log_file)
         # Override config values with explicit arguments
         if vault_db_path is not None:
@@ -61,8 +61,16 @@ class Server:
             image_root=self.config["image_root"],
             description=self.config["description"],
         )
-        self.app = FastAPI()
+        self.app = FastAPI(lifespan=self.lifespan)
         self.setup_routes()
+
+    @asynccontextmanager
+    async def lifespan(self, app):
+        # Startup logic (if needed)
+        yield
+        # Shutdown logic
+        if hasattr(self, "vault"):
+            self.vault.close()
 
     def init_config(self, config_path=CONFIG_PATH, vault_db_path=None, image_root=None, description="Pixelurgy Vault default configuration", log_file=None):
         """
@@ -79,6 +87,7 @@ class Server:
                 "image_root": image_root or os.path.join(config_dir, "images"),
                 "description": description,
                 "log_file": log_file,
+                "port": 9537,
             }   
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=2)
@@ -89,8 +98,59 @@ class Server:
         return config
 
     def setup_routes(self):
+        @self.app.get("/characters/reference_pictures/{id}")
+        def get_reference_pictures(id: str):
+            """
+            Get all reference pictures for a character (is_reference=1, master iteration only).
+            """
+            pics = self.vault.pictures.find(character_id=id)
+            reference_pics = [pic for pic in pics if getattr(pic, "is_reference", 0) == 1]
+            results = []
+            for pic in reference_pics:
+                # Find master iteration for this picture
+                master_its = self.vault.iterations.find(picture_id=pic.id, is_master=1)
+                if master_its:
+                    results.append({
+                        "picture_id": pic.id,
+                        "iteration_id": master_its[0].id,
+                        "description": pic.description,
+                        "tags": pic.tags,
+                        "created_at": pic.created_at,
+                    })
+            return {"reference_pictures": results}
+
+        @self.app.post("/characters/reference_pictures")
+        async def add_reference_picture(character_id: str = Form(...), description: str = Form(None), tags: str = Form(None), image: UploadFile = File(...)):
+            """
+            Add a reference picture for a character. Creates a new Picture with is_reference=1 and a master iteration.
+            """
+            tags_list = json.loads(tags) if tags else []
+            img_bytes = await image.read()
+            pic_id = str(uuid.uuid4())
+            picture = Picture(
+                id=pic_id,
+                character_id=character_id,
+                description=description,
+                tags=tags_list,
+                is_reference=1,
+            )
+            dest_folder = self.vault.get_image_root()
+            _, iteration = PictureIteration.create_from_bytes(
+                image_root_path=dest_folder,
+                image_bytes=img_bytes,
+                picture_id=pic_id,
+                is_master=True,
+            )
+            self.vault.pictures.import_pictures([picture])
+            self.vault.iterations.import_iterations([iteration])
+            return {
+                "picture_id": pic_id,
+                "iteration_id": iteration.id,
+                "description": description,
+                "tags": tags_list,
+            }
         """
-        Set up all FastAPI routes for the application.
+        Set up all FastAPI routes for the application and register shutdown cleanup.
         """
 
         @self.app.get("/characters")
