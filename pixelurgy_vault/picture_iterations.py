@@ -8,6 +8,10 @@ from typing import List
 
 
 class PictureIterations:
+    def __init__(self, connection, db_path):
+        self.connection = connection
+        self.db_path = db_path
+
     def start_quality_worker(self, interval=1):
         if hasattr(self, '_quality_worker') and self._quality_worker.is_alive():
             return
@@ -27,38 +31,25 @@ class PictureIterations:
         import sqlite3
         logger = get_logger(__name__)
         # Create a new connection for this thread
-        db_path = None
-        if hasattr(self.connection, 'database'):
-            db_path = self.connection.database
-        elif hasattr(self.connection, 'db_path'):
-            db_path = self.connection.db_path
-        else:
-            try:
-                db_path = self.connection.execute('PRAGMA database_list').fetchone()[2]
-            except Exception:
-                db_path = None
-        if not db_path:
-            logger.error("Could not determine database path for quality worker thread.")
-            return
-        thread_conn = sqlite3.connect(db_path, check_same_thread=False)
+        thread_conn = sqlite3.connect(self.db_path, check_same_thread=False)
         thread_conn.row_factory = sqlite3.Row
         while not self._quality_worker_stop.is_set():
             try:
                 cursor = thread_conn.cursor()
                 cursor.execute("SELECT id, file_path FROM picture_iterations WHERE quality IS NULL")
                 rows = cursor.fetchall()
-                logger.info(f"Quality worker found {len(rows)} iterations needing quality calculation.")
+                logger.debug(f"Quality worker found {len(rows)} iterations needing quality calculation.")
                 for row in rows:
-                    logger.info(f"Doing row {row}")
+                    logger.debug(f"Doing row {row}")
                     if self._quality_worker_stop.is_set():
                         break
-                    logger.info("Checked stop event for iteration")
+                    logger.debug("Checked stop event for iteration")
                     it_id, file_path = row
                     try:
-                        logger.info(f"Opening file {file_path} for quality calculation")
+                        logger.debug(f"Opening file {file_path} for quality calculation")
                         with Image.open(file_path) as img:
                             image_np = np.array(img.convert("RGB"))
-                        logger.info(f"Calculating quality for iteration {it_id}")
+                        logger.debug(f"Calculating quality for iteration {it_id}")
                         quality = PictureQuality.calculate_metrics(image_np)
                         # Update quality in DB using thread_conn
                         quality_json = None
@@ -72,15 +63,13 @@ class PictureIterations:
                             (quality_json, it_id)
                         )
                         thread_conn.commit()
-                        logger.info(f"Calculated quality for iteration {it_id}")
-                        logger.info(f"Updated iteration {it_id} with new quality")
+                        logger.debug(f"Calculated quality for iteration {it_id}")
+                        logger.debug(f"Updated iteration {it_id} with new quality")
                     except Exception as e:
                         logger.error(f"Failed to calculate quality for {it_id}: {e}")
             except Exception as e:
                 logger.error(f"Quality worker error: {e}")
             self._quality_worker_stop.wait(interval)
-    def __init__(self, connection):
-        self.connection = connection
 
     def __getitem__(self, iteration_id):
         cursor = self.connection.cursor()
@@ -130,11 +119,11 @@ class PictureIterations:
         vals = []
         for it in iterations:
             logger = get_logger(__name__)
-            logger.info(f"Importing picture {it.id}: file path {getattr(it, 'file_path', None)}")
+            logger.debug(f"Importing picture {it.id}: file path {getattr(it, 'file_path', None)}")
             if hasattr(it, 'file_path') and it.file_path:
                 import os
                 if os.path.exists(it.file_path):
-                    logger.info(f"File {it.file_path} exists at import time.")
+                    logger.debug(f"File {it.file_path} exists at import time.")
                 else:
                     logger.warning(f"File {it.file_path} does NOT exist at import time.")
             quality_json = None
