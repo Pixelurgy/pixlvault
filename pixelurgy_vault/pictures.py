@@ -8,9 +8,10 @@ from pixelurgy_vault.picture_tagger import PictureTagger, MAX_CONCURRENT_IMAGES
 logger = get_logger(__name__)
 
 class Pictures:
-    def __init__(self, connection, picture_iterations):
+    def __init__(self, connection, picture_iterations, db_path):
         self.connection = connection
         self.picture_iterations = picture_iterations
+        self.db_path = db_path
         self.picture_tagger = PictureTagger()
 
     def __getitem__(self, picture_id):
@@ -85,21 +86,7 @@ class Pictures:
     def _tag_worker_loop(self, interval):
         import sqlite3
         # Create a new connection for this thread
-        db_path = None
-        if hasattr(self.connection, 'database'):
-            db_path = self.connection.database
-        elif hasattr(self.connection, 'db_path'):
-            db_path = self.connection.db_path
-        else:
-            # Try to extract path from connection
-            try:
-                db_path = self.connection.execute('PRAGMA database_list').fetchone()[2]
-            except Exception:
-                db_path = None
-        if not db_path:
-            logger.error("Could not determine database path for tag worker thread.")
-            return
-        thread_conn = sqlite3.connect(db_path, check_same_thread=False)
+        thread_conn = sqlite3.connect(self.db_path, check_same_thread=False)
         thread_conn.row_factory = sqlite3.Row
         while not self._tag_worker_stop.is_set():
             # Find all Pictures missing tags or missing embeddings
@@ -118,7 +105,7 @@ class Pictures:
                         image_paths.append(master_iter.file_path)
                         pic_by_path[master_iter.file_path] = pic
                 if image_paths:
-                    logger.info(f"Tagging {len(image_paths)} images")
+                    logger.debug(f"Tagging {len(image_paths)} images")
                     tag_results = self.picture_tagger.tag_images(image_paths)
                     for path, tags in tag_results.items():
                         pic = pic_by_path.get(path)
@@ -166,11 +153,11 @@ class Pictures:
         values = []
         for picture in pictures:
             tags_json = json.dumps(picture.tags) if hasattr(picture, "tags") else None
-            logger.info(f"Preparing to insert Picture {picture.id} into database.")
+            logger.debug(f"Preparing to insert Picture {picture.id} into database.")
             file_path = getattr(picture, "file_path", None)
             if file_path:
                 if os.path.exists(file_path):
-                    logger.info(f"File {file_path} for Picture {picture.id} exists before DB insert.")
+                    logger.debug(f"File {file_path} for Picture {picture.id} exists before DB insert.")
                 else:
                     logger.warning(f"File {file_path} for Picture {picture.id} does NOT exist before DB insert.")
             values.append(
@@ -196,7 +183,7 @@ class Pictures:
             file_path = getattr(picture, "file_path", None)
             if file_path:
                 if os.path.exists(file_path):
-                    logger.info(f"File {file_path} for Picture {picture.id} exists after DB insert.")
+                    logger.debug(f"File {file_path} for Picture {picture.id} exists after DB insert.")
                 else:
                     logger.warning(f"File {file_path} for Picture {picture.id} does NOT exist after DB insert.")
 
@@ -249,12 +236,12 @@ class Pictures:
             return []
         # Generate query embedding
         query_emb = self.picture_tagger.generate_embedding(picture={"description": text})
-        logger.info(f"Semantic search: query embedding shape: {getattr(query_emb, 'shape', None)}")
+        logger.debug(f"Semantic search: query embedding shape: {getattr(query_emb, 'shape', None)}")
         # Load all picture embeddings and ids
         cursor = self.connection.cursor()
         cursor.execute("SELECT id, embedding FROM pictures WHERE embedding IS NOT NULL")
         rows = cursor.fetchall()
-        logger.info(f"Semantic search: found {len(rows)} candidate images with embeddings.")
+        logger.debug(f"Semantic search: found {len(rows)} candidate images with embeddings.")
         if not rows:
             return []
         # Compute similarities
@@ -267,13 +254,13 @@ class Pictures:
                 continue
             emb = np.frombuffer(emb_blob, dtype=np.float32)
             sim = float(np.dot(query_emb, emb) / (np.linalg.norm(query_emb) * np.linalg.norm(emb) + 1e-8))
-            logger.info(f"Semantic search: similarity for {pic_id}: {sim}")
+            logger.debug(f"Semantic search: similarity for {pic_id}: {sim}")
             if sim >= threshold:
                 sims.append((pic_id, sim))
         # Sort by similarity, descending
         sims.sort(key=lambda x: x[1], reverse=True)
         top = sims[:top_n]
-        logger.info(f"Semantic search: top {top_n} results above threshold {threshold}: {top}")
+        logger.debug(f"Semantic search: top {top_n} results above threshold {threshold}: {top}")
         # Fetch Picture objects
         results = []
         for pic_id, sim in top:

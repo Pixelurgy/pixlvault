@@ -164,7 +164,7 @@ class PictureTagger:
                 tags = tag_replacement.split(",")  # source, target
                 assert len(tags) == 2, f"tag replacement must be in the format of `source,target`: {TAG_REPLACEMENT}"
                 source, target = [tag.replace("@@@@", ",").replace("####", ";") for tag in tags]
-                logger.info(f"replacing tag: {source} -> {target}")
+                logger.debug(f"replacing tag: {source} -> {target}")
                 if source in self.general_tags:
                     self.general_tags[self.general_tags.index(source)] = target
                 elif source in self.character_tags:
@@ -178,15 +178,15 @@ class PictureTagger:
         # https://github.com/toriato/stable-diffusion-webui-wd14-tagger/issues/22
         if not os.path.exists(self.model_location) or force_download:
             os.makedirs(self.model_location, exist_ok=True)
-            logger.info(f"downloading wd14 tagger model from hf_hub. id: {DEFAULT_WD14_TAGGER_REPO}")
+            logger.debug(f"downloading wd14 tagger model from hf_hub. id: {DEFAULT_WD14_TAGGER_REPO}")
             # Always download ONNX model and selected_tags.csv
             from huggingface_hub import hf_hub_download
             # Download ONNX model
             onnx_model_path = os.path.join(self.model_location, "model.onnx")
             tags_csv_path = os.path.join(self.model_location, "selected_tags.csv")
-            logger.info(f"Downloading ONNX model to {onnx_model_path}")
+            logger.debug(f"Downloading ONNX model to {onnx_model_path}")
             hf_hub_download(repo_id=DEFAULT_WD14_TAGGER_REPO, filename="model.onnx", local_dir=self.model_location, force_download=True)
-            logger.info(f"Downloading selected_tags.csv to {tags_csv_path}")
+            logger.debug(f"Downloading selected_tags.csv to {tags_csv_path}")
             hf_hub_download(repo_id=DEFAULT_WD14_TAGGER_REPO, filename="selected_tags.csv", local_dir=self.model_location, force_download=True)
 
     def _glob_images_pathlib(self, path, recursive):
@@ -363,18 +363,18 @@ class PictureTagger:
                         texts.extend(collect_text(value, visited))
             return texts
 
-        logger.info(f"generate_embedding called with character={character}, picture={picture}")
+        logger.debug(f"generate_embedding called with character={character}, picture={picture}")
         texts = []
         texts.extend(collect_text(character))
         texts.extend(collect_text(picture))
         # Remove duplicates and empty strings
         texts = [t for t in texts if t]
-        logger.info(f"Embedding: texts used for embedding: {texts}")
+        logger.debug(f"Embedding: texts used for embedding: {texts}")
         if not texts:
             logger.error("Embedding: No text data for embedding. character=%s, picture=%s", character, picture)
             raise ValueError("No text data for embedding.")
         full_text = ". ".join(texts)
-        logger.info(f"Embedding: full_text for CLIP: {full_text}")
+        logger.debug(f"Embedding: full_text for CLIP: {full_text}")
         try:
             with torch.no_grad():
                 text_tokens = self._clip_tokenizer([full_text]).to(self._clip_device)
