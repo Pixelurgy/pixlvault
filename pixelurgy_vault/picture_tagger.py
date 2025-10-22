@@ -31,7 +31,7 @@ SUB_DIR_FILES = ["variables.data-00000-of-00001", "variables.index"]
 CSV_FILE = FILES[-1]
 MODEL_DIR = "wd14_tagger_model"
 BATCH_SIZE = 1
-MAX_CONCURRENT_IMAGES = 4
+MAX_CONCURRENT_IMAGES = 16
 GENERAL_THRESHOLD = 0.35
 CHARACTER_THRESHOLD = 0.35
 RECURSIVE = False
@@ -50,7 +50,7 @@ TAG_REPLACEMENT = None
 CHARACTER_TAG_EXPAND = False
 
 
-def preprocess_image(image):
+def preprocess_image(image, image_size=IMAGE_SIZE):
     image = np.array(image)
     image = image[:, :, ::-1]  # RGB->BGR
 
@@ -67,7 +67,7 @@ def preprocess_image(image):
         constant_values=255,
     )
 
-    image = resize_image(image, IMAGE_SIZE, IMAGE_SIZE)
+    image = resize_image(image, image_size, image_size)
 
     image = image.astype(np.float32)
     return image
@@ -92,9 +92,7 @@ class ImageLoadingPrepDataset(torch.utils.data.Dataset):
             image = preprocess_image(image)
             # ...existing code...
         except Exception as e:
-            logger.error(
-                f"Could not load image path / 画像を読み込めません: {img_path}, error: {e}"
-            )
+            logger.error(f"Could not load image path: {img_path}, error: {e}")
             return None
 
         return (image, img_path)
@@ -365,7 +363,7 @@ class PictureTagger:
                         image = preprocess_image(image)
                     except Exception as e:
                         logger.error(
-                            f"Could not load image path / 画像を読み込めません: {image_path}, error: {e}"
+                            f"Could not load image path: {image_path}, error: {e}"
                         )
                         continue
                 b_imgs.append((image_path, image))
@@ -453,12 +451,22 @@ class PictureTagger:
         logger.debug(
             f"generate_embedding called with character={character}, picture={picture}"
         )
+        import re
+
         texts = []
         texts.extend(collect_text(character))
         texts.extend(collect_text(picture))
-        # Remove duplicates and empty strings
-        texts = [t for t in texts if t]
-        logger.debug(f"Embedding: texts used for embedding: {texts}")
+        # Remove duplicates, empty strings, UUIDs, and date strings
+        uuid_regex = re.compile(
+            r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        )
+        date_regex = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z$")
+        texts = [
+            t
+            for t in texts
+            if t and not uuid_regex.match(t) and not date_regex.match(t)
+        ]
+        logger.debug(f"Embedding: texts used for embedding (filtered): {texts}")
         if not texts:
             logger.error(
                 "Embedding: No text data for embedding. character=%s, picture=%s",
@@ -466,7 +474,7 @@ class PictureTagger:
                 picture,
             )
             raise ValueError("No text data for embedding.")
-        full_text = ". ".join(texts)
+        full_text = ", ".join(texts)
         logger.debug(f"Embedding: full_text for CLIP: {full_text}")
         try:
             with torch.no_grad():
