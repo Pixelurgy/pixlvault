@@ -9,8 +9,8 @@ from typing import List
 
 class PictureIterations:
     def __init__(self, connection, db_path):
-        self.connection = connection
-        self.db_path = db_path
+        self._connection = connection
+        self._db_path = db_path
 
     def start_quality_worker(self, interval=1):
         if hasattr(self, "_quality_worker") and self._quality_worker.is_alive():
@@ -34,7 +34,7 @@ class PictureIterations:
 
         logger = get_logger(__name__)
         # Create a new connection for this thread
-        thread_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        thread_conn = sqlite3.connect(self._db_path, check_same_thread=False)
         thread_conn.row_factory = sqlite3.Row
         while not self._quality_worker_stop.is_set():
             try:
@@ -81,7 +81,7 @@ class PictureIterations:
             self._quality_worker_stop.wait(interval)
 
     def __getitem__(self, iteration_id):
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         cursor.execute(
             """
             SELECT * FROM picture_iterations WHERE id = ?
@@ -118,13 +118,13 @@ class PictureIterations:
         return it
 
     def __iter__(self):
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         cursor.execute("SELECT id FROM picture_iterations")
         for row in cursor.fetchall():
             yield row["id"]
 
     def import_iterations(self, iterations: List[PictureIteration]):
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         vals = []
         for it in iterations:
             logger = get_logger(__name__)
@@ -174,13 +174,13 @@ class PictureIterations:
             """,
             vals,
         )
-        self.connection.commit()
+        self._connection.commit()
 
     def update_quality(self, iteration_id, quality):
         """
         Update only the quality field for a given iteration.
         """
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         quality_json = None
         if quality:
             try:
@@ -191,11 +191,11 @@ class PictureIterations:
             "UPDATE picture_iterations SET quality = ? WHERE id = ?",
             (quality_json, iteration_id),
         )
-        self.connection.commit()
+        self._connection.commit()
 
     def find(self, **kwargs):
         # Use named columns for safety
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         if not kwargs:
             cursor.execute("SELECT * FROM picture_iterations")
         else:

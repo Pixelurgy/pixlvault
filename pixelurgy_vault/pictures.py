@@ -10,14 +10,14 @@ logger = get_logger(__name__)
 
 class Pictures:
     def __init__(self, connection, picture_iterations, db_path):
-        self.connection = connection
-        self.picture_iterations = picture_iterations
-        self.db_path = db_path
-        self.picture_tagger = PictureTagger()
+        self._connection = connection
+        self._picture_iterations = picture_iterations
+        self._db_path = db_path
+        self._picture_tagger = PictureTagger()
 
     def __getitem__(self, picture_id):
         # Return master Picture by picture_uuid
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         cursor.execute(
             "SELECT id, character_id, description, tags, created_at, embedding FROM pictures WHERE id = ?",
             (picture_id,),
@@ -47,12 +47,12 @@ class Pictures:
         self.import_picture(picture)
 
     def __delitem__(self, picture_id):
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         cursor.execute("DELETE FROM pictures WHERE id = ?", (picture_id,))
-        self.connection.commit()
+        self._connection.commit()
 
     def __iter__(self):
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         cursor.execute("SELECT id FROM pictures")
         for row in cursor.fetchall():
             yield row["id"]
@@ -63,8 +63,8 @@ class Pictures:
         Uses a context manager for atomic update to avoid thread transaction issues.
         """
         tags_json = json.dumps(tags)
-        with self.connection:
-            cursor = self.connection.cursor()
+        with self._connection:
+            cursor = self._connection.cursor()
             cursor.execute(
                 "UPDATE pictures SET tags = ? WHERE id = ?", (tags_json, picture_id)
             )
@@ -90,7 +90,7 @@ class Pictures:
         import sqlite3
 
         # Create a new connection for this thread
-        thread_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        thread_conn = sqlite3.connect(self._db_path, check_same_thread=False)
         thread_conn.row_factory = sqlite3.Row
         while not self._tag_worker_stop.is_set():
             # Find all Pictures missing tags
@@ -106,7 +106,7 @@ class Pictures:
                 for pic in batch:
                     master_iters = [
                         it
-                        for it in self.picture_iterations.find(
+                        for it in self._picture_iterations.find(
                             picture_id=pic.id, is_master=1
                         )
                     ]
@@ -116,7 +116,7 @@ class Pictures:
                         pic_by_path[master_iter.file_path] = pic
                 if image_paths:
                     logger.debug(f"Tagging {len(image_paths)} images")
-                    tag_results = self.picture_tagger.tag_images(image_paths)
+                    tag_results = self._picture_tagger.tag_images(image_paths)
                     for path, tags in tag_results.items():
                         pic = pic_by_path.get(path)
                         if pic is not None:
@@ -142,7 +142,7 @@ class Pictures:
                             pic.tags,
                             ")",
                         )
-                        embedding = self.picture_tagger.generate_embedding(picture=pic)
+                        embedding = self._picture_tagger.generate_embedding(picture=pic)
                         with thread_conn:
                             cursor = thread_conn.cursor()
                             cursor.execute(
@@ -165,7 +165,7 @@ class Pictures:
         """Import a list of Picture instances into the database using executemany for efficiency."""
         import os
 
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         values = []
         for picture in pictures:
             tags_json = json.dumps(picture.tags) if hasattr(picture, "tags") else None
@@ -198,7 +198,7 @@ class Pictures:
             """,
             values,
         )
-        self.connection.commit()
+        self._connection.commit()
         for picture in pictures:
             file_path = getattr(picture, "file_path", None)
             if file_path:
@@ -215,7 +215,7 @@ class Pictures:
         """
         Check if a Picture with the same id exists in the database.
         """
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         cursor.execute("SELECT 1 FROM pictures WHERE id = ?", (picture.id,))
         return cursor.fetchone() is not None
 
@@ -224,7 +224,7 @@ class Pictures:
         Find and return a list of Picture objects matching all provided attribute=value pairs.
         Example: pictures.find(character_id="hero")
         """
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         if not kwargs:
             cursor.execute("SELECT * FROM pictures")
         else:
@@ -263,14 +263,14 @@ class Pictures:
             )
             return []
         # Generate query embedding
-        query_emb = self.picture_tagger.generate_embedding(
+        query_emb = self._picture_tagger.generate_embedding(
             picture={"description": text}
         )
         logger.debug(
             f"Semantic search: query embedding shape: {getattr(query_emb, 'shape', None)}"
         )
         # Load all picture embeddings and ids
-        cursor = self.connection.cursor()
+        cursor = self._connection.cursor()
         cursor.execute("SELECT id, embedding FROM pictures WHERE embedding IS NOT NULL")
         rows = cursor.fetchall()
         logger.debug(
