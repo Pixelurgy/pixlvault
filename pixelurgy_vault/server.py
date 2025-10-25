@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import Body, FastAPI, File, Form, Request, UploadFile, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from .logging import get_logger, setup_logging
 import uvicorn
@@ -347,6 +347,23 @@ class Server:
                 return {"error": "Master iteration not found"}
             it = master_its[0]
             return FileResponse(it.file_path)
+
+        @self.app.get("/thumbnails/{id}")
+        async def get_thumbnail(
+            id: str
+        ):
+            try:
+                pic = self.vault.pictures[id]
+            except KeyError:
+                return {"error": "Picture not found"}
+
+            master_its = self.vault.iterations.find(picture_id=pic.id, is_master=1)
+            if not master_its:
+                return {"error": "Master iteration not found"}
+            thumbnail_bytes = master_its[0].thumbnail
+            if not thumbnail_bytes:
+                return {"error": "No thumbnail available"}
+            return Response(content=thumbnail_bytes, media_type="image/png")
 
         @self.app.patch("/pictures/{id}")
         async def update_picture(id: str, body: dict = Body(...)):

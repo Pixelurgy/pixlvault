@@ -1,12 +1,16 @@
 
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 
 const characters = ref([])
 const loading = ref(false)
 const error = ref(null)
+
 const selectedCharacter = ref(null)
+const images = ref([])
+const imagesLoading = ref(false)
+const imagesError = ref(null)
 
 const BACKEND_URL = 'http://localhost:9537'
 
@@ -24,7 +28,24 @@ async function fetchCharacters() {
   }
 }
 
+
 onMounted(fetchCharacters)
+
+watch(selectedCharacter, async (id) => {
+  images.value = []
+  imagesError.value = null
+  if (!id) return
+  imagesLoading.value = true
+  try {
+    const res = await fetch(`${BACKEND_URL}/pictures?character_id=${encodeURIComponent(id)}&info=true`)
+    if (!res.ok) throw new Error('Failed to fetch images')
+    images.value = await res.json()
+  } catch (e) {
+    imagesError.value = e.message
+  } finally {
+    imagesLoading.value = false
+  }
+})
 </script>
 
 <template>
@@ -46,11 +67,14 @@ onMounted(fetchCharacters)
       <main class="main-area">
         <div class="main-content">
           <template v-if="selectedCharacter">
-            <div class="image-grid">
-              <div v-for="n in 12" :key="n" class="image-card">
+            <div v-if="imagesLoading" class="empty-state">Loading images...</div>
+            <div v-else-if="imagesError" class="empty-state">{{ imagesError }}</div>
+            <div v-else-if="images.length === 0" class="empty-state">No images found for this character.</div>
+            <div v-else class="image-grid">
+              <div v-for="img in images" :key="img.id" class="image-card">
                 <v-card>
-                  <v-img src="https://via.placeholder.com/150" height="120" />
-                  <v-card-title>Image {{ n }}</v-card-title>
+                  <v-img :src="`${BACKEND_URL}/thumbnails/${img.id}`" height="120" />
+                  <v-card-title>{{ img.description || 'Image' }}</v-card-title>
                 </v-card>
               </div>
             </div>
