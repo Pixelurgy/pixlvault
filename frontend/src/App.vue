@@ -45,7 +45,19 @@ onMounted(fetchCharacters)
       </aside>
       <main class="main-area">
         <div class="main-content">
-          <div class="empty-state">Select a character to view images.</div>
+          <template v-if="selectedCharacter">
+            <div class="image-grid">
+              <div v-for="n in 12" :key="n" class="image-card">
+                <v-card>
+                  <v-img src="https://via.placeholder.com/150" height="120" />
+                  <v-card-title>Image {{ n }}</v-card-title>
+                </v-card>
+              </div>
+            </div>
+          </template>
+          <template v-else>
+            <div class="empty-state">Select a character to view images.</div>
+          </template>
         </div>
       </main>
     </div>
@@ -54,6 +66,16 @@ onMounted(fetchCharacters)
 
 
 <style scoped>
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+  width: 100%;
+  padding: 8px 0;
+}
+.image-card {
+  min-width: 0;
+}
 /* Original simple file manager layout */
 .file-manager {
   display: flex;
@@ -108,11 +130,14 @@ onMounted(fetchCharacters)
 .main-content {
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
 }
 .empty-state {
   color: #aaa;
   font-size: 1.2rem;
+  margin-top: 32px;
+  text-align: center;
 }
 </style>
