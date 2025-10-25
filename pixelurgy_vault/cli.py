@@ -19,11 +19,18 @@ def get_default_port():
 def main():
     default_port = get_default_port()
     parser = argparse.ArgumentParser(description="Pixelurgy Vault CLI Tool")
-    parser.add_argument("--api-url", default=None, help="Base URL of the Pixelurgy Vault API.")
-    parser.add_argument("--import-from-path", type=str, help="Path to image file or directory to import.")
+    parser.add_argument(
+        "--api-url", default=None, help="Base URL of the Pixelurgy Vault API."
+    )
+    parser.add_argument(
+        "--import-from-path",
+        type=str,
+        help="Path to image file or directory to import.",
+    )
     parser.add_argument("--character", help="Character name for the imported images.")
-    parser.add_argument("--description", default="", help="Description for the character (if created).")
-
+    parser.add_argument(
+        "--description", default="", help="Description for the character (if created)."
+    )
 
     args = parser.parse_args()
     print(args)
@@ -36,7 +43,11 @@ def main():
     if args.import_from_path:
         if not os.path.exists(args.import_from_path):
             import sys
-            print(f"Error: Path '{args.import_from_path}' does not exist.", file=sys.stderr)
+
+            print(
+                f"Error: Path '{args.import_from_path}' does not exist.",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
         # Check if character exists
@@ -49,7 +60,14 @@ def main():
         else:
             # Create character
             print(f"Creating character '{args.character}'...")
-            resp = requests.post(f"{api_url}/characters", json={"id": args.character, "name": args.character, "description": args.description})
+            resp = requests.post(
+                f"{api_url}/characters",
+                json={
+                    "id": args.character,
+                    "name": args.character,
+                    "description": args.description,
+                },
+            )
             resp.raise_for_status()
             char_id = resp.json()["character"]["id"]
             print(f"Character created (id={char_id})")
@@ -59,10 +77,12 @@ def main():
             "character_id": char_id,
             "file_path": args.import_from_path,
             "description": args.description,
-            "tags": "[]"
+            "tags": "[]",
         }
         r = requests.post(f"{api_url}/pictures", data=form_data)
-        print(f"Import request sent for path '{args.import_from_path}': {r.status_code} {r.text}")
+        print(
+            f"Import request sent for path '{args.import_from_path}': {r.status_code} {r.text}"
+        )
 
 
 if __name__ == "__main__":

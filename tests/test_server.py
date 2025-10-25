@@ -1,6 +1,5 @@
 import numpy as np
 import os
-import pytest
 import random
 import tempfile
 import time
@@ -292,6 +291,7 @@ def test_benchmark_add_images_by_binary_upload():
             assert img_resp.content[:1024] == random_images[check_idx][:1024]
         server.vault.close()  # Ensure cleanup before temp_dir is deleted
     gc.collect()
+
 
 def test_benchmark_add_images_by_path():
     with tempfile.TemporaryDirectory() as temp_dir:
