@@ -1,5 +1,69 @@
+
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch, onBeforeUnmount } from 'vue'
+// Selection state for file manager
+const selectedImageIds = ref([])
+let lastSelectedIndex = null
+
+function handleImageSelect(img, idx, event) {
+  const id = img.id
+  const isSelected = selectedImageIds.value.includes(id)
+  const isCtrl = event.ctrlKey || event.metaKey
+  const isShift = event.shiftKey
+
+  if (isShift && lastSelectedIndex !== null) {
+    // Range select
+    const start = Math.min(lastSelectedIndex, idx)
+    const end = Math.max(lastSelectedIndex, idx)
+    const rangeIds = images.value.slice(start, end + 1).map(i => i.id)
+    const newSelection = isCtrl
+      ? Array.from(new Set([...selectedImageIds.value, ...rangeIds]))
+      : rangeIds
+    selectedImageIds.value = newSelection
+  } else if (isCtrl) {
+    // Toggle selection
+    if (isSelected) {
+      selectedImageIds.value = selectedImageIds.value.filter(i => i !== id)
+    } else {
+      selectedImageIds.value = [...selectedImageIds.value, id]
+    }
+    lastSelectedIndex = idx
+  } else {
+    // Single select
+    selectedImageIds.value = [id]
+    lastSelectedIndex = idx
+  }
+}
+
+const isImageSelected = (id) => selectedImageIds.value.includes(id)
+
+// Logic to determine if a selected image is on the outer edge of a selection group
+const getSelectionBorderClasses = (idx) => {
+  if (!isImageSelected(images.value[idx]?.id)) return ''
+  const cols = columns.value
+  const total = images.value.length
+  const row = Math.floor(idx / cols)
+  const col = idx % cols
+  let classes = []
+  // Check neighbors: top, right, bottom, left
+  // Top
+  if (row === 0 || !isImageSelected(images.value[(row - 1) * cols + col]?.id)) {
+    classes.push('selected-border-top')
+  }
+  // Bottom
+  if (row === Math.floor((total - 1) / cols) || !isImageSelected(images.value[(row + 1) * cols + col]?.id)) {
+    classes.push('selected-border-bottom')
+  }
+  // Left
+  if (col === 0 || !isImageSelected(images.value[row * cols + (col - 1)]?.id)) {
+    classes.push('selected-border-left')
+  }
+  // Right
+  if (col === cols - 1 || !isImageSelected(images.value[row * cols + (col + 1)]?.id)) {
+    classes.push('selected-border-right')
+  }
+  return classes.join(' ')
+}
 
 const characters = ref([])
 const loading = ref(false)
@@ -79,7 +143,7 @@ function closeOverlay() {
   overlayImage.value = null
 }
 
-  import { onBeforeUnmount } from 'vue'
+
 
   function handleOverlayKeydown(e) {
     if (!overlayOpen.value) return
@@ -160,9 +224,21 @@ function showNextImage() {
             <div v-else-if="imagesError" class="empty-state">{{ imagesError }}</div>
             <div v-else-if="images.length === 0" class="empty-state">No images found for this character.</div>
             <div v-else class="image-grid" :style="{ gridTemplateColumns: `repeat(${columns}, 1fr)` }" ref="gridContainer">
-              <div v-for="img in images" :key="img.id" class="image-card">
-                <v-card @click="openOverlay(img)" style="cursor:pointer;">
-                  <v-img :src="`${BACKEND_URL}/thumbnails/${img.id}`" :height="thumbnailSize" :width="thumbnailSize" />
+              <div
+                v-for="(img, idx) in images"
+                :key="img.id"
+                class="image-card"
+                :class="[isImageSelected(img.id) ? 'selected' : '', getSelectionBorderClasses(idx)]"
+                @click="handleImageSelect(img, idx, $event)"
+              >
+                <v-card>
+                  <v-img
+                    :src="`${BACKEND_URL}/thumbnails/${img.id}`"
+                    :height="thumbnailSize"
+                    :width="thumbnailSize"
+                    @click.stop="(e) => { handleImageSelect(img, idx, e); if (!e.ctrlKey && !e.metaKey && !e.shiftKey) openOverlay(img) }"
+                    style="cursor:pointer;"
+                  />
                   <v-card-title>{{ img.description || 'Image' }}</v-card-title>
                 </v-card>
               </div>
@@ -200,9 +276,9 @@ function showNextImage() {
 <style scoped>
 .image-grid {
   display: grid;
-  gap: 2px;
+  gap: 0;
   width: 100%;
-  padding: 0;
+  padding: 4px 12px 4px 4px; /* Extra right padding for scrollbar */
   max-height: calc(100vh - 140px);
   overflow-y: auto;
 }
@@ -216,6 +292,36 @@ function showNextImage() {
   height: 100%;
   padding: 0;
   margin: 0;
+  transition: box-shadow 0.2s, border 0.2s;
+  position: relative;
+  z-index: 0; /* Ensure stacking context */
+  border: 3px solid transparent;
+}
+.image-card.selected {
+  z-index: 2;
+  position: relative;
+  border: 3px solid rgba(25, 118, 210, 0.32);
+}
+.selected-border-top {
+  border-top-color: #1976d2 !important;
+}
+.selected-border-bottom {
+  border-bottom-color: #1976d2 !important;
+}
+.selected-border-left {
+  border-left-color: #1976d2 !important;
+}
+.selected-border-right {
+  border-right-color: #1976d2 !important;
+}
+.image-card.selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(25, 118, 210, 0.32);
+  border-radius: 0;
+  pointer-events: none;
+  z-index: 1; /* Lower than border */
 }
 .v-card {
   display: flex;
