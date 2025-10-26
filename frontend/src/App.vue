@@ -1,5 +1,3 @@
-
-
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 
@@ -13,6 +11,11 @@ const imagesLoading = ref(false)
 const imagesError = ref(null)
 
 const BACKEND_URL = 'http://localhost:9537'
+
+// Thumbnail size slider state
+const thumbnailSizes = [128, 192, 256]
+const thumbnailLabels = ['Small', 'Medium', 'Large']
+const thumbnailSize = ref(256)
 
 async function fetchCharacters() {
   loading.value = true
@@ -66,6 +69,22 @@ watch(selectedCharacter, async (id) => {
       </aside>
       <main class="main-area">
         <div class="main-content">
+          <!-- Thumbnail size slider -->
+          <div class="thumbnail-slider">
+            <v-icon small>mdi-image-size-select-small</v-icon>
+            <v-slider
+              v-model="thumbnailSize"
+              :min="128"
+              :max="256"
+              :step="64"
+              :ticks="true"
+              :tick-labels="thumbnailLabels"
+              class="slider"
+              hide-details
+              style="max-width: 220px; display: inline-block; vertical-align: middle; margin: 0 8px;"
+            />
+            <v-icon small>mdi-image-size-select-large</v-icon>
+          </div>
           <template v-if="selectedCharacter">
             <div v-if="imagesLoading" class="empty-state">Loading images...</div>
             <div v-else-if="imagesError" class="empty-state">{{ imagesError }}</div>
@@ -73,7 +92,7 @@ watch(selectedCharacter, async (id) => {
             <div v-else class="image-grid">
               <div v-for="img in images" :key="img.id" class="image-card">
                 <v-card>
-                  <v-img :src="`${BACKEND_URL}/thumbnails/${img.id}`" height="256" width="256" />
+                  <v-img :src="`${BACKEND_URL}/thumbnails/${img.id}`" :height="thumbnailSize" :width="thumbnailSize" />
                   <v-card-title>{{ img.description || 'Image' }}</v-card-title>
                 </v-card>
               </div>
@@ -99,8 +118,34 @@ watch(selectedCharacter, async (id) => {
   max-height: calc(100vh - 140px); /* Adjust as needed for header/sidebar */
   overflow-y: auto;
 }
+.v-card-title {
+  width: 100%;
+  max-width: 256px;
+  min-height: 2.5em;
+  font-size: 1rem;
+  text-align: center;
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+  margin: 0 auto 4px auto;
+  padding: 4px 8px 0 8px;
+}
+.v-card {
+  width: 100%;
+  max-width: 256px;
+  min-width: 128px;
+}
 .image-card {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
 }
 /* Original simple file manager layout */
 .file-manager {
@@ -159,11 +204,27 @@ watch(selectedCharacter, async (id) => {
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
+  padding-top: 48px; /* Push grid down by twice the icon height */
 }
 .empty-state {
   color: #aaa;
   font-size: 1.2rem;
   margin-top: 32px;
   text-align: center;
+}
+.thumbnail-slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+  margin-bottom: 32px;
+  min-height: 48px;
+}
+.slider {
+  flex: 1;
+  margin: 0 8px;
+  min-width: 120px;
+  max-width: 220px;
 }
 </style>
