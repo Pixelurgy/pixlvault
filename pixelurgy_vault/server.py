@@ -554,6 +554,49 @@ class Server:
                         )
                 return results
 
+        @self.app.delete("/pictures/{id}")
+        async def delete_picture(id: str):
+            """
+            Delete a picture by id, remove all its iterations, and delete all associated files from the file system and database.
+            """
+
+            # 1. Check if picture exists
+            try:
+                self.vault.pictures[id]
+            except KeyError:
+                logger.error(f"Picture not found for id={id} (delete request)")
+                return {"error": "Picture not found"}
+
+            # 2. Find all iterations for this picture
+            iterations = self.vault.iterations.find(picture_id=id)
+            # 3. Delete all files for each iteration
+            errors = []
+            for it in iterations:
+                # Delete image file
+                if it.file_path and os.path.exists(it.file_path):
+                    try:
+                        os.remove(it.file_path)
+                    except Exception as e:
+                        logger.error(f"Failed to delete file {it.file_path}: {e}")
+                        errors.append(f"Failed to delete file {it.file_path}: {e}")
+                # Delete thumbnail if stored as a separate file (not in DB)
+                # (Currently, thumbnail is stored in DB as bytes, so nothing to do)
+
+            # 4. Delete all iterations from DB
+            cursor = self.vault.iterations._connection.cursor()
+            cursor.execute("DELETE FROM picture_iterations WHERE picture_id = ?", (id,))
+            self.vault.iterations._connection.commit()
+
+            # 5. Delete the picture from DB
+            del self.vault.pictures[id]
+
+            return {
+                "status": "success",
+                "deleted_picture_id": id,
+                "deleted_iterations": [it.id for it in iterations],
+                "errors": errors,
+            }
+
     def get_version(self):
         try:
             import tomllib
