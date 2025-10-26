@@ -126,12 +126,41 @@ watch(selectedCharacter, async (id) => {
 <style scoped>
 .image-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 16px;
+  gap: 2px;
   width: 100%;
-  padding: 8px 0;
-  max-height: calc(100vh - 140px); /* Adjust as needed for header/sidebar */
+  padding: 0;
+  max-height: calc(100vh - 140px);
   overflow-y: auto;
+}
+.image-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+}
+.v-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  background: transparent;
+  width: 100%;
+  max-width: 256px;
+  min-width: 128px;
+  padding: 0;
+  margin: 0;
+}
+.v-img {
+  display: block;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 0;
 }
 .v-card-title {
   width: 100%;
@@ -146,28 +175,8 @@ watch(selectedCharacter, async (id) => {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   word-break: break-word;
-  margin: 0 auto 4px auto;
-  padding: 4px 8px 0 8px;
-}
-.v-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  box-shadow: none;
-  background: transparent;
-  width: 100%;
-  max-width: 256px;
-  min-width: 128px;
-}
-.image-card {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
+  margin: 0 auto 2px auto;
+  padding: 2px 4px 0 4px;
 }
 /* Original simple file manager layout */
 .file-manager {
@@ -218,7 +227,7 @@ watch(selectedCharacter, async (id) => {
   min-width: 0;
   min-height: 100vh;
   box-sizing: border-box;
-  padding: 16px;
+  padding: 0;
 }
 .main-content {
   flex: 1;
@@ -226,7 +235,7 @@ watch(selectedCharacter, async (id) => {
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
-  padding-top: 48px; /* Push grid down by twice the icon height */
+  padding: 0;
 }
 .empty-state {
   color: #aaa;
@@ -248,5 +257,18 @@ watch(selectedCharacter, async (id) => {
   margin: 0 8px;
   min-width: 120px;
   max-width: 220px;
+}
+.thumbnail-slider {
+  margin-bottom: 4px;
+  min-height: 32px;
+}
+.slider {
+  margin: 0 2px;
+  min-width: 80px;
+  max-width: 180px;
+}
+.image-grid {
+  gap: 0px;
+  max-height: calc(100vh - 80px);
 }
 </style>
