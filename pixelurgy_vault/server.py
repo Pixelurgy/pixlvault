@@ -380,19 +380,46 @@ class Server:
             return Response(content=thumbnail_bytes, media_type="image/png")
 
         @self.app.patch("/pictures/{id}")
-        async def update_picture(id: str, body: dict = Body(...)):
+        async def patch_picture(id: str, request: Request):
             """
-            Update fields of a picture (e.g., is_reference, description, tags, etc.).
+            Update fields of a picture using query parameters, e.g., /pictures/{id}?score=5
+            If 'score' is provided, update the master iteration's score.
+            Otherwise, update fields on the picture.
             """
+            params = dict(request.query_params)
+            if not params:
+                return {"error": "No fields to update"}
+            # Handle score update for master iteration
+            if "score" in params:
+                try:
+                    score_val = int(params["score"])
+                except Exception:
+                    return {"error": "Invalid score value"}
+                master_its = self.vault.iterations.find(picture_id=id, is_master=1)
+                if not master_its:
+                    return {"error": "Master iteration not found"}
+                master_it = master_its[0]
+                master_it.score = score_val
+                self.vault.iterations.import_iterations([master_it])
+                return {
+                    "status": "success",
+                    "iteration_id": master_it.id,
+                    "score": score_val,
+                }
+            # Otherwise, update fields on the picture
             try:
                 pic = self.vault.pictures[id]
             except KeyError:
                 return {"error": "Picture not found"}
-
-            # Update fields from body
-            for key, value in body.items():
+            for key, value in params.items():
+                if key == "score":
+                    continue
+                try:
+                    cast_val = int(value)
+                except Exception:
+                    cast_val = value
                 if hasattr(pic, key):
-                    setattr(pic, key, value)
+                    setattr(pic, key, cast_val)
             self.vault.pictures.import_pictures([pic])
             return {"status": "success", "picture": pic.__dict__}
 

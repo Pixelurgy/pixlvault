@@ -185,6 +185,13 @@ function closeOverlay() {
         e.preventDefault()
         return
       }
+    }
+    // Score shortcuts 1-5
+    if (/^[1-5]$/.test(e.key) && selectedImageIds.value.length) {
+      showStars.value = true
+      patchScoreForSelection(Number(e.key))
+      e.preventDefault()
+      return
     } else {
       return
     }
@@ -258,6 +265,37 @@ async function deleteSelectedImages() {
   images.value = images.value.filter(img => !selectedImageIds.value.includes(img.id))
   selectedImageIds.value = []
 }
+
+// Patch score for selected images
+async function patchScoreForSelection(score) {
+  if (!selectedImageIds.value.length) return;
+  for (const id of selectedImageIds.value) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/pictures/${id}?score=${score}`, { method: 'PATCH' })
+      if (!res.ok) throw new Error(`Failed to set score for image ${id}`)
+      // Update local image score
+      const result = await res.json()
+      const img = images.value.find(i => i.id === id)
+      if (img) img.score = score
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+}
+
+// Set score for a single image (click on star)
+async function setImageScore(img, n) {
+  const newScore = (img.score || 0) === n ? 0 : n
+  try {
+    const res = await fetch(`${BACKEND_URL}/pictures/${img.id}?score=${newScore}`, { method: 'PATCH' })
+    if (!res.ok) throw new Error(`Failed to set score for image ${img.id}`)
+    img.score = newScore
+  } catch (e) {
+    alert(e.message)
+  }
+}
+
+const showStars = ref(true)
 </script>
 
 <template>
@@ -280,6 +318,15 @@ async function deleteSelectedImages() {
         <!-- Top toolbar with right-aligned slider and delete button -->
         <div class="top-toolbar">
           <div style="flex:1"></div>
+          <v-btn
+            icon
+            :color="showStars ? 'amber darken-2' : 'grey'"
+            @click="showStars = !showStars"
+            title="Toggle star ratings"
+            style="margin-right: 12px;"
+          >
+            <v-icon>{{ showStars ? 'mdi-star' : 'mdi-star-outline' }}</v-icon>
+          </v-btn>
           <v-btn
             icon
             color="red darken-2"
@@ -318,6 +365,16 @@ async function deleteSelectedImages() {
                 @click="handleImageSelect(img, idx, $event)"
               >
                 <v-card>
+                  <div class="star-overlay" v-if="showStars">
+                    <v-icon
+                      v-for="n in 5"
+                      :key="n"
+                      small
+                      :color="n <= (img.score || 0) ? 'amber' : 'grey lighten-1'"
+                      style="cursor:pointer;"
+                      @click.stop="setImageScore(img, n)"
+                    >mdi-star</v-icon>
+                  </div>
                   <v-img
                     :src="`${BACKEND_URL}/thumbnails/${img.id}`"
                     :height="thumbnailSize"
@@ -456,15 +513,15 @@ async function deleteSelectedImages() {
   flex-direction: row;
   position: fixed;
   inset: 0;
-  background: #fff;
+  background: #ccc;
   min-width: 0;
   min-height: 0;
   box-sizing: border-box;
 }
 .sidebar {
   width: 220px;
-  background: #fff;
-  border-right: 1px solid #eee;
+  background: #dadada;
+  border-right: 1px solid #bbb;
   padding: 16px 0 16px 0;
   display: flex;
   flex-direction: column;
@@ -495,7 +552,7 @@ async function deleteSelectedImages() {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: #eee;
   min-width: 0;
   min-height: 100vh;
   box-sizing: border-box;
@@ -658,5 +715,36 @@ async function deleteSelectedImages() {
   border-bottom: 1px solid #ccc;
   margin-bottom: 4px;
   z-index: 2;
+}
+.star-overlay {
+  position: absolute;
+  top: 5px;
+  right: 10px;
+  transform: translateX(-25%);
+  display: flex;
+  flex-direction: row;
+  z-index: 10;
+  background: rgba(255,255,255,0.85);
+  border-radius: 6px;
+  padding: 1px 4px 1px 2px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  font-size: 0.85em;
+}
+.star-overlay .v-icon {
+  font-size: 16px !important;
+  width: 16px;
+  height: 16px;
+}
+.image-card {
+  position: relative;
+}
+.v-card {
+  position: relative;
+  overflow: visible;
+}
+.v-img {
+  display: block;
+  position: relative;
+  z-index: 1;
 }
 </style>
