@@ -5,6 +5,19 @@ import unknownPerson from './assets/unknown-person.png' // Import for unknown ch
 const selectedImageIds = ref([])
 let lastSelectedIndex = null
 
+// Overlay state for full image view
+const overlayOpen = ref(false)
+const overlayImage = ref(null)
+
+function openOverlay(img) {
+  overlayImage.value = img
+  overlayOpen.value = true
+}
+
+function closeOverlay() {
+  overlayOpen.value = false
+}
+
 function handleImageSelect(img, idx, event) {
   const id = img.id
   const isSelected = selectedImageIds.value.includes(id)
@@ -541,7 +554,7 @@ async function assignImagesToCharacter(imageIds, characterId) {
                     @load="fetchScoreIfMissing(img)"
                     style="cursor:pointer;"
                   />
-                  <v-card-title>{{ img.description || 'Image' }}</v-card-title>
+                  <!-- Removed image description from grid -->
                 </v-card>
               </div>
     <!-- Full image overlay -->
