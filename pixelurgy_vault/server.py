@@ -123,6 +123,70 @@ class Server:
         return config
 
     def setup_routes(self):
+        @self.app.get("/face_thumbnail/{character_id}")
+        async def get_face_thumbnail(character_id: str):
+            """
+            Return a face-cropped thumbnail for the highest scored picture of the character.
+            If no scored picture, fallback to first image. If no face bbox, fallback to normal thumbnail.
+            """
+            import io
+            from PIL import Image
+
+            # Find all pictures for this character
+            pics = self.vault.pictures.find(character_id=character_id)
+            if not pics:
+                return {"error": "No pictures for character"}
+            # Find master iterations for these pictures
+            its = []
+            for pic in pics:
+                master_its = self.vault.iterations.find(picture_id=pic.id, is_master=1)
+                if master_its:
+                    it = master_its[0]
+                    its.append((it, pic))
+            if not its:
+                return {"error": "No master iterations for character"}
+
+            # Sort by score descending, then by created_at
+            def score_key(tup):
+                it, pic = tup
+                return (it.score if it.score is not None else -1, pic.created_at)
+
+            its.sort(key=score_key, reverse=True)
+            it, pic = its[0]
+            # Try to get face_bbox from the picture
+            face_bbox = None
+            if hasattr(pic, "face_bbox") and pic.face_bbox:
+                try:
+                    face_bbox = (
+                        json.loads(pic.face_bbox)
+                        if isinstance(pic.face_bbox, str)
+                        else pic.face_bbox
+                    )
+                except Exception:
+                    face_bbox = None
+            # Load thumbnail image
+            if not it.thumbnail:
+                return {"error": "No thumbnail available"}
+            try:
+                thumb_img = Image.open(io.BytesIO(it.thumbnail))
+            except Exception:
+                return {"error": "Invalid thumbnail image"}
+            # If face_bbox is available, crop to it
+            if face_bbox and len(face_bbox) == 4:
+                x1, y1, x2, y2 = [int(round(v)) for v in face_bbox]
+                w, h = thumb_img.size
+                x1 = max(0, min(w, x1))
+                x2 = max(0, min(w, x2))
+                y1 = max(0, min(h, y1))
+                y2 = max(0, min(h, y2))
+                if x2 > x1 and y2 > y1:
+                    thumb_img = thumb_img.crop((x1, y1, x2, y2))
+            # Resize to 96x96 for sidebar (twice the previous size)
+            thumb_img = thumb_img.resize((96, 96), Image.LANCZOS)
+            buf = io.BytesIO()
+            thumb_img.save(buf, format="PNG")
+            return Response(content=buf.getvalue(), media_type="image/png")
+
         @self.app.post("/log-frontend-event")
         async def log_frontend_event(event: dict = Body(...)):
             """

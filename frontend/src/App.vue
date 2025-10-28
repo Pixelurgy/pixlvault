@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, onMounted, watch, onBeforeUnmount } from 'vue'
+import unknownPerson from './assets/unknown-person.png' // Import for unknown character icon
 // Selection state for file manager
 const selectedImageIds = ref([])
 let lastSelectedIndex = null
@@ -83,11 +84,14 @@ const getSelectionBorderClasses = (idx) => {
   return classes.join(' ')
 }
 
+
+const ALL_PICTURES_ID = '__all__'
 const characters = ref([])
+const characterThumbnails = ref({}) // { [characterId]: thumbnailUrl }
 const loading = ref(false)
 const error = ref(null)
 
-const selectedCharacter = ref(null)
+const selectedCharacter = ref(ALL_PICTURES_ID)
 const images = ref([])
 const imagesLoading = ref(false)
 const imagesError = ref(null)
@@ -115,11 +119,32 @@ async function fetchCharacters() {
   try {
     const res = await fetch(`${BACKEND_URL}/characters`)
     if (!res.ok) throw new Error('Failed to fetch characters')
-    characters.value = await res.json()
+    const chars = await res.json()
+    characters.value = chars
+    // For each character, fetch their first image's thumbnail (if any)
+    for (const char of chars) {
+      fetchCharacterThumbnail(char.id)
+    }
   } catch (e) {
     error.value = e.message
   } finally {
     loading.value = false
+  }
+}
+
+async function fetchCharacterThumbnail(characterId) {
+  try {
+    // Use the new face-cropped thumbnail endpoint
+    const thumbUrl = `${BACKEND_URL}/face_thumbnail/${characterId}`
+    // Test if the endpoint returns an image (status 200 and content-type image/png)
+    const res = await fetch(thumbUrl)
+    if (res.ok && res.headers.get('content-type')?.includes('image/png')) {
+      characterThumbnails.value[characterId] = thumbUrl
+    } else {
+      characterThumbnails.value[characterId] = null
+    }
+  } catch (e) {
+    characterThumbnails.value[characterId] = null
   }
 }
 
@@ -137,11 +162,19 @@ watch(selectedCharacter, async (id) => {
   if (!id) return
   imagesLoading.value = true
   try {
-    const res = await fetch(`${BACKEND_URL}/pictures?character_id=${encodeURIComponent(id)}&info=true`)
+    let url
+    if (id === ALL_PICTURES_ID) {
+      url = `${BACKEND_URL}/pictures?info=true`
+    } else {
+      url = `${BACKEND_URL}/pictures?character_id=${encodeURIComponent(id)}&info=true`
+    }
+    const res = await fetch(url)
     if (!res.ok) throw new Error('Failed to fetch images')
     const baseImages = await res.json()
     // Only set up the images array with a score property (null if missing)
     images.value = baseImages.map(img => ({ ...img, score: typeof img.score !== 'undefined' ? img.score : null }))
+    // Ensure columns are recalculated after images are loaded
+    setTimeout(updateColumns, 0)
   } catch (e) {
     imagesError.value = e.message
   } finally {
@@ -149,39 +182,22 @@ watch(selectedCharacter, async (id) => {
   }
 })
 
-// Full image overlay state
-const overlayOpen = ref(false)
-const overlayImage = ref(null)
-
-function openOverlay(img) {
-  overlayImage.value = img
-  overlayOpen.value = true
-}
-
-function closeOverlay() {
-  overlayOpen.value = false
-  overlayImage.value = null
-}
-
-
-
-
-  function handleOverlayKeydown(e) {
-    if (overlayOpen.value) {
-      if (e.key === 'ArrowLeft') {
-        showPrevImage()
-        e.preventDefault()
-        return
-      } else if (e.key === 'ArrowRight') {
-        showNextImage()
-        e.preventDefault()
-        return
-      } else if (e.key === 'Escape') {
-        closeOverlay()
-        e.preventDefault()
-        return
-      }
+function handleOverlayKeydown(e) {
+  if (overlayOpen.value) {
+    if (e.key === 'ArrowLeft') {
+      showPrevImage()
+      e.preventDefault()
+      return
+    } else if (e.key === 'ArrowRight') {
+      showNextImage()
+      e.preventDefault()
+      return
+    } else if (e.key === 'Escape') {
+      closeOverlay()
+      e.preventDefault()
+      return
     }
+  }
     // Grid navigation and selection
     if (!images.value.length) return
     const cols = columns.value
@@ -323,6 +339,17 @@ const showStars = ref(true)
   <v-app>
     <div class="file-manager">
       <aside class="sidebar">
+        <div class="sidebar-title">All Pictures</div>
+        <div
+          :class="['sidebar-item', { active: selectedCharacter === ALL_PICTURES_ID }]"
+          @click="selectedCharacter = ALL_PICTURES_ID"
+          style="display: flex; align-items: center; min-height: 56px; padding-top: 6px; padding-bottom: 6px; font-weight: bold;"
+        >
+          <span style="display: flex; align-items: center; margin-right: 12px;">
+            <v-icon size="44">mdi-image-multiple</v-icon>
+          </span>
+          <span style="font-size:1.15em; line-height:1.2;">All Pictures</span>
+        </div>
         <div class="sidebar-title">Characters</div>
         <div v-if="loading" class="sidebar-loading">Loading...</div>
         <div v-if="error" class="sidebar-error">{{ error }}</div>
@@ -331,8 +358,12 @@ const showStars = ref(true)
           :key="char.id"
           :class="['sidebar-item', { active: selectedCharacter === char.id }]"
           @click="selectedCharacter = char.id"
+          style="display: flex; align-items: center; min-height: 56px; padding-top: 6px; padding-bottom: 6px;"
         >
-          {{ char.name }}
+          <span style="display: flex; align-items: center; margin-right: 12px;">
+            <img :src="characterThumbnails[char.id] ? characterThumbnails[char.id] : unknownPerson" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:6px;box-shadow:0 0px 0px #bbb;" />
+          </span>
+          <span style="font-size:1.15em; line-height:1.2;">{{ char.name.charAt(0).toUpperCase() + char.name.slice(1) }}</span>
         </div>
       </aside>
       <main class="main-area">
@@ -541,8 +572,8 @@ const showStars = ref(true)
   box-sizing: border-box;
 }
 .sidebar {
-  width: 220px;
-  background: #dadada;
+  width: 280px;
+  background: #506168ff;
   border-right: 1px solid #bbb;
   padding: 16px 0 16px 0;
   display: flex;
@@ -564,11 +595,14 @@ const showStars = ref(true)
   transition: background 0.2s;
 }
 .sidebar-item.active, .sidebar-item:hover {
-  background: #f0f0f0;
+  background: #f0f0f055;
 }
 .sidebar-loading, .sidebar-error {
   padding: 8px 16px;
   color: #888;
+}
+.sidebar, .sidebar-item {
+  color: #ffffffff;
 }
 .main-area {
   flex: 1;
@@ -729,7 +763,7 @@ const showStars = ref(true)
 }
 .top-toolbar {
   width: 100%;
-  background: #e0e0e0;
+  background: #cdcdcdff;
   min-height: 48px;
   display: flex;
   align-items: center;
