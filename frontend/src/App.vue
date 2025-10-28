@@ -34,6 +34,25 @@ function handleImageSelect(img, idx, event) {
   }
 }
 
+
+// Fetch score for an image if missing (called on thumbnail load)
+
+// Fetch score for an image if missing (called on thumbnail load)
+async function fetchScoreIfMissing(img) {
+  if (typeof img.score === 'undefined' || img.score === null) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/pictures/${img.id}`)
+      if (res.ok) {
+        const data = await res.json()
+        if ('score' in data) {
+          // Ensure reactivity
+          Object.assign(img, { score: data.score })
+        }
+      }
+    } catch (e) {}
+  }
+}
+
 const isImageSelected = (id) => selectedImageIds.value.includes(id)
 
 // Logic to determine if a selected image is on the outer edge of a selection group
@@ -120,7 +139,9 @@ watch(selectedCharacter, async (id) => {
   try {
     const res = await fetch(`${BACKEND_URL}/pictures?character_id=${encodeURIComponent(id)}&info=true`)
     if (!res.ok) throw new Error('Failed to fetch images')
-    images.value = await res.json()
+    const baseImages = await res.json()
+    // Only set up the images array with a score property (null if missing)
+    images.value = baseImages.map(img => ({ ...img, score: typeof img.score !== 'undefined' ? img.score : null }))
   } catch (e) {
     imagesError.value = e.message
   } finally {
@@ -386,6 +407,7 @@ const showStars = ref(true)
                         openOverlay(img)
                       }
                     }"
+                    @load="fetchScoreIfMissing(img)"
                     style="cursor:pointer;"
                   />
                   <v-card-title>{{ img.description || 'Image' }}</v-card-title>

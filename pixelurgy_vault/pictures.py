@@ -94,12 +94,18 @@ class Pictures:
 
     def __getitem__(self, picture_id):
         # Return master Picture by picture_uuid
-        cursor = self._connection.cursor()
+        import sqlite3
+
+        logger.info(f"Fetching picture with id={picture_id} (type={type(picture_id)})")
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
         cursor.execute(
             "SELECT id, character_id, description, tags, created_at, embedding FROM pictures WHERE id = ?",
             (picture_id,),
         )
         row = cursor.fetchone()
+        conn.close()
         if not row:
             raise KeyError(f"Picture with id {picture_id} not found.")
         tags = []

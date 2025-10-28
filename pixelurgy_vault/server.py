@@ -265,6 +265,7 @@ class Server:
             thumbnail_b64 = (
                 base64.b64encode(it.thumbnail).decode("ascii") if it.thumbnail else None
             )
+            logger.info(f"Serving iteration {iteration_id} with score {it.score}")
             return {
                 "id": it.id,
                 "picture_id": it.picture_id,
@@ -335,6 +336,9 @@ class Server:
         def get_picture(
             id: str, info: bool = Query(False), embedding: bool = Query(False)
         ):
+            if not isinstance(id, str):
+                logger.error(f"Invalid id type: {type(id)} value: {id}")
+                return {"error": "Invalid picture id"}
             try:
                 pic = self.vault.pictures[id]
             except KeyError:
@@ -352,7 +356,11 @@ class Server:
                 }
                 return result
             # Otherwise, deliver the master iteration image file
+            logger.info(f"Fetching master iteration for picture id={pic.id}")
             master_its = self.vault.iterations.find(picture_id=pic.id, is_master=1)
+            logger.info(
+                f"Found a master iteration with score {master_its[0].score if master_its else 'N/A'}"
+            )
             if not master_its:
                 logger.error(f"Master iteration not found for picture id={pic.id}")
                 return {"error": "Master iteration not found"}
@@ -539,17 +547,27 @@ class Server:
                     query_params["tags"] = [query_params["tags"]]
             pics = self.vault.pictures.find(**query_params)
             if info:
-                # Return only Picture info (metadata)
-                return [
-                    {
-                        "id": pic.id,
-                        "character_id": pic.character_id,
-                        "description": pic.description,
-                        "tags": pic.tags,
-                        "created_at": pic.created_at,
-                    }
-                    for pic in pics
-                ]
+                # Return only Picture info (metadata), but include score from master iteration
+                result = []
+                for pic in pics:
+                    # Find master iteration for this picture
+                    master_its = self.vault.iterations.find(
+                        picture_id=pic.id, is_master=1
+                    )
+                    score = None
+                    if master_its:
+                        score = master_its[0].score
+                    result.append(
+                        {
+                            "id": pic.id,
+                            "character_id": pic.character_id,
+                            "description": pic.description,
+                            "tags": pic.tags,
+                            "created_at": pic.created_at,
+                            "score": score,
+                        }
+                    )
+                return result
             else:
                 # Return the master iteration for each picture (is_master=1)
                 results = []
