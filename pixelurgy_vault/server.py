@@ -429,6 +429,11 @@ class Server:
                 logger.error(f"Master iteration not found for picture id={pic.id}")
                 return {"error": "Master iteration not found"}
             it = master_its[0]
+            if not it.file_path or not os.path.isfile(it.file_path):
+                logger.error(
+                    f"File path missing or does not exist for iteration id={it.id}, file_path={it.file_path}"
+                )
+                return {"error": f"File not found for iteration id={it.id}"}
             return FileResponse(it.file_path)
 
         @self.app.get("/thumbnails/{id}")
@@ -492,7 +497,15 @@ class Server:
                     cast_val = value
                 if hasattr(pic, key):
                     setattr(pic, key, cast_val)
-            self.vault.pictures.import_pictures([pic])
+                # If updating character_id, also update all iterations
+                if key == "character_id":
+                    cursor = self.vault.connection.cursor()
+                    cursor.execute(
+                        "UPDATE picture_iterations SET character_id = ? WHERE picture_id = ?",
+                        (cast_val, id),
+                    )
+                    self.vault.connection.commit()
+            self.vault.pictures.update_pictures([pic])
             return {"status": "success", "picture": pic.__dict__}
 
         @self.app.get("/favicon.ico")

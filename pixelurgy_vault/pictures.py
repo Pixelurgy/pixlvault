@@ -95,35 +95,52 @@ class Pictures:
     def __getitem__(self, picture_id):
         # Return master Picture by picture_uuid
         import sqlite3
+        import time
 
         logger.info(f"Fetching picture with id={picture_id} (type={type(picture_id)})")
-        conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, character_id, description, tags, created_at, embedding FROM pictures WHERE id = ?",
-            (picture_id,),
-        )
-        row = cursor.fetchone()
-        conn.close()
-        if not row:
-            raise KeyError(f"Picture with id {picture_id} not found.")
-        tags = []
-        if row["tags"]:
+        retries = 5
+        delay = 0.2
+        for attempt in range(retries):
             try:
-                tags = json.loads(row["tags"])
-            except Exception:
+                conn = sqlite3.connect(self._db_path, check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL;")
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT id, character_id, description, tags, created_at, embedding FROM pictures WHERE id = ?",
+                    (picture_id,),
+                )
+                row = cursor.fetchone()
+                conn.close()
+                if not row:
+                    raise KeyError(f"Picture with id {picture_id} not found.")
                 tags = []
-        has_embedding = bool(row["embedding"]) if "embedding" in row.keys() else False
-        pic = Picture(
-            id=row["id"],
-            character_id=row["character_id"],
-            description=row["description"],
-            tags=tags,
-            created_at=row["created_at"],
-            has_embedding=has_embedding,
-        )
-        return pic
+                if row["tags"]:
+                    try:
+                        tags = json.loads(row["tags"])
+                    except Exception:
+                        tags = []
+                has_embedding = (
+                    bool(row["embedding"]) if "embedding" in row.keys() else False
+                )
+                pic = Picture(
+                    id=row["id"],
+                    character_id=row["character_id"],
+                    description=row["description"],
+                    tags=tags,
+                    created_at=row["created_at"],
+                    has_embedding=has_embedding,
+                )
+                return pic
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < retries - 1:
+                    logger.warning(
+                        f"Database is locked, retrying ({attempt + 1}/{retries})..."
+                    )
+                    time.sleep(delay)
+                    continue
+                else:
+                    raise
 
     def __setitem__(self, picture_id, picture):
         picture.id = picture_id
@@ -310,6 +327,36 @@ class Pictures:
                     logger.warning(
                         f"File {file_path} for Picture {picture.id} does NOT exist after DB insert."
                     )
+
+    def update_pictures(self, pictures):
+        """Update a list of Picture instances in the database using executemany for efficiency."""
+        cursor = self._connection.cursor()
+        values = []
+        for picture in pictures:
+            tags = (
+                list(picture.tags) if hasattr(picture, "tags") and picture.tags else []
+            )
+            char_tag = getattr(picture, "character_id", None)
+            if char_tag and char_tag in tags:
+                tags = [t for t in tags if t != char_tag]
+            tags_json = json.dumps(tags)
+            values.append(
+                (
+                    getattr(picture, "character_id", None),
+                    getattr(picture, "description", None),
+                    tags_json,
+                    getattr(picture, "created_at", None),
+                    getattr(picture, "is_reference", 0),
+                    picture.id,
+                )
+            )
+        cursor.executemany(
+            """
+            UPDATE pictures SET character_id=?, description=?, tags=?, created_at=?, is_reference=? WHERE id=?
+            """,
+            values,
+        )
+        self._connection.commit()
 
     def contains(self, picture):
         """
