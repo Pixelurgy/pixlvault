@@ -323,15 +323,22 @@ class Pictures:
         """
         Find and return a list of Picture objects matching all provided attribute=value pairs.
         Example: pictures.find(character_id="hero")
+        Special case: if a value is an empty string, search for IS NULL.
         """
         cursor = self._connection.cursor()
         if not kwargs:
             cursor.execute("SELECT * FROM pictures")
         else:
-            query = "SELECT * FROM pictures WHERE " + " AND ".join(
-                [f"{k}=?" for k in kwargs.keys()]
-            )
-            cursor.execute(query, tuple(kwargs.values()))
+            clauses = []
+            values = []
+            for k, v in kwargs.items():
+                if v == "":
+                    clauses.append(f"{k} IS NULL")
+                else:
+                    clauses.append(f"{k}=?")
+                    values.append(v)
+            query = "SELECT * FROM pictures WHERE " + " AND ".join(clauses)
+            cursor.execute(query, tuple(values))
         rows = cursor.fetchall()
         result = []
         for row in rows:
