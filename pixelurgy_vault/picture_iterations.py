@@ -35,8 +35,22 @@ class PictureIterations:
         import sqlite3
 
         logger = get_logger(__name__)
-        thread_conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        thread_conn.row_factory = sqlite3.Row
+        import time
+
+        retries = 5
+        delay = 0.2
+        for attempt in range(retries):
+            try:
+                thread_conn = sqlite3.connect(self._db_path, check_same_thread=False)
+                thread_conn.row_factory = sqlite3.Row
+                thread_conn.execute("PRAGMA journal_mode=WAL;")
+                break
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < retries - 1:
+                    time.sleep(delay)
+                    continue
+                else:
+                    raise
         while not self._quality_worker_stop.is_set():
             try:
                 cursor = thread_conn.cursor()
@@ -261,6 +275,41 @@ class PictureIterations:
         )
         self._connection.commit()
 
+    def update_iterations(self, iterations):
+        """Update a list of PictureIteration instances in the database using executemany for efficiency."""
+        cursor = self._connection.cursor()
+        values = []
+        for it in iterations:
+            values.append(
+                (
+                    getattr(it, "picture_id", None),
+                    getattr(it, "character_id", None),
+                    getattr(it, "file_path", None),
+                    getattr(it, "format", None),
+                    getattr(it, "width", None),
+                    getattr(it, "height", None),
+                    getattr(it, "size_bytes", None),
+                    getattr(it, "created_at", None),
+                    getattr(it, "is_master", 0),
+                    getattr(it, "derived_from", None),
+                    getattr(it, "transform_metadata", None),
+                    getattr(it, "thumbnail", None),
+                    getattr(it, "quality", None),
+                    getattr(it, "face_quality", None),
+                    getattr(it, "score", None),
+                    getattr(it, "character_likeness", None),
+                    getattr(it, "pixel_sha", None),
+                    it.id,
+                )
+            )
+        cursor.executemany(
+            """
+            UPDATE picture_iterations SET picture_id=?, character_id=?, file_path=?, format=?, width=?, height=?, size_bytes=?, created_at=?, is_master=?, derived_from=?, transform_metadata=?, thumbnail=?, quality=?, face_quality=?, score=?, character_likeness=?, pixel_sha=? WHERE id=?
+            """,
+            values,
+        )
+        self._connection.commit()
+
     def update_quality(self, iteration_id, quality):
         """
         Update only the quality field for a given iteration.
@@ -290,10 +339,23 @@ class PictureIterations:
             cursor.execute(query, tuple(kwargs.values()))
         rows = cursor.fetchall()
         result = []
+        import logging
+
         for row in rows:
-            quality = (
-                PictureQuality(**json.loads(row["quality"])) if row["quality"] else None
-            )
+            quality = None
+            if row["quality"]:
+                try:
+                    qdata = json.loads(row["quality"])
+                    if isinstance(qdata, dict):
+                        quality = PictureQuality(**qdata)
+                    else:
+                        logging.warning(
+                            f"Quality field for iteration {row['id']} is not a dict: {qdata}"
+                        )
+                except Exception as e:
+                    logging.warning(
+                        f"Failed to parse quality for iteration {row['id']}: {e}; value: {row['quality']}"
+                    )
             it = PictureIteration(
                 id=row["id"],
                 picture_id=row["picture_id"],

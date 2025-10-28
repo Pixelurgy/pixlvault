@@ -86,7 +86,17 @@ const getSelectionBorderClasses = (idx) => {
 
 
 const ALL_PICTURES_ID = '__all__'
+const UNASSIGNED_PICTURES_ID = '__unassigned__'
 const characters = ref([])
+// Computed: characters sorted alphabetically by name (case-insensitive)
+const sortedCharacters = computed(() => {
+  return [...characters.value].sort((a, b) => {
+    if (!a.name && !b.name) return 0;
+    if (!a.name) return 1;
+    if (!b.name) return -1;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  });
+});
 const characterThumbnails = ref({}) // { [characterId]: thumbnailUrl }
 const loading = ref(false)
 const error = ref(null)
@@ -134,17 +144,18 @@ async function fetchCharacters() {
 
 async function fetchCharacterThumbnail(characterId) {
   try {
-    // Use the new face-cropped thumbnail endpoint
-    const thumbUrl = `${BACKEND_URL}/face_thumbnail/${characterId}`
+    // Add cache-busting query param to ensure fresh thumbnail
+    const cacheBuster = Date.now();
+    const thumbUrl = `${BACKEND_URL}/face_thumbnail/${characterId}?cb=${cacheBuster}`;
     // Test if the endpoint returns an image (status 200 and content-type image/png)
-    const res = await fetch(thumbUrl)
+    const res = await fetch(thumbUrl);
     if (res.ok && res.headers.get('content-type')?.includes('image/png')) {
-      characterThumbnails.value[characterId] = thumbUrl
+      characterThumbnails.value[characterId] = thumbUrl;
     } else {
-      characterThumbnails.value[characterId] = null
+      characterThumbnails.value[characterId] = null;
     }
   } catch (e) {
-    characterThumbnails.value[characterId] = null
+    characterThumbnails.value[characterId] = null;
   }
 }
 
@@ -159,12 +170,15 @@ onMounted(() => {
 watch(selectedCharacter, async (id) => {
   images.value = []
   imagesError.value = null
+  selectedImageIds.value = [] // Clear selection on character change
   if (!id) return
   imagesLoading.value = true
   try {
     let url
     if (id === ALL_PICTURES_ID) {
       url = `${BACKEND_URL}/pictures?info=true`
+    } else if (id === UNASSIGNED_PICTURES_ID) {
+      url = `${BACKEND_URL}/pictures?character_id=&info=true`
     } else {
       url = `${BACKEND_URL}/pictures?character_id=${encodeURIComponent(id)}&info=true`
     }
@@ -183,6 +197,14 @@ watch(selectedCharacter, async (id) => {
 })
 
 function handleOverlayKeydown(e) {
+  // Ctrl+A: select all images in grid
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+    if (images.value.length) {
+      selectedImageIds.value = images.value.map(img => img.id)
+      e.preventDefault()
+    }
+    return
+  }
   if (overlayOpen.value) {
     if (e.key === 'ArrowLeft') {
       showPrevImage()
@@ -198,66 +220,66 @@ function handleOverlayKeydown(e) {
       return
     }
   }
-    // Grid navigation and selection
-    if (!images.value.length) return
-    const cols = columns.value
-    let idx = lastSelectedIndex
-    if (idx === null || idx < 0 || idx >= images.value.length) idx = 0
-    let nextIdx = idx
-    if (e.key === 'ArrowLeft') {
-      if (idx % cols > 0) nextIdx = idx - 1
-      else return
-    } else if (e.key === 'ArrowRight') {
-      if (idx % cols < cols - 1 && idx + 1 < images.value.length) nextIdx = idx + 1
-      else return
-    } else if (e.key === 'ArrowUp') {
-      if (idx - cols >= 0) nextIdx = idx - cols
-      else return
-    } else if (e.key === 'ArrowDown') {
-      if (idx + cols < images.value.length) nextIdx = idx + cols
-      else return
-    } else if (e.key === 'Delete') {
-      if (selectedImageIds.value.length) {
-        deleteSelectedImages()
-        e.preventDefault()
-        return
-      }
-    }
-    // Score shortcuts 1-5
-    if (/^[1-5]$/.test(e.key) && selectedImageIds.value.length) {
-      showStars.value = true
-      patchScoreForSelection(Number(e.key))
+  // Grid navigation and selection
+  if (!images.value.length) return
+  const cols = columns.value
+  let idx = lastSelectedIndex
+  if (idx === null || idx < 0 || idx >= images.value.length) idx = 0
+  let nextIdx = idx
+  if (e.key === 'ArrowLeft') {
+    if (idx % cols > 0) nextIdx = idx - 1
+    else return
+  } else if (e.key === 'ArrowRight') {
+    if (idx % cols < cols - 1 && idx + 1 < images.value.length) nextIdx = idx + 1
+    else return
+  } else if (e.key === 'ArrowUp') {
+    if (idx - cols >= 0) nextIdx = idx - cols
+    else return
+  } else if (e.key === 'ArrowDown') {
+    if (idx + cols < images.value.length) nextIdx = idx + cols
+    else return
+  } else if (e.key === 'Delete') {
+    if (selectedImageIds.value.length) {
+      deleteSelectedImages()
       e.preventDefault()
       return
-    } else {
-      return
     }
-    const isCtrl = e.ctrlKey || e.metaKey
-    const isShift = e.shiftKey
-    if (isShift && lastSelectedIndex !== null) {
-      // Range select
-      const start = Math.min(lastSelectedIndex, nextIdx)
-      const end = Math.max(lastSelectedIndex, nextIdx)
-      const rangeIds = images.value.slice(start, end + 1).map(i => i.id)
-      const newSelection = isCtrl
-        ? Array.from(new Set([...selectedImageIds.value, ...rangeIds]))
-        : rangeIds
-      selectedImageIds.value = newSelection
-    } else if (isCtrl) {
-      // Toggle selection of nextIdx
-      const id = images.value[nextIdx].id
-      if (selectedImageIds.value.includes(id)) {
-        selectedImageIds.value = selectedImageIds.value.filter(i => i !== id)
-      } else {
-        selectedImageIds.value = [...selectedImageIds.value, id]
-      }
-      lastSelectedIndex = nextIdx
-    } else {
-      // Single select
-      selectedImageIds.value = [images.value[nextIdx].id]
-      lastSelectedIndex = nextIdx
-    }
+  }
+  // Score shortcuts 1-5
+  if (/^[1-5]$/.test(e.key) && selectedImageIds.value.length) {
+    showStars.value = true
+    patchScoreForSelection(Number(e.key))
     e.preventDefault()
+    return
+  } else {
+    return
+  }
+  const isCtrl = e.ctrlKey || e.metaKey
+  const isShift = e.shiftKey
+  if (isShift && lastSelectedIndex !== null) {
+    // Range select
+    const start = Math.min(lastSelectedIndex, nextIdx)
+    const end = Math.max(lastSelectedIndex, nextIdx)
+    const rangeIds = images.value.slice(start, end + 1).map(i => i.id)
+    const newSelection = isCtrl
+      ? Array.from(new Set([...selectedImageIds.value, ...rangeIds]))
+      : rangeIds
+    selectedImageIds.value = newSelection
+  } else if (isCtrl) {
+    // Toggle selection of nextIdx
+    const id = images.value[nextIdx].id
+    if (selectedImageIds.value.includes(id)) {
+      selectedImageIds.value = selectedImageIds.value.filter(i => i !== id)
+    } else {
+      selectedImageIds.value = [...selectedImageIds.value, id]
+    }
+    lastSelectedIndex = nextIdx
+  } else {
+    // Single select
+    selectedImageIds.value = [images.value[nextIdx].id]
+    lastSelectedIndex = nextIdx
+  }
+  e.preventDefault()
   }
 
   onMounted(() => {
@@ -333,13 +355,75 @@ async function setImageScore(img, n) {
 }
 
 const showStars = ref(true)
+
+// Drag and drop logic for assigning images to characters
+const dragOverCharacter = ref(null)
+function onImageDragStart(img, idx, event) {
+  // Only allow dragging if this image is selected
+  let ids = selectedImageIds.value.length && isImageSelected(img.id)
+    ? selectedImageIds.value
+    : [img.id]
+  event.dataTransfer.setData('application/json', JSON.stringify({ imageIds: ids }))
+  event.dataTransfer.effectAllowed = 'move'
+}
+function onCharacterDragOver(charId) {
+  dragOverCharacter.value = charId
+}
+function onCharacterDragLeave(charId) {
+  if (dragOverCharacter.value === charId) dragOverCharacter.value = null
+}
+async function onCharacterDrop(charId, event) {
+  dragOverCharacter.value = null
+  try {
+    const data = JSON.parse(event.dataTransfer.getData('application/json'))
+    if (!data.imageIds || !Array.isArray(data.imageIds)) return
+    await assignImagesToCharacter(data.imageIds, charId)
+  } catch (e) {}
+}
+
+// Assign images to a character by PATCHing their character_id
+async function assignImagesToCharacter(imageIds, characterId) {
+  try {
+    await Promise.all(imageIds.map(async (id) => {
+      const res = await fetch(`${BACKEND_URL}/pictures/${id}?character_id=${encodeURIComponent(characterId)}`, { method: 'PATCH' })
+      if (!res.ok) throw new Error(`Failed to assign character for image ${id}`)
+    }))
+    // Refresh images and character thumbnails after assignment
+    await fetchCharacters()
+    // If the current view is the character we just assigned to, or All Pictures, or Unassigned Pictures, refresh images
+    if (
+      selectedCharacter.value === characterId ||
+      selectedCharacter.value === ALL_PICTURES_ID ||
+      selectedCharacter.value === UNASSIGNED_PICTURES_ID
+    ) {
+      // Re-fetch images for the current character, all, or unassigned
+      const id = selectedCharacter.value
+      let url
+      if (id === ALL_PICTURES_ID) {
+        url = `${BACKEND_URL}/pictures?info=true`
+      } else if (id === UNASSIGNED_PICTURES_ID) {
+        url = `${BACKEND_URL}/pictures?character_id=&info=true`
+      } else {
+        url = `${BACKEND_URL}/pictures?character_id=${encodeURIComponent(id)}&info=true`
+      }
+      const res = await fetch(url)
+      if (res.ok) {
+        const baseImages = await res.json()
+        images.value = baseImages.map(img => ({ ...img, score: typeof img.score !== 'undefined' ? img.score : null }))
+        setTimeout(updateColumns, 0)
+      }
+    }
+  } catch (e) {
+    alert('Failed to assign character: ' + (e.message || e))
+  }
+}
 </script>
 
 <template>
   <v-app>
     <div class="file-manager">
       <aside class="sidebar">
-        <div class="sidebar-title">All Pictures</div>
+        <div class="sidebar-title">Pictures</div>
         <div
           :class="['sidebar-item', { active: selectedCharacter === ALL_PICTURES_ID }]"
           @click="selectedCharacter = ALL_PICTURES_ID"
@@ -350,14 +434,26 @@ const showStars = ref(true)
           </span>
           <span style="font-size:1.15em; line-height:1.2;">All Pictures</span>
         </div>
+        <div
+          :class="['sidebar-item', { active: selectedCharacter === UNASSIGNED_PICTURES_ID }]"
+          @click="selectedCharacter = UNASSIGNED_PICTURES_ID"
+          style="display: flex; align-items: center; min-height: 56px; padding-top: 6px; padding-bottom: 6px; font-weight: bold;"
+        >
+          <span style="display: flex; align-items: center; margin-right: 12px;">
+            <v-icon size="44">mdi-help-circle-outline</v-icon>
+          </span>
+          <span style="font-size:1.15em; line-height:1.2;">Unassigned Pictures</span>
+        </div>
         <div class="sidebar-title">Characters</div>
-        <div v-if="loading" class="sidebar-loading">Loading...</div>
         <div v-if="error" class="sidebar-error">{{ error }}</div>
         <div
-          v-for="char in characters"
+          v-for="char in sortedCharacters"
           :key="char.id"
-          :class="['sidebar-item', { active: selectedCharacter === char.id }]"
+          :class="['sidebar-item', { active: selectedCharacter === char.id, 'droppable': dragOverCharacter === char.id }]"
           @click="selectedCharacter = char.id"
+          @dragover.prevent="onCharacterDragOver(char.id)"
+          @dragleave="onCharacterDragLeave(char.id)"
+          @drop="onCharacterDrop(char.id, $event)"
           style="display: flex; align-items: center; min-height: 56px; padding-top: 6px; padding-bottom: 6px;"
         >
           <span style="display: flex; align-items: center; margin-right: 12px;">
@@ -365,6 +461,8 @@ const showStars = ref(true)
           </span>
           <span style="font-size:1.15em; line-height:1.2;">{{ char.name.charAt(0).toUpperCase() + char.name.slice(1) }}</span>
         </div>
+        <div v-if="loading" class="sidebar-loading">Loading...</div>
+
       </aside>
       <main class="main-area">
         <!-- Top toolbar with right-aligned slider and delete button -->
@@ -415,6 +513,8 @@ const showStars = ref(true)
                 class="image-card"
                 :class="[isImageSelected(img.id) ? 'selected' : '', getSelectionBorderClasses(idx)]"
                 @click="handleImageSelect(img, idx, $event)"
+                :draggable="isImageSelected(img.id)"
+                @dragstart="onImageDragStart(img, idx, $event)"
               >
                 <v-card>
                   <div class="star-overlay" v-if="showStars">
