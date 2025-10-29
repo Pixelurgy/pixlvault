@@ -113,6 +113,25 @@ async function refreshImages() {
   }
 }
 
+// Toggle reference status for a picture
+async function toggleReference(img) {
+  try {
+    const newVal = img.is_reference ? 0 : 1;
+    const res = await fetch(
+      `${BACKEND_URL}/pictures/${img.id}?is_reference=${newVal}`,
+      { method: "PATCH" }
+    );
+    if (!res.ok) throw new Error("Failed to update reference status");
+    img.is_reference = newVal;
+    // If in reference mode, reload images so the grid updates immediately
+    if (selectedReferenceMode.value && newVal === 0) {
+      images.value = images.value.filter((i) => i.id !== img.id);
+    }
+  } catch (e) {
+    alert("Failed to update reference status: " + (e.message || e));
+  }
+}
+
 function handleGridDragEnter(e) {
   console.debug("handleGridDragEnter", e);
   if (!e.dataTransfer || !e.dataTransfer.items) return;
@@ -131,6 +150,7 @@ function handleGridDragEnter(e) {
     console.debug("Overlay hidden (unsupported)");
   }
 }
+
 function handleGridDragOver(e) {
   console.debug(
     "handleGridDragOver",
@@ -231,6 +251,8 @@ async function searchImages() {
     images.value = baseImages.map((img) => ({
       ...img,
       score: typeof img.score !== "undefined" ? img.score : null,
+      is_reference:
+        typeof img.is_reference !== "undefined" ? img.is_reference : 0,
     }));
     setTimeout(updateColumns, 0);
   } catch (e) {
@@ -445,6 +467,8 @@ onMounted(() => {
           images.value = baseImages.map((img) => ({
             ...img,
             score: typeof img.score !== "undefined" ? img.score : null,
+            is_reference:
+              typeof img.is_reference !== "undefined" ? img.is_reference : 0,
           }));
           setTimeout(updateColumns, 0);
         })
@@ -706,6 +730,8 @@ async function assignImagesToCharacter(imageIds, characterId) {
         images.value = baseImages.map((img) => ({
           ...img,
           score: typeof img.score !== "undefined" ? img.score : null,
+          is_reference:
+            typeof img.is_reference !== "undefined" ? img.is_reference : 0,
         }));
         setTimeout(updateColumns, 0);
       }
@@ -762,6 +788,8 @@ async function assignImagesAsReference(imageIds, characterId) {
         images.value = baseImages.map((img) => ({
           ...img,
           score: typeof img.score !== "undefined" ? img.score : null,
+          is_reference:
+            typeof img.is_reference !== "undefined" ? img.is_reference : 0,
         }));
         setTimeout(updateColumns, 0);
       }
@@ -939,7 +967,7 @@ function confirmDeleteCharacter() {
           :color="showStars ? 'amber darken-2' : 'grey'"
           @click="showStars = !showStars"
           title="Toggle star ratings"
-          style="margin-left: 6px; margin-right: 6px"
+          style="margin-left: 6px; margin-right: 2px"
         >
           <v-icon>{{ showStars ? "mdi-star" : "mdi-star-outline" }}</v-icon>
         </v-btn>
@@ -949,7 +977,7 @@ function confirmDeleteCharacter() {
           :disabled="!selectedImageIds.length"
           @click="deleteSelectedImages"
           title="Delete selected images"
-          style="margin-left: 6px; margin-right: 2px"
+          style="margin-left: 2px; margin-right: 2px"
         >
           <v-icon>mdi-trash-can-outline</v-icon>
         </v-btn>
@@ -1002,7 +1030,6 @@ function confirmDeleteCharacter() {
             <v-icon small style="margin-right: 8px">{{
               sidebarSections.people ? "mdi-chevron-down" : "mdi-chevron-right"
             }}</v-icon>
-            People
             <span style="flex: 1 1 auto"></span>
             <span
               style="
@@ -1195,6 +1222,17 @@ function confirmDeleteCharacter() {
                       @load="fetchScoreIfMissing(img)"
                       style="cursor: pointer"
                     />
+                    <!-- Trophy icon for reference toggle -->
+                    <v-btn
+                      icon
+                      size="small"
+                      class="reference-trophy-btn"
+                      :color="img.is_reference ? 'orange darken-2' : 'grey'"
+                      @click.stop="toggleReference(img)"
+                      title="Toggle reference picture"
+                    >
+                      <v-icon color="white">mdi-trophy</v-icon>
+                    </v-btn>
                     <!-- Removed image description from grid -->
                   </v-card>
                 </div>
@@ -1312,6 +1350,15 @@ body {
   position: relative;
   z-index: 0; /* Ensure stacking context */
   border: 3px solid transparent;
+}
+
+.reference-trophy-btn {
+  position: absolute !important;
+  right: 8px;
+  bottom: 8px;
+  z-index: 12;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  background: transparent;
 }
 .image-card.selected {
   z-index: 2;
