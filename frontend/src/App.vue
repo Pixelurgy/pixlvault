@@ -246,20 +246,28 @@ async function searchImages() {
 }
 
 function handleImageSelect(img, idx, event) {
+  // Use sortedImages for all index-based selection
+  const sorted = sortedImages.value;
   const id = img.id;
   const isSelected = selectedImageIds.value.includes(id);
   const isCtrl = event.ctrlKey || event.metaKey;
   const isShift = event.shiftKey;
 
-  if (isShift && lastSelectedIndex !== null) {
-    // Range select
-    const start = Math.min(lastSelectedIndex, idx);
-    const end = Math.max(lastSelectedIndex, idx);
-    const rangeIds = images.value.slice(start, end + 1).map((i) => i.id);
-    const newSelection = isCtrl
-      ? Array.from(new Set([...selectedImageIds.value, ...rangeIds]))
-      : rangeIds;
-    selectedImageIds.value = newSelection;
+  if (isShift) {
+    if (lastSelectedIndex !== null) {
+      // Range select in sortedImages
+      const start = Math.min(lastSelectedIndex, idx);
+      const end = Math.max(lastSelectedIndex, idx);
+      const rangeIds = sorted.slice(start, end + 1).map((i) => i.id);
+      const newSelection = isCtrl
+        ? Array.from(new Set([...selectedImageIds.value, ...rangeIds]))
+        : rangeIds;
+      selectedImageIds.value = newSelection;
+    } else {
+      // No previous selection, just select the clicked image
+      selectedImageIds.value = [id];
+    }
+    lastSelectedIndex = idx;
   } else if (isCtrl) {
     // Toggle selection
     if (isSelected) {
@@ -295,34 +303,35 @@ async function fetchScoreIfMissing(img) {
 
 const isImageSelected = (id) => selectedImageIds.value.includes(id);
 
-// Logic to determine if a selected image is on the outer edge of a selection group
+// Logic to determine if a selected image is on the outer edge of a selection group (use sortedImages)
 const getSelectionBorderClasses = (idx) => {
-  if (!isImageSelected(images.value[idx]?.id)) return "";
+  const sorted = sortedImages.value;
+  if (!isImageSelected(sorted[idx]?.id)) return "";
   const cols = columns.value;
-  const total = images.value.length;
+  const total = sorted.length;
   const row = Math.floor(idx / cols);
   const col = idx % cols;
   let classes = [];
   // Check neighbors: top, right, bottom, left
   // Top
-  if (row === 0 || !isImageSelected(images.value[(row - 1) * cols + col]?.id)) {
+  if (row === 0 || !isImageSelected(sorted[(row - 1) * cols + col]?.id)) {
     classes.push("selected-border-top");
   }
   // Bottom
   if (
     row === Math.floor((total - 1) / cols) ||
-    !isImageSelected(images.value[(row + 1) * cols + col]?.id)
+    !isImageSelected(sorted[(row + 1) * cols + col]?.id)
   ) {
     classes.push("selected-border-bottom");
   }
   // Left
-  if (col === 0 || !isImageSelected(images.value[row * cols + (col - 1)]?.id)) {
+  if (col === 0 || !isImageSelected(sorted[row * cols + (col - 1)]?.id)) {
     classes.push("selected-border-left");
   }
   // Right
   if (
     col === cols - 1 ||
-    !isImageSelected(images.value[row * cols + (col + 1)]?.id)
+    !isImageSelected(sorted[row * cols + (col + 1)]?.id)
   ) {
     classes.push("selected-border-right");
   }
