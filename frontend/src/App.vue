@@ -6,6 +6,9 @@ import unknownPerson from "./assets/unknown-person.png"; // Import for unknown c
 const selectedImageIds = ref([]);
 let lastSelectedIndex = null;
 
+// Sidebar visibility state
+const sidebarVisible = ref(true);
+
 // Overlay state for full image view
 const overlayOpen = ref(false);
 const overlayImage = ref(null);
@@ -624,8 +627,69 @@ async function assignImagesAsReference(imageIds, characterId) {
 
 <template>
   <v-app>
+    <div class="top-toolbar">
+      <v-btn
+        icon
+        @click="sidebarVisible = !sidebarVisible"
+        title="Toggle sidebar"
+        class="sidebar-toggle-btn"
+        style="margin-right: 16px;"
+      >
+        <v-icon>{{ sidebarVisible ? 'mdi-menu-open' : 'mdi-menu' }}</v-icon>
+      </v-btn>
+      <v-text-field
+        v-model="searchQuery"
+        placeholder="Search images..."
+        hide-details
+        dense
+        solo
+        clearable
+        prepend-inner-icon="mdi-magnify"
+        style="min-width: 400px; max-width: 800px; margin-right: 16px"
+        @keydown.enter="searchImages"
+        @click:append-outer="searchImages"
+      />
+      <div style="flex: 1"></div>
+      <v-btn
+        icon
+        :color="showStars ? 'amber darken-2' : 'grey'"
+        @click="showStars = !showStars"
+        title="Toggle star ratings"
+        style="margin-right: 12px"
+      >
+        <v-icon>{{ showStars ? "mdi-star" : "mdi-star-outline" }}</v-icon>
+      </v-btn>
+      <v-btn
+        icon
+        color="red darken-2"
+        :disabled="!selectedImageIds.length"
+        @click="deleteSelectedImages"
+        title="Delete selected images"
+        style="margin-right: 12px"
+      >
+        <v-icon>mdi-trash-can-outline</v-icon>
+      </v-btn>
+      <v-icon small>mdi-image-size-select-small</v-icon>
+      <v-slider
+        v-model="thumbnailSize"
+        :min="128"
+        :max="256"
+        :step="64"
+        :ticks="true"
+        :tick-labels="thumbnailLabels"
+        class="slider"
+        hide-details
+        style="
+          max-width: 220px;
+          display: inline-block;
+          vertical-align: middle;
+          margin: 0 8px;
+        "
+      />
+      <v-icon small>mdi-image-size-select-large</v-icon>
+    </div>
     <div class="file-manager">
-      <aside class="sidebar">
+      <aside v-if="sidebarVisible" class="sidebar">
         <div class="sidebar-title">Pictures</div>
         <div
           :class="[
@@ -763,60 +827,7 @@ async function assignImagesAsReference(imageIds, characterId) {
         </div>
         <div v-if="loading" class="sidebar-loading">Loading...</div>
       </aside>
-      <main class="main-area">
-        <!-- Top toolbar with right-aligned slider and delete button -->
-        <div class="top-toolbar">
-          <v-text-field
-            v-model="searchQuery"
-            placeholder="Search images..."
-            hide-details
-            dense
-            solo
-            clearable
-            prepend-inner-icon="mdi-magnify"
-            style="max-width: 800px; margin-right: 16px"
-            @keydown.enter="searchImages"
-            @click:append-outer="searchImages"
-          />
-          <div style="flex: 1"></div>
-          <v-btn
-            icon
-            :color="showStars ? 'amber darken-2' : 'grey'"
-            @click="showStars = !showStars"
-            title="Toggle star ratings"
-            style="margin-right: 12px"
-          >
-            <v-icon>{{ showStars ? "mdi-star" : "mdi-star-outline" }}</v-icon>
-          </v-btn>
-          <v-btn
-            icon
-            color="red darken-2"
-            :disabled="!selectedImageIds.length"
-            @click="deleteSelectedImages"
-            title="Delete selected images"
-            style="margin-right: 12px"
-          >
-            <v-icon>mdi-trash-can-outline</v-icon>
-          </v-btn>
-          <v-icon small>mdi-image-size-select-small</v-icon>
-          <v-slider
-            v-model="thumbnailSize"
-            :min="128"
-            :max="256"
-            :step="64"
-            :ticks="true"
-            :tick-labels="thumbnailLabels"
-            class="slider"
-            hide-details
-            style="
-              max-width: 220px;
-              display: inline-block;
-              vertical-align: middle;
-              margin: 0 8px;
-            "
-          />
-          <v-icon small>mdi-image-size-select-large</v-icon>
-        </div>
+  <main class="main-area" :class="{ 'full-width': !sidebarVisible }">
         <div class="main-content">
           <template v-if="selectedCharacter">
             <div v-if="imagesLoading" class="empty-state">
@@ -1022,11 +1033,10 @@ async function assignImagesAsReference(imageIds, characterId) {
 .file-manager {
   display: flex;
   flex-direction: row;
-  position: fixed;
-  inset: 0;
-  background: #ccc;
-  min-width: 0;
+  width: 100vw;
   min-height: 0;
+  min-width: 0;
+  background: #ccc;
   box-sizing: border-box;
 }
 .sidebar {
@@ -1075,6 +1085,15 @@ async function assignImagesAsReference(imageIds, characterId) {
   min-height: 100vh;
   box-sizing: border-box;
   padding: 0;
+  transition: width 0.2s;
+}
+.main-area.full-width {
+  width: 100vw;
+}
+.sidebar-toggle-btn {
+  min-width: 40px;
+  min-height: 40px;
+  margin-left: -8px;
 }
 .main-content {
   flex: 1;
@@ -1224,15 +1243,16 @@ async function assignImagesAsReference(imageIds, characterId) {
   z-index: 1200;
 }
 .top-toolbar {
-  width: 100%;
+  width: 100vw;
   background: #cdcdcdff;
   min-height: 48px;
   display: flex;
   align-items: center;
   padding: 0 24px;
   border-bottom: 1px solid #ccc;
-  margin-bottom: 4px;
+  margin-bottom: 0;
   z-index: 2;
+  position: relative;
 }
 .star-overlay {
   position: absolute;
