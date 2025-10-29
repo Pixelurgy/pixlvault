@@ -310,9 +310,44 @@ class Server:
                 "tags": tags_list,
             }
 
-        """
-        Set up all FastAPI routes for the application and register shutdown cleanup.
-        """
+        @self.app.patch("/characters/{id}")
+        async def patch_character(id: int, request: Request):
+            data = await request.json()
+            name = data.get("name")
+            description = data.get("description")
+            try:
+                char = self.vault.characters[id]
+            except KeyError:
+                raise HTTPException(status_code=404, detail="Character not found")
+            updated = False
+            if name is not None and name != char.name:
+                char.name = name
+                updated = True
+            if description is not None and description != char.description:
+                char.description = description
+                updated = True
+            if updated:
+                self.vault.characters.update(char)
+            return {"status": "success", "character": char.__dict__}
+
+        @self.app.delete("/characters/{id}")
+        def delete_character(id: int):
+            # Remove character_id from all pictures and picture_iterations
+            cursor = self.vault.connection.cursor()
+            cursor.execute(
+                "UPDATE pictures SET character_id = NULL WHERE character_id = ?", (id,)
+            )
+            cursor.execute(
+                "UPDATE picture_iterations SET character_id = NULL WHERE character_id = ?",
+                (id,),
+            )
+            self.vault.connection.commit()
+            # Delete the character
+            try:
+                self.vault.characters.delete(id)
+            except KeyError:
+                raise HTTPException(status_code=404, detail="Character not found")
+            return {"status": "success", "deleted_id": id}
 
         @self.app.get("/characters")
         def get_characters(name: str = Query(None)):

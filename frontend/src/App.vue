@@ -691,17 +691,35 @@ function addNewCharacter() {
     num++;
   } while (existingNames.has(name));
   nextCharacterNumber.value = num;
-  // Add to characters list (frontend only)
-  characters.value.push({
-    id: `new-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    name,
-    description: '',
-    tags: [],
-    created_at: new Date().toISOString(),
-    is_reference: 0,
-    has_embedding: false,
-  });
-  // Do NOT set editingCharacterId here
+  // POST to backend
+  fetch(`${BACKEND_URL}/characters`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description: '' })
+  })
+    .then(async res => {
+      if (!res.ok) throw new Error('Failed to create character');
+      const data = await res.json();
+      if (data && data.character && data.character.id) {
+        // Add to local list
+        characters.value.push(data.character);
+        // Optionally, start editing the new character name
+        editingCharacterId.value = data.character.id;
+        editingCharacterName.value = data.character.name;
+        nextTick(() => {
+          const input = document.querySelector('.edit-character-input');
+          if (input) {
+            input.focus();
+            input.select();
+          }
+        });
+        // Optionally, fetch thumbnail
+        fetchCharacterThumbnail(data.character.id);
+      }
+    })
+    .catch(e => {
+      alert('Failed to create character: ' + (e.message || e));
+    });
 }
 
 // Inline edit state for character names
@@ -720,8 +738,24 @@ function startEditingCharacter(char) {
   });
 }
 function saveEditingCharacter(char) {
-  if (editingCharacterName.value.trim()) {
-    char.name = editingCharacterName.value.trim();
+  const newName = editingCharacterName.value.trim();
+  if (newName && newName !== char.name) {
+    // PATCH backend
+    fetch(`${BACKEND_URL}/characters/${char.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName })
+    })
+      .then(async res => {
+        if (!res.ok) throw new Error('Failed to update character');
+        const data = await res.json();
+        if (data && data.character) {
+          char.name = data.character.name;
+        }
+      })
+      .catch(e => {
+        alert('Failed to update character: ' + (e.message || e));
+      });
   }
   editingCharacterId.value = null;
   editingCharacterName.value = "";
@@ -730,6 +764,30 @@ function cancelEditingCharacter() {
   editingCharacterId.value = null;
   editingCharacterName.value = "";
 }
+
+// Confirm and delete character
+function confirmDeleteCharacter() {
+  const char = characters.value.find(c => c.id === selectedCharacter.value);
+  if (!char) return;
+  if (window.confirm(`Delete character '${char.name}'? This will unassign all their images.`)) {
+    fetch(`${BACKEND_URL}/characters/${char.id}`, { method: 'DELETE' })
+      .then(async res => {
+        if (!res.ok) throw new Error('Failed to delete character');
+        // Remove from local list
+        characters.value = characters.value.filter(c => c.id !== char.id);
+        // Reset selection
+        selectedCharacter.value = ALL_PICTURES_ID;
+        selectedReferenceMode.value = false;
+        // Optionally, refresh images
+        images.value = [];
+        await fetchCharacters();
+      })
+      .catch(e => {
+        alert('Failed to delete character: ' + (e.message || e));
+      });
+  }
+}
+
 </script>
 
 <template>
@@ -832,7 +890,18 @@ function cancelEditingCharacter() {
           <div class="sidebar-section-header" @click="sidebarSections.people = !sidebarSections.people">
             <v-icon small style="margin-right: 8px;">{{ sidebarSections.people ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
             People
-            <v-icon class="add-character-inline" @click.stop="addNewCharacter" title="Add character">mdi-plus</v-icon>
+            <span style="flex: 1 1 auto"></span>
+            <span style="display: grid; grid-template-columns: 32px 32px; gap: 0px; align-items: center; min-width: 64px;">
+              <v-icon
+                v-if="selectedCharacter && selectedCharacter !== ALL_PICTURES_ID && selectedCharacter !== UNASSIGNED_PICTURES_ID"
+                class="delete-character-inline"
+                color="white"
+                style="cursor: pointer; justify-self: end;"
+                @click.stop="confirmDeleteCharacter"
+                title="Delete selected character">mdi-trash-can-outline
+              </v-icon>
+              <v-icon class="add-character-inline" @click.stop="addNewCharacter" title="Add character" style="justify-self: end;">mdi-plus</v-icon>
+            </span>
           </div>
           <transition name="fade">
             <div v-show="sidebarSections.people">
