@@ -15,6 +15,46 @@ function isSupportedImageFile(file) {
   const ext = file.name.split('.').pop().toLowerCase();
   return PIL_IMAGE_EXTENSIONS.includes(ext);
 }
+
+// Fetch images for the current character and mode
+async function refreshImages() {
+  images.value = [];
+  imagesError.value = null;
+  selectedImageIds.value = [];
+  const id = selectedCharacter.value;
+  const refMode = selectedReferenceMode.value;
+  if (!id) return;
+  imagesLoading.value = true;
+  try {
+    let url;
+    if (id === ALL_PICTURES_ID) {
+      url = `${BACKEND_URL}/pictures?info=true`;
+    } else if (id === UNASSIGNED_PICTURES_ID) {
+      url = `${BACKEND_URL}/pictures?character_id=&info=true`;
+    } else if (refMode) {
+      url = `${BACKEND_URL}/characters/reference_pictures/${encodeURIComponent(id)}`;
+    } else {
+      url = `${BACKEND_URL}/pictures?character_id=${encodeURIComponent(id)}&info=true`;
+    }
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch images");
+    let baseImages = await res.json();
+    if (refMode && baseImages.reference_pictures) {
+      baseImages = baseImages.reference_pictures;
+      baseImages = baseImages.map((img) => ({ ...img, id: img.picture_id }));
+    }
+    images.value = baseImages.map((img) => ({
+      ...img,
+      score: typeof img.score !== "undefined" ? img.score : null,
+    }));
+    setTimeout(updateColumns, 0);
+  } catch (e) {
+    imagesError.value = e.message;
+  } finally {
+    imagesLoading.value = false;
+  }
+}
+
 function handleGridDragEnter(e) {
   console.debug('handleGridDragEnter', e);
   if (!e.dataTransfer || !e.dataTransfer.items) return;
@@ -50,6 +90,35 @@ function handleGridDragLeave(e) {
 function handleGridDrop(e) {
   console.debug('handleGridDrop', e);
   dragOverlayVisible.value = false;
+  if (!e.dataTransfer || !e.dataTransfer.files) return;
+  const files = Array.from(e.dataTransfer.files).filter(isSupportedImageFile);
+  if (!files.length) {
+    alert('No supported image files found.');
+    return;
+  }
+  // Upload each file
+  const uploadPromises = files.map(file => {
+    const formData = new FormData();
+    formData.append('image', file); // Backend expects 'image'
+    // Optionally, add character id if needed
+    if (selectedCharacter.value && selectedCharacter.value !== ALL_PICTURES_ID && selectedCharacter.value !== UNASSIGNED_PICTURES_ID) {
+      formData.append('character_id', selectedCharacter.value);
+    }
+    return fetch(`${BACKEND_URL}/pictures`, {
+      method: 'POST',
+      body: formData,
+    }).then(res => {
+      if (!res.ok) throw new Error('Upload failed');
+      return res.json();
+    });
+  });
+  Promise.all(uploadPromises)
+    .then(() => {
+      refreshImages();
+    })
+    .catch(e => {
+      alert('One or more uploads failed: ' + (e.message || e));
+    });
 }
 
 // Selection state for file manager
@@ -326,50 +395,7 @@ onMounted(() => {
 });
 
 watch([selectedCharacter, selectedReferenceMode], async ([id, refMode]) => {
-  images.value = [];
-  imagesError.value = null;
-  selectedImageIds.value = [];
-  if (!id) return;
-  imagesLoading.value = true;
-  try {
-    let url;
-    if (id === ALL_PICTURES_ID) {
-      url = `${BACKEND_URL}/pictures?info=true`;
-    } else if (id === UNASSIGNED_PICTURES_ID) {
-      url = `${BACKEND_URL}/pictures?character_id=&info=true`;
-    } else if (refMode) {
-      url = `${BACKEND_URL}/characters/reference_pictures/${encodeURIComponent(
-        id
-      )}`;
-    } else {
-      url = `${BACKEND_URL}/pictures?character_id=${encodeURIComponent(
-        id
-      )}&info=true`;
-    }
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("Failed to fetch images");
-    let baseImages = await res.json();
-    if (refMode && baseImages.reference_pictures) {
-      baseImages = baseImages.reference_pictures;
-      // Map picture_id to id for frontend compatibility
-      baseImages = baseImages.map((img) => ({ ...img, id: img.picture_id }));
-    }
-    // Filter for is_reference === true if in reference mode (legacy, not needed for new endpoint)
-    if (refMode && !baseImages[0]?.id) {
-      baseImages = baseImages.filter(
-        (img) => img.is_reference == true || img.is_reference == 1
-      );
-    }
-    images.value = baseImages.map((img) => ({
-      ...img,
-      score: typeof img.score !== "undefined" ? img.score : null,
-    }));
-    setTimeout(updateColumns, 0);
-  } catch (e) {
-    imagesError.value = e.message;
-  } finally {
-    imagesLoading.value = false;
-  }
+  refreshImages();
 });
 
 function handleOverlayKeydown(e) {
@@ -1133,11 +1159,11 @@ body {
   gap: 0;
   width: 100%;
   height: 100%;
-  min-height: 0;
+  min-height: 64px;
   flex: 1 1 0%;
   padding: 4px 12px 4px 4px; /* Extra right padding for scrollbar */
   overflow-y: auto;
-  background: #eee;
+  background: #ddd;
   align-content: start;
   justify-content: start;
 }
@@ -1393,10 +1419,6 @@ body {
   margin: 0 2px;
   min-width: 80px;
   max-width: 180px;
-}
-.image-grid {
-  gap: 0px;
-  max-height: calc(100vh - 80px);
 }
 /* Overlay modal for full image view */
 .image-overlay {
