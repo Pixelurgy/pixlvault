@@ -944,43 +944,52 @@ function confirmDeleteCharacter() {
           @keydown.enter="searchImages"
           @click:append-outer="searchImages"
         />
-        <v-icon small>mdi-image-size-select-small</v-icon>
-        <v-slider
-          v-model="thumbnailSize"
-          :min="128"
-          :max="256"
-          :step="64"
-          :ticks="true"
-          :tick-labels="thumbnailLabels"
-          class="slider"
-          hide-details
-          style="
-            max-width: 220px;
-            display: inline-block;
-            vertical-align: middle;
-            margin: 0px 16px;
-          "
-        />
-        <v-icon small>mdi-image-size-select-large</v-icon>
-        <v-btn
-          icon
-          :color="showStars ? 'amber darken-2' : 'grey'"
-          @click="showStars = !showStars"
-          title="Toggle star ratings"
-          style="margin-left: 6px; margin-right: 2px"
-        >
-          <v-icon>{{ showStars ? "mdi-star" : "mdi-star-outline" }}</v-icon>
-        </v-btn>
-        <v-btn
-          icon
-          color="red darken-2"
-          :disabled="!selectedImageIds.length"
-          @click="deleteSelectedImages"
-          title="Delete selected images"
-          style="margin-left: 2px; margin-right: 2px"
-        >
-          <v-icon>mdi-trash-can-outline</v-icon>
-        </v-btn>
+        <div class="toolbar-actions">
+          <v-icon style="display: flex; align-items: center; height: 100%"
+            >mdi-image-size-select-small</v-icon
+          >
+          <v-slider
+            v-model="thumbnailSize"
+            :min="128"
+            :max="256"
+            :step="32"
+            :ticks="true"
+            :tick-labels="thumbnailLabels"
+            class="slider"
+            hide-details
+            style="
+              min-width: 256px;
+              max-width: 320px;
+              vertical-align: middle;
+              margin-top: 4px;
+              margin-bottom: 4px;
+              margin-left: 8px;
+              margin-right: 16px;
+            "
+          />
+          <v-icon style="display: flex; align-items: center; height: 100%"
+            >mdi-image-size-select-large</v-icon
+          >
+          <v-btn
+            icon
+            :color="showStars ? 'amber darken-2' : 'grey'"
+            @click="showStars = !showStars"
+            title="Toggle star ratings"
+            style="margin-left: 6px; margin-right: 2px"
+          >
+            <v-icon>{{ showStars ? "mdi-star" : "mdi-star-outline" }}</v-icon>
+          </v-btn>
+          <v-btn
+            icon
+            color="red darken-2"
+            :disabled="!selectedImageIds.length"
+            @click="deleteSelectedImages"
+            title="Delete selected images"
+            style="margin-left: 2px; margin-right: 2px"
+          >
+            <v-icon>mdi-trash-can-outline</v-icon>
+          </v-btn>
+        </div>
       </div>
       <div class="file-manager">
         <aside v-if="sidebarVisible" class="sidebar">
@@ -1721,6 +1730,14 @@ body {
   margin-bottom: 0;
   z-index: 2;
   position: relative;
+}
+.toolbar-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-left: auto;
+  margin-right: 0px;
+  padding-right: 2px;
 }
 .star-overlay {
   position: absolute;
