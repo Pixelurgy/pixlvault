@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onMounted, watch, onBeforeUnmount } from "vue";
+import { computed, ref, onMounted, watch, onBeforeUnmount, nextTick } from "vue";
 import { VTextField } from "vuetify/components";
 import unknownPerson from "./assets/unknown-person.png"; // Import for unknown character icon
 
@@ -15,6 +15,46 @@ function isSupportedImageFile(file) {
   const ext = file.name.split('.').pop().toLowerCase();
   return PIL_IMAGE_EXTENSIONS.includes(ext);
 }
+
+// Fetch images for the current character and mode
+async function refreshImages() {
+  images.value = [];
+  imagesError.value = null;
+  selectedImageIds.value = [];
+  const id = selectedCharacter.value;
+  const refMode = selectedReferenceMode.value;
+  if (!id) return;
+  imagesLoading.value = true;
+  try {
+    let url;
+    if (id === ALL_PICTURES_ID) {
+      url = `${BACKEND_URL}/pictures?info=true`;
+    } else if (id === UNASSIGNED_PICTURES_ID) {
+      url = `${BACKEND_URL}/pictures?character_id=&info=true`;
+    } else if (refMode) {
+      url = `${BACKEND_URL}/characters/reference_pictures/${encodeURIComponent(id)}`;
+    } else {
+      url = `${BACKEND_URL}/pictures?character_id=${encodeURIComponent(id)}&info=true`;
+    }
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch images");
+    let baseImages = await res.json();
+    if (refMode && baseImages.reference_pictures) {
+      baseImages = baseImages.reference_pictures;
+      baseImages = baseImages.map((img) => ({ ...img, id: img.picture_id }));
+    }
+    images.value = baseImages.map((img) => ({
+      ...img,
+      score: typeof img.score !== "undefined" ? img.score : null,
+    }));
+    setTimeout(updateColumns, 0);
+  } catch (e) {
+    imagesError.value = e.message;
+  } finally {
+    imagesLoading.value = false;
+  }
+}
+
 function handleGridDragEnter(e) {
   console.debug('handleGridDragEnter', e);
   if (!e.dataTransfer || !e.dataTransfer.items) return;
@@ -50,6 +90,35 @@ function handleGridDragLeave(e) {
 function handleGridDrop(e) {
   console.debug('handleGridDrop', e);
   dragOverlayVisible.value = false;
+  if (!e.dataTransfer || !e.dataTransfer.files) return;
+  const files = Array.from(e.dataTransfer.files).filter(isSupportedImageFile);
+  if (!files.length) {
+    alert('No supported image files found.');
+    return;
+  }
+  // Upload each file
+  const uploadPromises = files.map(file => {
+    const formData = new FormData();
+    formData.append('image', file); // Backend expects 'image'
+    // Optionally, add character id if needed
+    if (selectedCharacter.value && selectedCharacter.value !== ALL_PICTURES_ID && selectedCharacter.value !== UNASSIGNED_PICTURES_ID) {
+      formData.append('character_id', selectedCharacter.value);
+    }
+    return fetch(`${BACKEND_URL}/pictures`, {
+      method: 'POST',
+      body: formData,
+    }).then(res => {
+      if (!res.ok) throw new Error('Upload failed');
+      return res.json();
+    });
+  });
+  Promise.all(uploadPromises)
+    .then(() => {
+      refreshImages();
+    })
+    .catch(e => {
+      alert('One or more uploads failed: ' + (e.message || e));
+    });
 }
 
 // Selection state for file manager
@@ -326,50 +395,7 @@ onMounted(() => {
 });
 
 watch([selectedCharacter, selectedReferenceMode], async ([id, refMode]) => {
-  images.value = [];
-  imagesError.value = null;
-  selectedImageIds.value = [];
-  if (!id) return;
-  imagesLoading.value = true;
-  try {
-    let url;
-    if (id === ALL_PICTURES_ID) {
-      url = `${BACKEND_URL}/pictures?info=true`;
-    } else if (id === UNASSIGNED_PICTURES_ID) {
-      url = `${BACKEND_URL}/pictures?character_id=&info=true`;
-    } else if (refMode) {
-      url = `${BACKEND_URL}/characters/reference_pictures/${encodeURIComponent(
-        id
-      )}`;
-    } else {
-      url = `${BACKEND_URL}/pictures?character_id=${encodeURIComponent(
-        id
-      )}&info=true`;
-    }
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("Failed to fetch images");
-    let baseImages = await res.json();
-    if (refMode && baseImages.reference_pictures) {
-      baseImages = baseImages.reference_pictures;
-      // Map picture_id to id for frontend compatibility
-      baseImages = baseImages.map((img) => ({ ...img, id: img.picture_id }));
-    }
-    // Filter for is_reference === true if in reference mode (legacy, not needed for new endpoint)
-    if (refMode && !baseImages[0]?.id) {
-      baseImages = baseImages.filter(
-        (img) => img.is_reference == true || img.is_reference == 1
-      );
-    }
-    images.value = baseImages.map((img) => ({
-      ...img,
-      score: typeof img.score !== "undefined" ? img.score : null,
-    }));
-    setTimeout(updateColumns, 0);
-  } catch (e) {
-    imagesError.value = e.message;
-  } finally {
-    imagesLoading.value = false;
-  }
+  refreshImages();
 });
 
 function handleOverlayKeydown(e) {
@@ -691,17 +717,103 @@ function addNewCharacter() {
     num++;
   } while (existingNames.has(name));
   nextCharacterNumber.value = num;
-  // Add to characters list (frontend only)
-  characters.value.push({
-    id: `new-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    name,
-    description: '',
-    tags: [],
-    created_at: new Date().toISOString(),
-    is_reference: 0,
-    has_embedding: false,
+  // POST to backend
+  fetch(`${BACKEND_URL}/characters`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description: '' })
+  })
+    .then(async res => {
+      if (!res.ok) throw new Error('Failed to create character');
+      const data = await res.json();
+      if (data && data.character && data.character.id) {
+        // Add to local list
+        characters.value.push(data.character);
+        // Optionally, start editing the new character name
+        editingCharacterId.value = data.character.id;
+        editingCharacterName.value = data.character.name;
+        nextTick(() => {
+          const input = document.querySelector('.edit-character-input');
+          if (input) {
+            input.focus();
+            input.select();
+          }
+        });
+        // Optionally, fetch thumbnail
+        fetchCharacterThumbnail(data.character.id);
+      }
+    })
+    .catch(e => {
+      alert('Failed to create character: ' + (e.message || e));
+    });
+}
+
+// Inline edit state for character names
+const editingCharacterId = ref(null);
+const editingCharacterName = ref("");
+
+function startEditingCharacter(char) {
+  editingCharacterId.value = char.id;
+  editingCharacterName.value = char.name;
+  nextTick(() => {
+    const input = document.querySelector('.edit-character-input');
+    if (input) {
+      input.focus();
+      input.select();
+    }
   });
 }
+function saveEditingCharacter(char) {
+  const newName = editingCharacterName.value.trim();
+  if (newName && newName !== char.name) {
+    // PATCH backend
+    fetch(`${BACKEND_URL}/characters/${char.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName })
+    })
+      .then(async res => {
+        if (!res.ok) throw new Error('Failed to update character');
+        const data = await res.json();
+        if (data && data.character) {
+          char.name = data.character.name;
+        }
+      })
+      .catch(e => {
+        alert('Failed to update character: ' + (e.message || e));
+      });
+  }
+  editingCharacterId.value = null;
+  editingCharacterName.value = "";
+}
+function cancelEditingCharacter() {
+  editingCharacterId.value = null;
+  editingCharacterName.value = "";
+}
+
+// Confirm and delete character
+function confirmDeleteCharacter() {
+  const char = characters.value.find(c => c.id === selectedCharacter.value);
+  if (!char) return;
+  if (window.confirm(`Delete character '${char.name}'? This will unassign all their images.`)) {
+    fetch(`${BACKEND_URL}/characters/${char.id}`, { method: 'DELETE' })
+      .then(async res => {
+        if (!res.ok) throw new Error('Failed to delete character');
+        // Remove from local list
+        characters.value = characters.value.filter(c => c.id !== char.id);
+        // Reset selection
+        selectedCharacter.value = ALL_PICTURES_ID;
+        selectedReferenceMode.value = false;
+        // Optionally, refresh images
+        images.value = [];
+        await fetchCharacters();
+      })
+      .catch(e => {
+        alert('Failed to delete character: ' + (e.message || e));
+      });
+  }
+}
+
 </script>
 
 <template>
@@ -729,26 +841,6 @@ function addNewCharacter() {
         @keydown.enter="searchImages"
         @click:append-outer="searchImages"
       />
-      <div style="flex: 1"></div>
-      <v-btn
-        icon
-        :color="showStars ? 'amber darken-2' : 'grey'"
-        @click="showStars = !showStars"
-        title="Toggle star ratings"
-        style="margin-right: 12px"
-      >
-        <v-icon>{{ showStars ? "mdi-star" : "mdi-star-outline" }}</v-icon>
-      </v-btn>
-      <v-btn
-        icon
-        color="red darken-2"
-        :disabled="!selectedImageIds.length"
-        @click="deleteSelectedImages"
-        title="Delete selected images"
-        style="margin-right: 12px"
-      >
-        <v-icon>mdi-trash-can-outline</v-icon>
-      </v-btn>
       <v-icon small>mdi-image-size-select-small</v-icon>
       <v-slider
         v-model="thumbnailSize"
@@ -763,10 +855,29 @@ function addNewCharacter() {
           max-width: 220px;
           display: inline-block;
           vertical-align: middle;
-          margin: 0 8px;
+          margin: 0px 16px;
         "
       />
       <v-icon small>mdi-image-size-select-large</v-icon>
+      <v-btn
+        icon
+        :color="showStars ? 'amber darken-2' : 'grey'"
+        @click="showStars = !showStars"
+        title="Toggle star ratings"
+        style="margin-left: 6px; margin-right: 6px"
+      >
+      <v-icon>{{ showStars ? "mdi-star" : "mdi-star-outline" }}</v-icon>
+      </v-btn>
+      <v-btn
+        icon
+        color="red darken-2"
+        :disabled="!selectedImageIds.length"
+        @click="deleteSelectedImages"
+        title="Delete selected images"
+        style="margin-left: 6px; margin-right: 2px"
+      >
+        <v-icon>mdi-trash-can-outline</v-icon>
+      </v-btn>
       </div>
       <div class="file-manager">
         <aside v-if="sidebarVisible" class="sidebar">
@@ -805,7 +916,18 @@ function addNewCharacter() {
           <div class="sidebar-section-header" @click="sidebarSections.people = !sidebarSections.people">
             <v-icon small style="margin-right: 8px;">{{ sidebarSections.people ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
             People
-            <v-icon class="add-character-inline" @click.stop="addNewCharacter" title="Add character">mdi-plus</v-icon>
+            <span style="flex: 1 1 auto"></span>
+            <span style="display: grid; grid-template-columns: 32px 32px; gap: 0px; align-items: center; min-width: 64px;">
+              <v-icon
+                v-if="selectedCharacter && selectedCharacter !== ALL_PICTURES_ID && selectedCharacter !== UNASSIGNED_PICTURES_ID"
+                class="delete-character-inline"
+                color="white"
+                style="cursor: pointer; justify-self: end;"
+                @click.stop="confirmDeleteCharacter"
+                title="Delete selected character">mdi-trash-can-outline
+              </v-icon>
+              <v-icon class="add-character-inline" @click.stop="addNewCharacter" title="Add character" style="justify-self: end;">mdi-plus</v-icon>
+            </span>
           </div>
           <transition name="fade">
             <div v-show="sidebarSections.people">
@@ -823,10 +945,7 @@ function addNewCharacter() {
                       droppable: dragOverCharacter === char.id,
                     },
                   ]"
-                  @click="
-                    selectedCharacter = char.id;
-                    selectedReferenceMode = false;
-                  "
+                  @click="selectedCharacter = char.id; selectedReferenceMode = false;"
                 >
                   <span class="sidebar-list-icon">
                     <img
@@ -836,7 +955,22 @@ function addNewCharacter() {
                     />
                   </span>
                   <span class="sidebar-list-label">
-                    {{ char.name.charAt(0).toUpperCase() + char.name.slice(1) }}
+                    <template v-if="editingCharacterId === char.id">
+                      <input
+                        v-model="editingCharacterName"
+                        class="edit-character-input"
+                        @keydown.enter="saveEditingCharacter(char)"
+                        @keydown.esc="cancelEditingCharacter"
+                        @blur="saveEditingCharacter(char)"
+                        ref="editInput"
+                        style="width: 90%; font-size: 1em; background: #fff; color: #222; border-radius: 4px; border: 1px solid #bbb; padding: 2px 6px; outline: none;"
+                      />
+                    </template>
+                    <template v-else>
+                      <span @dblclick.stop="startEditingCharacter(char)">
+                        {{ char.name.charAt(0).toUpperCase() + char.name.slice(1) }}
+                      </span>
+                    </template>
                   </span>
                   <v-btn
                     icon
@@ -864,17 +998,7 @@ function addNewCharacter() {
         <main class="main-area" :class="{ 'full-width': !sidebarVisible }">
           <div :class="['main-content', selectedCharacter ? 'accent-border' : '']">
             <template v-if="selectedCharacter">
-              <div v-if="imagesLoading" class="empty-state">
-                Loading images...
-              </div>
-              <div v-else-if="imagesError" class="empty-state">
-                {{ imagesError }}
-              </div>
-              <div v-else-if="images.length === 0" class="empty-state">
-                No images found for this character.
-              </div>
               <div
-                v-else
                 class="image-grid"
                 :style="{ gridTemplateColumns: `repeat(${columns}, 1fr)` }"
                 ref="gridContainer"
@@ -884,6 +1008,11 @@ function addNewCharacter() {
                 @dragleave.prevent="handleGridDragLeave"
                 @drop.prevent="handleGridDrop"
               >
+                <div v-if="images.length === 0 && !imagesLoading && !imagesError" class="empty-state">
+                 No images found for this character.
+                </div>
+                <div v-if="imagesLoading" class="empty-state">Loading images...</div>
+                <div v-if="imagesError" class="empty-state">{{ imagesError }}</div>
                 <div v-if="dragOverlayVisible" class="drag-overlay-grid">
                   <span>{{ dragOverlayMessage }}</span>
                 </div>
@@ -1025,11 +1154,11 @@ body {
   gap: 0;
   width: 100%;
   height: 100%;
-  min-height: 0;
+  min-height: 64px;
   flex: 1 1 0%;
   padding: 4px 12px 4px 4px; /* Extra right padding for scrollbar */
   overflow-y: auto;
-  background: #eee;
+  background: #ddd;
   align-content: start;
   justify-content: start;
 }
@@ -1286,10 +1415,6 @@ body {
   min-width: 80px;
   max-width: 180px;
 }
-.image-grid {
-  gap: 0px;
-  max-height: calc(100vh - 80px);
-}
 /* Overlay modal for full image view */
 .image-overlay {
   position: fixed;
@@ -1465,5 +1590,16 @@ body {
 }
 .add-character-inline:hover {
   color: #ffe082;
+}
+.edit-character-input {
+  font-size: 1em;
+  background: #fff;
+  color: #222;
+  border-radius: 4px;
+  border: 1px solid #bbb;
+  padding: 2px 6px;
+  outline: none;
+  width: 90%;
+  margin-left: 0;
 }
 </style>
