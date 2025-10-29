@@ -1,5 +1,6 @@
 import json
 import numpy as np
+import sqlite3
 import threading
 import time
 
@@ -9,6 +10,8 @@ from typing import List
 from pixelurgy_vault.logging import get_logger
 from pixelurgy_vault.picture_iteration import PictureIteration
 from pixelurgy_vault.picture_quality import PictureQuality
+
+logger = get_logger(__name__)
 
 
 class PictureIterations:
@@ -26,17 +29,15 @@ class PictureIterations:
         self._quality_worker.start()
 
     def stop_quality_worker(self):
+        logger.debug("Stopping quality worker...")
         if hasattr(self, "_quality_worker_stop"):
             self._quality_worker_stop.set()
         if hasattr(self, "_quality_worker"):
             self._quality_worker.join(timeout=5)  # Wait for thread to exit
+            if self._quality_worker.is_alive():
+                logger.warning("Quality worker thread did not exit within timeout.")
 
     def _quality_worker_loop(self, interval):
-        import sqlite3
-
-        logger = get_logger(__name__)
-        import time
-
         retries = 5
         delay = 0.2
         for attempt in range(retries):
@@ -84,14 +85,12 @@ class PictureIterations:
             with Image.open(file_path) as img:
                 return np.array(img.convert("RGB"))
         except Exception as e:
-            logger = get_logger(__name__)
-            logger.error(f"Failed to load image {file_path}: {e}")
+            logger.error(f"Failed to load image at {file_path} for quality worker: {e}")
             return None
 
     def _calculate_and_store_quality(
         self, thread_conn, it_id, image_np, quality_val=None, face_quality_val=None
     ):
-        logger = get_logger(__name__)
         try:
             quality_json = None
             # Only calculate and update quality if it is NULL
@@ -226,7 +225,6 @@ class PictureIterations:
         cursor = self._connection.cursor()
         vals = []
         for it in iterations:
-            logger = get_logger(__name__)
             logger.debug(
                 f"Importing picture {it.id}: file path {getattr(it, 'file_path', None)}"
             )

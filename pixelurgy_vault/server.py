@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import Body, FastAPI, File, Form, Request, UploadFile, Query
+from fastapi import Body, FastAPI, File, Form, Request, UploadFile, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
@@ -24,6 +24,14 @@ logger = None
 
 
 class Server:
+    def __enter__(self):
+        # Allow use as a context manager for robust cleanup
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if hasattr(self, "vault"):
+            self.vault.close()
+
     """
     Main server class for the Pixelurgy Vault FastAPI application.
 
@@ -135,7 +143,7 @@ class Server:
             # Find all pictures for this character
             pics = self.vault.pictures.find(character_id=character_id)
             if not pics:
-                return {"error": "No pictures for character"}
+                raise HTTPException(status_code=404, detail="No pictures for character")
             # Find master iterations for these pictures
             its = []
             for pic in pics:
@@ -144,7 +152,9 @@ class Server:
                     it = master_its[0]
                     its.append((it, pic))
             if not its:
-                return {"error": "No master iterations for character"}
+                raise HTTPException(
+                    status_code=404, detail="No master iterations for character"
+                )
 
             # Sort by score descending, then by created_at
             def score_key(tup):
@@ -166,11 +176,11 @@ class Server:
                     face_bbox = None
             # Load thumbnail image
             if not it.thumbnail:
-                return {"error": "No thumbnail available"}
+                raise HTTPException(status_code=404, detail="No thumbnail available")
             try:
                 thumb_img = Image.open(io.BytesIO(it.thumbnail))
             except Exception:
-                return {"error": "Invalid thumbnail image"}
+                raise HTTPException(status_code=400, detail="Invalid thumbnail image")
             # If face_bbox is available, crop to it
             if face_bbox and len(face_bbox) == 4:
                 x1, y1, x2, y2 = [int(round(v)) for v in face_bbox]
@@ -331,7 +341,7 @@ class Server:
             try:
                 char = self.vault.characters[id]
             except KeyError:
-                return {"error": "Character not found"}
+                raise HTTPException(status_code=404, detail="Character not found")
             return char.__dict__
 
         @self.app.get("/iterations/{iteration_id}")
@@ -341,12 +351,12 @@ class Server:
             try:
                 it = self.vault.iterations[iteration_id]
             except KeyError:
-                return {"error": "Iteration not found"}
+                raise HTTPException(status_code=404, detail="Iteration not found")
             # Base64 encode thumbnail if present
             thumbnail_b64 = (
                 base64.b64encode(it.thumbnail).decode("ascii") if it.thumbnail else None
             )
-            logger.info(f"Serving iteration {iteration_id} with score {it.score}")
+            logger.debug(f"Serving iteration {iteration_id} with score {it.score}")
             return {
                 "id": it.id,
                 "picture_id": it.picture_id,
@@ -378,7 +388,7 @@ class Server:
             try:
                 _ = self.vault.pictures[picture_id]
             except KeyError:
-                return {"error": "picture_id does not exist"}
+                raise HTTPException(status_code=404, detail="picture_id does not exist")
 
             dest_folder = self.vault.get_image_root()
             os.makedirs(dest_folder, exist_ok=True)
@@ -403,7 +413,9 @@ class Server:
                     is_master=bool(is_master),
                 )
             else:
-                return {"error": "No file upload or file_path provided"}
+                raise HTTPException(
+                    status_code=400, detail="No file upload or file_path provided"
+                )
 
             self.vault.iterations.import_iterations([iteration])
             return {"status": "success", "iteration_id": iteration.id}
@@ -419,12 +431,12 @@ class Server:
         ):
             if not isinstance(id, str):
                 logger.error(f"Invalid id type: {type(id)} value: {id}")
-                return {"error": "Invalid picture id"}
+                raise HTTPException(status_code=404, detail="Invalid picture id")
             try:
                 pic = self.vault.pictures[id]
             except KeyError:
                 logger.error(f"Picture not found for id={id}")
-                return {"error": "Picture not found"}
+                raise HTTPException(status_code=404, detail="Picture not found")
             if info:
                 # Return metadata only
                 result = {
@@ -437,20 +449,24 @@ class Server:
                 }
                 return result
             # Otherwise, deliver the master iteration image file
-            logger.info(f"Fetching master iteration for picture id={pic.id}")
+            logger.debug(f"Fetching master iteration for picture id={pic.id}")
             master_its = self.vault.iterations.find(picture_id=pic.id, is_master=1)
-            logger.info(
+            logger.debug(
                 f"Found a master iteration with score {master_its[0].score if master_its else 'N/A'}"
             )
             if not master_its:
                 logger.error(f"Master iteration not found for picture id={pic.id}")
-                return {"error": "Master iteration not found"}
+                raise HTTPException(
+                    status_code=404, detail="Master iteration not found"
+                )
             it = master_its[0]
             if not it.file_path or not os.path.isfile(it.file_path):
                 logger.error(
                     f"File path missing or does not exist for iteration id={it.id}, file_path={it.file_path}"
                 )
-                return {"error": f"File not found for iteration id={it.id}"}
+                raise HTTPException(
+                    status_code=404, detail=f"File not found for iteration id={it.id}"
+                )
             return FileResponse(it.file_path)
 
         @self.app.get("/thumbnails/{id}")
@@ -459,18 +475,20 @@ class Server:
                 pic = self.vault.pictures[id]
             except KeyError:
                 logger.error(f"Picture not found for id={id} (thumbnail request)")
-                return {"error": "Picture not found"}
+                raise HTTPException(status_code=404, detail="Picture not found")
 
             master_its = self.vault.iterations.find(picture_id=pic.id, is_master=1)
             if not master_its:
                 logger.error(
                     f"Master iteration not found for picture id={pic.id} (thumbnail request)"
                 )
-                return {"error": "Master iteration not found"}
+                raise HTTPException(
+                    status_code=404, detail="Master iteration not found"
+                )
             thumbnail_bytes = master_its[0].thumbnail
             if not thumbnail_bytes:
                 logger.error(f"No thumbnail available for picture id={pic.id}")
-                return {"error": "No thumbnail available"}
+                raise HTTPException(status_code=404, detail="No thumbnail available")
             return Response(content=thumbnail_bytes, media_type="image/png")
 
         @self.app.patch("/pictures/{id}")
@@ -482,16 +500,18 @@ class Server:
             """
             params = dict(request.query_params)
             if not params:
-                return {"error": "No fields to update"}
+                raise HTTPException(status_code=400, detail="No fields to update")
             # Handle score update for master iteration
             if "score" in params:
                 try:
                     score_val = int(params["score"])
                 except Exception:
-                    return {"error": "Invalid score value"}
+                    raise HTTPException(status_code=400, detail="Invalid score value")
                 master_its = self.vault.iterations.find(picture_id=id, is_master=1)
                 if not master_its:
-                    return {"error": "Master iteration not found"}
+                    raise HTTPException(
+                        status_code=404, detail="Master iteration not found"
+                    )
                 master_it = master_its[0]
                 master_it.score = score_val
                 self.vault.iterations.import_iterations([master_it])
@@ -504,7 +524,7 @@ class Server:
             try:
                 pic = self.vault.pictures[id]
             except KeyError:
-                return {"error": "Picture not found"}
+                raise HTTPException(status_code=404, detail="Picture not found")
             for key, value in params.items():
                 if key == "score":
                     continue
@@ -568,7 +588,9 @@ class Server:
                     with open(file_path, "rb") as f:
                         files_to_import.append((f.read(), file_path))
             else:
-                return {"error": "No image or file_path provided"}
+                raise HTTPException(
+                    status_code=400, detail="No image or file_path provided"
+                )
 
             new_pictures = []
             new_iterations = []
@@ -704,7 +726,7 @@ class Server:
                 self.vault.pictures[id]
             except KeyError:
                 logger.error(f"Picture not found for id={id} (delete request)")
-                return {"error": "Picture not found"}
+                raise HTTPException(status_code=404, detail="Picture not found")
 
             # 2. Find all iterations for this picture
             iterations = self.vault.iterations.find(picture_id=id)

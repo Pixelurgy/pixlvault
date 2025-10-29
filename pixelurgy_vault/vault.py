@@ -18,6 +18,13 @@ logger = get_logger(__name__)
 
 
 class Vault:
+    def __enter__(self):
+        # Allow use as a context manager for robust cleanup
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     """
     Represents a vault for storing images and metadata.
 

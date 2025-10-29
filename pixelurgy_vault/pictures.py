@@ -20,7 +20,7 @@ class Pictures:
             logger.error(
                 "InsightFace is not installed. Skipping face embedding extraction."
             )
-            return False
+            return False  # Without InsightFace, we cannot proceed
 
         # Initialize InsightFace only once
         if not hasattr(self, "_insightface_app"):
@@ -34,7 +34,7 @@ class Pictures:
         )
         pic_ids = [row[0] for row in cursor.fetchall()]
         if not pic_ids:
-            return False
+            return True  # Keep going even if if there's nothing to do
         batch = [pic_id for pic_id in pic_ids if pic_id not in self._skip_pictures][
             :MAX_CONCURRENT_IMAGES
         ]
@@ -59,12 +59,12 @@ class Pictures:
                     continue
                 faces = self._insightface_app.get(img)
                 if not faces:
-                    logger.info(
+                    logger.warning(
                         f"No face found in {master_iter.file_path} for picture {pic_id}."
                     )
                     continue
                 else:
-                    logger.info(
+                    logger.debug(
                         f"Found {len(faces)} face(s) in {master_iter.file_path} for picture {pic_id}."
                     )
                 # Use the largest face (by area)
@@ -83,7 +83,7 @@ class Pictures:
                 logger.error(
                     f"Failed to extract/store face embedding for picture {pic_id}: {e}"
                 )
-        return self._skip_pictures
+        return True
 
     def __init__(self, connection, picture_iterations, db_path):
         self._connection = connection
@@ -97,7 +97,7 @@ class Pictures:
         import sqlite3
         import time
 
-        logger.info(f"Fetching picture with id={picture_id} (type={type(picture_id)})")
+        logger.debug(f"Fetching picture with id={picture_id} (type={type(picture_id)})")
         retries = 5
         delay = 0.2
         for attempt in range(retries):
@@ -193,10 +193,13 @@ class Pictures:
         thread_conn = sqlite3.connect(self._db_path, check_same_thread=False)
         thread_conn.row_factory = sqlite3.Row
 
+        calculate_face_embeddings = True
+
         while not self._tag_worker_stop.is_set():
             self._tag_missing_pictures(thread_conn)
             self._embed_tagged_pictures(thread_conn)
-            self._extract_face_embeddings(thread_conn)
+            if calculate_face_embeddings:
+                calculate_face_embeddings = self._extract_face_embeddings(thread_conn)
             self._tag_worker_stop.wait(interval)
 
     def _tag_missing_pictures(self, thread_conn):
