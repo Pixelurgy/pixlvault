@@ -184,8 +184,6 @@ function handleGridDragEnter(e) {
   // Only trigger if entering from outside the image-grid (not between children)
   // If relatedTarget is inside the grid, ignore (moving within grid children).
   if (e.relatedTarget && gridContainer.value && gridContainer.value.contains(e.relatedTarget)) return;
-  const clock = Date.now() / 1000;
-  console.debug(`handleGridDragEnter [${clock.toFixed(3)}s]`, e);
   if (!e.dataTransfer || !e.dataTransfer.items) return;
   // Only check the first 20 items for image type, break immediately if found
   const items = Array.from(e.dataTransfer.items);
@@ -205,29 +203,21 @@ function handleGridDragEnter(e) {
     console.debug("Overlay shown");
   } else {
     dragOverlayVisible.value = false;
-    console.debug("Overlay hidden (unsupported)");
   }
 }
 
 function handleGridDragOver(e) {
-  const clock = Date.now() / 1000;
-  console.debug(`handleGridDragOver [${clock.toFixed(3)}s]`, e, "overlayVisible:", dragOverlayVisible.value);
   if (dragOverlayVisible.value) e.preventDefault();
 }
 function handleGridDragLeave(e) {
-  const clock = Date.now() / 1000;
-  console.debug(`handleGridDragLeave [${clock.toFixed(3)}s]`, e);
   // Only hide overlay if leaving the .image-grid entirely
   if (!e.relatedTarget || !e.currentTarget.contains(e.relatedTarget)) {
     dragOverlayVisible.value = false;
-    console.debug("Overlay hidden (left grid)");
   } else {
     console.debug("Drag still inside grid, overlay remains");
   }
 }
 function handleGridDrop(e) {
-  const clock = Date.now() / 1000;
-  console.debug(`handleGridDrop [${clock.toFixed(3)}s]`, e);
   dragOverlayVisible.value = false;
   if (!e.dataTransfer || !e.dataTransfer.files) return;
   const files = Array.from(e.dataTransfer.files).filter(isSupportedImageFile);
