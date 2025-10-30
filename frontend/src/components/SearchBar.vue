@@ -5,12 +5,12 @@
       :placeholder="placeholder"
       @keydown.enter="emitSearch"
       @click:append="emitSearch"
-      :append-icon="appendIcon"
+      :prepend-inner-icon="appendIcon"
       clearable
       @click:clear="clearInput"
       hide-details
       dense
-      outlined
+      variant="solo"
       class="search-bar-text-field"
     />
   </div>
@@ -58,8 +58,31 @@ function clearInput() {
   display: flex;
   align-items: center;
   width: 100%;
+  border-bottom: none !important;
 }
 .search-bar-text-field {
   flex: 1;
+  border-bottom: none !important;
+  box-shadow: none !important;
+}
+
+/* Remove bottom border/underline from v-text-field inside SearchBar */
+::v-deep(
+    .search-bar-text-field .v-field,
+    .search-bar-text-field .v-field__outline,
+    .search-bar-text-field .v-field__outline__notch
+  ) {
+  border-bottom: none !important;
+  box-shadow: none !important;
+  --v-field-border-width: 0 !important;
+  --v-field-border-color: transparent !important;
+}
+::v-deep(.search-bar-text-field .v-field::after) {
+  display: none !important;
+}
+/* Remove rounded corners from v-text-field (solo variant) */
+::v-deep(.search-bar-text-field .v-field) {
+  border-radius: 0 !important;
+  background-color: #ddd;
 }
 </style>
