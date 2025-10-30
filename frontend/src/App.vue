@@ -217,6 +217,12 @@ function handleGridDragLeave(e) {
     console.debug("Drag still inside grid, overlay remains");
   }
 }
+
+const cancelImport = ref(false);
+function handleCancelImport() {
+  cancelImport.value = true;
+}
+
 function handleGridDrop(e) {
   dragOverlayVisible.value = false;
   if (!e.dataTransfer || !e.dataTransfer.files) return;
@@ -225,6 +231,7 @@ function handleGridDrop(e) {
     alert("No supported image files found.");
     return;
   }
+  cancelImport.value = false;
   importInProgress.value = true;
   importProgress.value = 0;
   importTotal.value = files.length;
@@ -257,6 +264,10 @@ function handleGridDrop(e) {
   (async () => {
     try {
       for (const file of files) {
+        if (cancelImport.value) {
+          importError.value = "Import cancelled by user.";
+          break;
+        }
         await uploadFile(file);
       }
       importInProgress.value = false;
@@ -1264,6 +1275,7 @@ function confirmDeleteCharacter() {
           {{ importProgress }} / {{ importTotal }}
           <span v-if="importError" class="import-progress-error">Error: {{ importError }}</span>
         </div>
+        <button class="cancel-button" @click="handleCancelImport">Cancel</button>
       </div>
     </div>
     <div class="app-viewport">
