@@ -130,9 +130,27 @@ class PictureIteration:
         )
 
     @staticmethod
-    def calculate_sha256_from_file_path(file_path: str) -> str:
+    def calculate_hash_from_file_path(file_path: str) -> str:
+        CHUNK_SIZE = 8192
+        N = 8
+        WHOLE_FILE_THRESHOLD = 128 * 1024  # 128KB
+        file_size = os.path.getsize(file_path)
         sha256 = hashlib.sha256()
+        if file_size <= WHOLE_FILE_THRESHOLD:
+            with open(file_path, "rb") as f:
+                while chunk := f.read(CHUNK_SIZE):
+                    sha256.update(chunk)
+            digest = sha256.hexdigest()
+            print(f"[HASH-DEBUG] WHOLE: {file_path} size={file_size} hash={digest}")
+            return digest
+        # For larger files, sample N evenly spaced blocks
+        offsets = [int(i * (file_size - CHUNK_SIZE) / (N - 1)) for i in range(N)]
         with open(file_path, "rb") as f:
-            while chunk := f.read(8192):
-                sha256.update(chunk)
-        return sha256.hexdigest()
+            for offset in offsets:
+                f.seek(offset)
+                chunk = f.read(CHUNK_SIZE)
+                if chunk:
+                    sha256.update(chunk)
+            digest = sha256.hexdigest()
+            print(f"[HASH-DEBUG] SAMPLED: {file_path} size={file_size} hash={digest}")
+            return digest

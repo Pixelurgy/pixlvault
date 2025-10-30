@@ -20,6 +20,19 @@ const importInProgress = ref(false);
 const importProgress = ref(0);
 const importTotal = ref(0);
 const importError = ref(null);
+const importPhase = ref(''); // 'hashing', 'checking', 'uploading', 'done', 'error'
+const importPhaseMessage = computed(() => {
+  switch (importPhase.value) {
+    case 'hashing': return 'Hashing files...';
+    case 'checking': return 'Checking for duplicates...';
+    case 'uploading': return 'Uploading images...';
+    case 'done': return 'Import complete!';
+    case 'duplicates': return 'All files are duplicates.';
+    case 'cancelled': return 'Import cancelled.';
+    case 'error': return 'Import failed.';
+    default: return '';
+  }
+});
 const gridContainer = ref(null); // already used for grid
 
 const PIL_IMAGE_EXTENSIONS = [
@@ -75,6 +88,35 @@ const PIL_IMAGE_EXTENSIONS = [
 function isSupportedImageFile(file) {
   const ext = file.name.split(".").pop().toLowerCase();
   return PIL_IMAGE_EXTENSIONS.includes(ext);
+}
+
+async function hashFile(file) {
+  // SHA-256 sampled hash: whole file if <=128KB, else 8 evenly spaced 8192-byte blocks
+  const CHUNK_SIZE = 8192;
+  const N = 8;
+  const WHOLE_FILE_THRESHOLD = 128 * 1024; // 128KB
+  if (file.size <= WHOLE_FILE_THRESHOLD) {
+    const buf = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  // For larger files, sample N evenly spaced blocks
+  const offsets = Array.from({length: N}, (_, i) => Math.floor(i * (file.size - CHUNK_SIZE) / (N - 1)));
+  const chunks = [];
+  for (const offset of offsets) {
+    const blob = file.slice(offset, offset + CHUNK_SIZE);
+    const buf = await blob.arrayBuffer();
+    chunks.push(new Uint8Array(buf));
+  }
+  let totalLen = chunks.reduce((sum, arr) => sum + arr.length, 0);
+  let all = new Uint8Array(totalLen);
+  let pos = 0;
+  for (const arr of chunks) {
+    all.set(arr, pos);
+    pos += arr.length;
+  }
+  const hashBuffer = await crypto.subtle.digest('SHA-256', all);
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // Sorting and pagination state
@@ -234,46 +276,135 @@ function handleGridDrop(e) {
   cancelImport.value = false;
   importInProgress.value = true;
   importProgress.value = 0;
-  importTotal.value = files.length;
   importError.value = null;
-  let completed = 0;
-  const uploadFile = async (file) => {
-    const formData = new FormData();
-    formData.append("image", file);
-    if (
-      selectedCharacter.value &&
-      selectedCharacter.value !== ALL_PICTURES_ID &&
-      selectedCharacter.value !== UNASSIGNED_PICTURES_ID
-    ) {
-      formData.append("character_id", selectedCharacter.value);
-    }
-    try {
-      const res = await fetch(`${BACKEND_URL}/pictures`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) throw new Error("Upload failed");
-      await res.json();
-      completed++;
-      importProgress.value = completed;
-    } catch (err) {
-      importError.value = err.message || String(err);
-      throw err;
-    }
-  };
+  importPhase.value = 'hashing';
   (async () => {
+    // Step 1: Compute hashes for all files in parallel (with concurrency limit)
+    importTotal.value = files.length;
+    let hashProgress = 0;
+    let fileHashes = [];
+    // Concurrency limit for hashing (e.g., 6 at a time)
+    const CONCURRENCY = 6;
+    async function hashWorker(queue) {
+      while (queue.length) {
+        if (cancelImport.value) throw new Error('cancelled');
+        const { file, idx, resolve, reject } = queue.shift();
+        try {
+          const hash = await hashFile(file);
+          hashProgress++;
+          importProgress.value = hashProgress;
+          await nextTick();
+          resolve({ file, hash });
+        } catch (err) {
+          reject(err);
+        }
+      }
+    }
     try {
-      for (const file of files) {
+      // Prepare a queue of files to hash
+      const queue = files.map((file, idx) => {
+        let resolve, reject;
+        const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+        return { file, idx, resolve, reject, promise };
+      });
+      // Start CONCURRENCY workers
+      const workers = [];
+      for (let i = 0; i < CONCURRENCY; i++) {
+        workers.push(hashWorker(queue));
+      }
+      // Wait for all promises to resolve
+      fileHashes = await Promise.all(queue.map(q => q.promise));
+    } catch (err) {
+      importInProgress.value = false;
+      if (err.message === 'cancelled') {
+        importPhase.value = 'cancelled';
+        importError.value = 'Import cancelled.';
+      } else {
+        importPhase.value = 'error';
+        importError.value = "Failed to hash files.";
+      }
+      setTimeout(() => { importInProgress.value = false; }, 1500);
+      return;
+    }
+    // Step 2: Batch check with backend for existing hashes
+    importPhase.value = 'checking';
+    let existing = [];
+    try {
+      const res = await fetch(`${BACKEND_URL}/check_hashes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fileHashes.map(fh => fh.hash)),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        existing = data.existing || [];
+      } else {
+        throw new Error("Failed to check for duplicates");
+      }
+    } catch (err) {
+      importPhase.value = 'error';
+      importInProgress.value = false;
+      importError.value = "Failed to check for duplicates.";
+      setTimeout(() => { importInProgress.value = false; }, 1500);
+      return;
+    }
+    // Step 3: Filter out duplicates
+    const newFiles = fileHashes.filter(fh => !existing.includes(fh.hash)).map(fh => fh.file);
+    importTotal.value = newFiles.length;
+    importProgress.value = 0;
+    if (newFiles.length === 0) {
+      importPhase.value = 'duplicates';
+      importError.value = "All files are duplicates.";
+      setTimeout(() => { importInProgress.value = false; }, 2000);
+      return;
+    }
+    // Show found X new images
+    importPhase.value = 'uploading';
+    importError.value = `Found ${newFiles.length} new image(s).`;
+    let completed = 0;
+    const uploadFile = async (file) => {
+      const formData = new FormData();
+      formData.append("image", file);
+      if (
+        selectedCharacter.value &&
+        selectedCharacter.value !== ALL_PICTURES_ID &&
+        selectedCharacter.value !== UNASSIGNED_PICTURES_ID
+      ) {
+        formData.append("character_id", selectedCharacter.value);
+      }
+      try {
+        const res = await fetch(`${BACKEND_URL}/pictures`, {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) throw new Error("Upload failed");
+        await res.json();
+        completed++;
+        importProgress.value = completed;
+        await nextTick();
+      } catch (err) {
+        importPhase.value = 'error';
+        importError.value = err.message || String(err);
+        throw err;
+      }
+    };
+    try {
+      for (const file of newFiles) {
         if (cancelImport.value) {
+          importPhase.value = 'cancelled';
           importError.value = "Import cancelled by user.";
-          break;
+          setTimeout(() => { importInProgress.value = false; }, 1500);
+          return;
         }
         await uploadFile(file);
       }
-      importInProgress.value = false;
+      importPhase.value = 'done';
+      importError.value = `Imported ${newFiles.length} image(s).`;
+      setTimeout(() => { importInProgress.value = false; }, 1500);
       refreshImages();
       fetchSidebarCounts();
     } catch (e) {
+      importPhase.value = 'error';
       importInProgress.value = false;
       alert("One or more uploads failed: " + (e.message || e));
     }
@@ -1059,6 +1190,8 @@ async function assignImagesToCharacter(imageIds, characterId) {
       selectedCharacter.value !== characterId
     ) {
       images.value = images.value.filter(img => !imageIds.includes(img.id));
+      // Also remove these IDs from selection
+      selectedImageIds.value = selectedImageIds.value.filter(id => images.value.some(img => img.id === id));
     } else {
       // For All Pictures or Unassigned, refresh the grid as before
       const id = selectedCharacter.value;
@@ -1080,6 +1213,9 @@ async function assignImagesToCharacter(imageIds, characterId) {
           score: typeof img.score !== "undefined" ? img.score : null,
           is_reference: Number(img.is_reference) || 0,
         }));
+        // Remove any selected IDs not in the new images
+        const newIds = new Set(images.value.map(img => img.id));
+        selectedImageIds.value = selectedImageIds.value.filter(id => newIds.has(id));
         setTimeout(updateColumns, 0);
       }
     }
@@ -1138,6 +1274,9 @@ async function assignImagesAsReference(imageIds, characterId) {
           score: typeof img.score !== "undefined" ? img.score : null,
           is_reference: Number(img.is_reference) || 0,
         }));
+        // Remove any selected IDs not in the new images
+        const newIds = new Set(images.value.map(img => img.id));
+        selectedImageIds.value = selectedImageIds.value.filter(id => newIds.has(id));
         setTimeout(updateColumns, 0);
       }
     }
@@ -1267,15 +1406,35 @@ function confirmDeleteCharacter() {
     <!-- Import Progress Modal (fixed, outside app-viewport) -->
     <div v-if="importInProgress" class="import-progress-modal">
       <div class="import-progress-content">
-        <div class="import-progress-title">Importing Pictures...</div>
+        <div class="import-progress-title">{{ importPhaseMessage }}</div>
         <div class="import-progress-bar-bg">
-          <div class="import-progress-bar" :style="{ width: ((importProgress / importTotal) * 100) + '%' }"></div>
+          <div class="import-progress-bar" :style="{ width: ((importTotal ? (importProgress / importTotal) : 0) * 100) + '%' }"></div>
         </div>
         <div class="import-progress-label">
-          {{ importProgress }} / {{ importTotal }}
-          <span v-if="importError" class="import-progress-error">Error: {{ importError }}</span>
+          <template v-if="importPhase === 'hashing'">
+            Hashing {{ importProgress }} / {{ importTotal }}
+          </template>
+          <template v-else-if="importPhase === 'checking'">
+            Checking for duplicates...
+          </template>
+          <template v-else-if="importPhase === 'uploading'">
+            Uploading {{ importProgress }} / {{ importTotal }}
+          </template>
+          <template v-else-if="importPhase === 'done'">
+            Import complete!
+          </template>
+          <template v-else-if="importPhase === 'duplicates'">
+            All files are duplicates.
+          </template>
+          <template v-else-if="importPhase === 'cancelled'">
+            Import cancelled.
+          </template>
+          <template v-else-if="importPhase === 'error'">
+            Import failed.
+          </template>
+          <span v-if="importError" class="import-progress-error">{{ importError }}</span>
         </div>
-        <button class="cancel-button" @click="handleCancelImport">Cancel</button>
+        <button class="cancel-button" @click="handleCancelImport" v-if="importPhase !== 'done' && importPhase !== 'duplicates' && importPhase !== 'cancelled' && importPhase !== 'error'">Cancel</button>
       </div>
     </div>
     <div class="app-viewport">

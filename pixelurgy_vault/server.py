@@ -629,6 +629,11 @@ class Server:
             favicon_path = os.path.join(os.path.dirname(__file__), "favicon.ico")
             return FileResponse(favicon_path)
 
+        @self.app.post("/check_hashes")
+        async def check_hashes(hashes: list = Body(...)):
+            existing = [h for h in hashes if h in self.vault.iterations]
+            return {"existing": existing}
+
         @self.app.post("/pictures")
         async def import_pictures(
             request: Request,
@@ -676,7 +681,7 @@ class Server:
             for img_bytes, src_path in files_to_import:
                 # Calculate SHA for deduplication
                 sha = (
-                    PictureIteration.calculate_sha256_from_file_path(src_path)
+                    PictureIteration.calculate_hash_from_file_path(src_path)
                     if src_path
                     else PictureIteration.create_from_bytes(
                         dest_folder, img_bytes, "temp"
