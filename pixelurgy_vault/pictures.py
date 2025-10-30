@@ -1,3 +1,5 @@
+from enum import Enum
+
 import numpy as np
 import json
 
@@ -7,6 +9,32 @@ from pixelurgy_vault.picture import Picture
 from pixelurgy_vault.picture_tagger import PictureTagger, MAX_CONCURRENT_IMAGES
 
 logger = get_logger(__name__)
+
+
+# Enum for sorting mechanisms
+class SortMechanism(str, Enum):
+    UNSORTED = "unsorted"
+    DATE_DESC = "date_desc"
+    DATE_ASC = "date_asc"
+    SCORE_DESC = "score_desc"
+    SCORE_ASC = "score_asc"
+    SEARCH_LIKENESS = "search_likeness"
+
+
+# List of available sorting mechanisms for API
+def get_sort_mechanisms():
+    """Return a list of available sort mechanisms as dicts for API consumption."""
+    return [
+        {"id": sm.value, "label": label}
+        for sm, label in [
+            (SortMechanism.UNSORTED, "Unsorted"),
+            (SortMechanism.DATE_DESC, "Date (latest first)"),
+            (SortMechanism.DATE_ASC, "Date (oldest first)"),
+            (SortMechanism.SCORE_DESC, "Score (highest first)"),
+            (SortMechanism.SCORE_ASC, "Score (lowest first)"),
+            (SortMechanism.SEARCH_LIKENESS, "Sort by search likeness"),
+        ]
+    ]
 
 
 class Pictures:

@@ -131,6 +131,13 @@ class Server:
         return config
 
     def setup_routes(self):
+        from pixelurgy_vault.pictures import get_sort_mechanisms
+
+        @self.app.get("/pictures/sort_mechanisms")
+        async def get_pictures_sort_mechanisms():
+            """Return available sorting mechanisms for pictures."""
+            return get_sort_mechanisms()
+
         @self.app.get("/face_thumbnail/{character_id}")
         async def get_face_thumbnail(character_id: str):
             """
@@ -258,15 +265,25 @@ class Server:
             reference_pics = [
                 pic for pic in pics if getattr(pic, "is_reference", 0) == 1
             ]
+            pic_ids = [pic.id for pic in reference_pics]
+            iter_map = {}
+            if pic_ids:
+                cursor = self.vault.connection.cursor()
+                qmarks = ",".join(["?"] * len(pic_ids))
+                cursor.execute(
+                    f"SELECT id, picture_id FROM picture_iterations WHERE is_master=1 AND picture_id IN ({qmarks})",
+                    tuple(pic_ids),
+                )
+                for row in cursor.fetchall():
+                    iter_map[row[1]] = row[0]
             results = []
             for pic in reference_pics:
-                # Find master iteration for this picture
-                master_its = self.vault.iterations.find(picture_id=pic.id, is_master=1)
-                if master_its:
+                iteration_id = iter_map.get(pic.id)
+                if iteration_id:
                     results.append(
                         {
                             "picture_id": pic.id,
-                            "iteration_id": master_its[0].id,
+                            "iteration_id": iteration_id,
                             "description": pic.description,
                             "tags": pic.tags,
                             "created_at": pic.created_at,
@@ -701,26 +718,76 @@ class Server:
             return {"results": results}
 
         @self.app.get("/pictures")
-        async def list_pictures(request: Request, info: bool = Query(False)):
+        async def list_pictures(
+            request: Request,
+            info: bool = Query(False),
+            sort: str = Query("unsorted"),
+            offset: int = Query(0),
+            limit: int = Query(100),
+            query: str = Query(None),
+        ):
+            from pixelurgy_vault.pictures import SortMechanism
+
             query_params = dict(request.query_params)
-            # Remove 'info' from query_params if present
             query_params.pop("info", None)
+            query_params.pop("sort", None)
+            query_params.pop("offset", None)
+            query_params.pop("limit", None)
+            query_params.pop("query", None)
             # Convert tags to list if present
             if "tags" in query_params and isinstance(query_params["tags"], str):
-                import json
-
                 try:
                     query_params["tags"] = json.loads(query_params["tags"])
                 except Exception:
                     query_params["tags"] = [query_params["tags"]]
-            pics = self.vault.pictures.find(**query_params)
+
+            # Handle search likeness sort (semantic search)
+            if sort == SortMechanism.SEARCH_LIKENESS.value and query:
+                # Use semantic search, return top-N (limit) results
+                pics = self.vault.pictures.find_by_text(query, top_n=offset + limit)
+                pics = pics[offset : offset + limit]
+            else:
+                pics = self.vault.pictures.find(**query_params)
+                # Batch fetch all master iteration scores for sorting if needed
+                if sort in [
+                    SortMechanism.SCORE_DESC.value,
+                    SortMechanism.SCORE_ASC.value,
+                ]:
+                    pic_ids = [pic.id for pic in pics]
+                    score_map = {}
+                    if pic_ids:
+                        cursor = self.vault.connection.cursor()
+                        qmarks = ",".join(["?"] * len(pic_ids))
+                        cursor.execute(
+                            f"SELECT picture_id, score FROM picture_iterations WHERE is_master=1 AND picture_id IN ({qmarks})",
+                            tuple(pic_ids),
+                        )
+                        for row in cursor.fetchall():
+                            score_map[row[0]] = row[1]
+                    for pic in pics:
+                        setattr(pic, "_score", score_map.get(pic.id))
+                    reverse = sort == SortMechanism.SCORE_DESC.value
+                    pics.sort(
+                        key=lambda p: (
+                            p._score if p._score is not None else float("-inf")
+                        ),
+                        reverse=reverse,
+                    )
+                elif sort in [
+                    SortMechanism.DATE_DESC.value,
+                    SortMechanism.DATE_ASC.value,
+                ]:
+                    reverse = sort == SortMechanism.DATE_DESC.value
+                    pics.sort(key=lambda p: p.created_at or "", reverse=reverse)
+                # else: unsorted
+                pics = pics[offset : offset + limit]
+
             if info:
                 # Batch fetch all master iteration scores for these pictures
                 pic_ids = [pic.id for pic in pics]
                 score_map = {}
                 if pic_ids:
                     cursor = self.vault.connection.cursor()
-                    # Use tuple for IN clause, handle single element tuple
                     qmarks = ",".join(["?"] * len(pic_ids))
                     cursor.execute(
                         f"SELECT picture_id, score FROM picture_iterations WHERE is_master=1 AND picture_id IN ({qmarks})",
