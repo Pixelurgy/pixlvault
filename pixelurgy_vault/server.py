@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import Body, FastAPI, File, Form, Request, UploadFile, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .logging import get_logger, setup_logging
 import uvicorn
@@ -61,6 +61,12 @@ class Server:
         self.config = self.init_config(
             config_path, vault_db_path, image_root, description, log_file
         )
+        # SSL config
+        self.require_ssl = self.config.get("require_ssl", False)
+        self.ssl_keyfile = self.config.get("ssl_keyfile", "ssl/key.pem")
+        self.ssl_certfile = self.config.get("ssl_certfile", "ssl/cert.pem")
+        if self.require_ssl:
+            self._ensure_ssl_certificates()
         # Override config values with explicit arguments
         if vault_db_path is not None:
             self.config["db_path"] = vault_db_path
@@ -88,7 +94,8 @@ class Server:
             allow_methods=["*"],
             allow_headers=["*"],
         )
-        self.setup_routes()
+        self._add_cors_exception_handler()
+        self._setup_routes()
 
     @asynccontextmanager
     async def lifespan(self, app):
@@ -121,6 +128,9 @@ class Server:
                 "description": description,
                 "log_file": log_file,
                 "port": 9537,
+                "require_ssl": False,
+                "ssl_keyfile": "ssl/key.pem",
+                "ssl_certfile": "ssl/cert.pem",
             }
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=2)
@@ -130,7 +140,50 @@ class Server:
             # Do not override log_file here; let __init__ handle it
         return config
 
-    def setup_routes(self):
+    def _ensure_ssl_certificates(self):
+        import subprocess
+
+        keyfile = self.ssl_keyfile
+        certfile = self.ssl_certfile
+        # If either file is missing, generate self-signed cert
+        if not (os.path.exists(keyfile) and os.path.exists(certfile)):
+            os.makedirs(os.path.dirname(keyfile), exist_ok=True)
+            os.makedirs(os.path.dirname(certfile), exist_ok=True)
+            print(f"[SSL] Generating self-signed certificate: {certfile}, {keyfile}")
+            try:
+                subprocess.run(
+                    [
+                        "openssl",
+                        "req",
+                        "-x509",
+                        "-nodes",
+                        "-days",
+                        "365",
+                        "-newkey",
+                        "rsa:2048",
+                        "-keyout",
+                        keyfile,
+                        "-out",
+                        certfile,
+                        "-subj",
+                        "/CN=localhost",
+                    ],
+                    check=True,
+                )
+            except Exception as e:
+                print(f"[SSL] Failed to generate self-signed certificate: {e}")
+                raise
+
+    def _add_cors_exception_handler(self):
+        @self.app.exception_handler(HTTPException)
+        async def cors_exception_handler(request, exc):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail},
+                headers={"Access-Control-Allow-Origin": "*"},
+            )
+
+    def _setup_routes(self):
         from pixelurgy_vault.pictures import get_sort_mechanisms
 
         @self.app.get("/pictures/sort_mechanisms")
@@ -143,6 +196,7 @@ class Server:
             """
             Return a face-cropped thumbnail for the highest scored picture of the character.
             If no scored picture, fallback to first image. If no face bbox, fallback to normal thumbnail.
+            Cropped region is resized to fit within 96x96, preserving aspect ratio.
             """
             import io
             from PIL import Image
@@ -198,8 +252,13 @@ class Server:
                 y2 = max(0, min(h, y2))
                 if x2 > x1 and y2 > y1:
                     thumb_img = thumb_img.crop((x1, y1, x2, y2))
-            # Resize to 96x96 for sidebar (twice the previous size)
-            thumb_img = thumb_img.resize((96, 96), Image.LANCZOS)
+            # Resize so height=96px, width scaled proportionally
+            target_height = 96
+            w, h = thumb_img.size
+            if h != target_height:
+                scale = target_height / h
+                new_w = int(round(w * scale))
+                thumb_img = thumb_img.resize((new_w, target_height), Image.LANCZOS)
             buf = io.BytesIO()
             thumb_img.save(buf, format="PNG")
             return Response(content=buf.getvalue(), media_type="image/png")
@@ -530,12 +589,12 @@ class Server:
         ):
             if not isinstance(id, str):
                 logger.error(f"Invalid id type: {type(id)} value: {id}")
-                raise HTTPException(status_code=404, detail="Invalid picture id")
+                return self._cors_error_response("Invalid picture id", 404)
             try:
                 pic = self.vault.pictures[id]
             except KeyError:
                 logger.error(f"Picture not found for id={id}")
-                raise HTTPException(status_code=404, detail="Picture not found")
+                return self._cors_error_response("Picture not found", 404)
             if info:
                 # Return metadata only
                 result = {
@@ -555,18 +614,19 @@ class Server:
             )
             if not master_its:
                 logger.error(f"Master iteration not found for picture id={pic.id}")
-                raise HTTPException(
-                    status_code=404, detail="Master iteration not found"
-                )
+                return self._cors_error_response("Master iteration not found", 404)
             it = master_its[0]
             if not it.file_path or not os.path.isfile(it.file_path):
                 logger.error(
                     f"File path missing or does not exist for iteration id={it.id}, file_path={it.file_path}"
                 )
-                raise HTTPException(
-                    status_code=404, detail=f"File not found for iteration id={it.id}"
+                return self._cors_error_response(
+                    f"File not found for iteration id={it.id}", 404
                 )
-            return FileResponse(it.file_path)
+            # Return the image file with CORS headers
+            response = FileResponse(it.file_path)
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            return response
 
         @self.app.get("/thumbnails/{id}")
         async def get_thumbnail(id: str):
@@ -1026,7 +1086,17 @@ def main():
 
     server = Server(config_path=config_path, log_file=args.log_file)
 
-    uvicorn.run(server.app, host="0.0.0.0", port=args.port)
+    uvicorn_kwargs = dict(
+        host="0.0.0.0",
+        port=args.port,
+    )
+    if server.require_ssl:
+        uvicorn_kwargs["ssl_keyfile"] = server.ssl_keyfile
+        uvicorn_kwargs["ssl_certfile"] = server.ssl_certfile
+        print(
+            f"[SSL] Running with SSL: keyfile={server.ssl_keyfile}, certfile={server.ssl_certfile}"
+        )
+    uvicorn.run(server.app, **uvicorn_kwargs)
 
 
 if __name__ == "__main__":

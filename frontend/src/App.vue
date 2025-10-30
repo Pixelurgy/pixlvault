@@ -14,6 +14,8 @@ import unknownPerson from "./assets/unknown-person.png"; // Import for unknown c
 // Drag-and-drop overlay state (for image grid only)
 const dragOverlayVisible = ref(false);
 const dragOverlayMessage = ref("");
+// Track drag source for grid
+const dragSource = ref(null);
 
 // Import progress modal state
 const importInProgress = ref(false);
@@ -98,6 +100,44 @@ function isSupportedImageFile(file) {
   return PIL_IMAGE_EXTENSIONS.includes(ext);
 }
 
+// Cache for cropped thumbnail data URLs
+const croppedThumbnails = ref({}); // { [img.id]: dataUrl }
+
+// Crop an image to a square using canvas and return a data URL
+function cropImageToSquare(url, id) {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.crossOrigin = "Anonymous";
+    img.onload = function () {
+      const size = Math.min(img.width, img.height);
+      const sx = img.width > img.height ? (img.width - img.height) / 2 : 0;
+      const sy = img.height > img.width ? (img.height - img.width) / 2 : 0;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, sx, sy, size, size, 0, 0, size, size);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+// Get the cropped thumbnail data URL for an image, or start cropping if not cached
+async function getCroppedThumbnail(img) {
+  if (!img || !img.id) return "";
+  if (croppedThumbnails.value[img.id]) return croppedThumbnails.value[img.id];
+  const url = `${BACKEND_URL}/thumbnails/${img.id}`;
+  try {
+    const dataUrl = await cropImageToSquare(url, img.id);
+    croppedThumbnails.value[img.id] = dataUrl;
+    return dataUrl;
+  } catch {
+    return url; // fallback to original
+  }
+}
+
 async function hashFile(file) {
   // SHA-256 sampled hash: whole file if <=128KB, else 8 evenly spaced 8192-byte blocks
   const CHUNK_SIZE = 8192;
@@ -154,16 +194,18 @@ async function fetchSortOptions() {
     // Set default sort if not set
     if (!selectedSort.value && options.length) {
       selectedSort.value =
-        options.find((o) => o.id === "date_desc")?.id || options[0].id;
+        options.find((o) => o.id === "unsorted")?.id || options[0].id;
     }
   } catch (e) {
     sortOptions.value = [
+      { label: "Unsorted", value: "unsorted" },
       { label: "Date: Latest First", value: "date_desc" },
       { label: "Date: Oldest First", value: "date_asc" },
       { label: "Score: Highest First", value: "score_desc" },
       { label: "Score: Lowest First", value: "score_asc" },
+      { label: "Score: Lowest First", value: "search_likeness" },
     ];
-    if (!selectedSort.value) selectedSort.value = "date_desc";
+    if (!selectedSort.value) selectedSort.value = "unsorted";
   }
 }
 
@@ -287,6 +329,11 @@ function handleCancelImport() {
 
 function handleGridDrop(e) {
   dragOverlayVisible.value = false;
+  // Prevent importing if this is an internal drag (from our own grid)
+  if (dragSource.value === "grid") {
+    dragSource.value = null;
+    return;
+  }
   if (!e.dataTransfer || !e.dataTransfer.files) return;
   const files = Array.from(e.dataTransfer.files).filter(isSupportedImageFile);
   console.debug("[IMPORT] Files dropped:", e.dataTransfer.files);
@@ -300,6 +347,7 @@ function handleGridDrop(e) {
   importProgress.value = 0;
   importError.value = null;
   importPhase.value = "hashing";
+  dragSource.value = null;
   (async () => {
     // Step 1: Compute hashes for all files in parallel (with concurrency limit)
     importTotal.value = files.length;
@@ -458,6 +506,15 @@ function handleGridDrop(e) {
       alert("One or more uploads failed: " + (e.message || e));
     }
   })();
+}
+
+// Clear selection if clicking on empty space in the image grid
+function handleGridBackgroundClick(e) {
+  // If the click is NOT inside an image-card, clear selection
+  if (!e.target.closest(".thumbnail-card")) {
+    selectedImageIds.value = [];
+    lastSelectedIndex = null;
+  }
 }
 
 // Infinite scroll: load more images as user scrolls near bottom
@@ -895,42 +952,7 @@ onMounted(() => {
   selectedCharacter.value = ALL_PICTURES_ID;
   selectedReferenceMode.value = false;
   fetchSortOptions();
-  fetchCharacters().then(() => {
-    // After loading characters, ensure All Pictures is still selected
-    selectedCharacter.value = ALL_PICTURES_ID;
-    selectedReferenceMode.value = false;
-    // Explicitly trigger image loading if already on All Pictures
-    if (
-      selectedCharacter.value === ALL_PICTURES_ID &&
-      !selectedReferenceMode.value
-    ) {
-      // This mimics the watcher logic
-      images.value = [];
-      imagesError.value = null;
-      selectedImageIds.value = [];
-      imagesLoading.value = true;
-      let url = `${BACKEND_URL}/pictures?info=true`;
-      fetch(url)
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to fetch images");
-          return res.json();
-        })
-        .then((baseImages) => {
-          images.value = baseImages.map((img) => ({
-            ...img,
-            score: typeof img.score !== "undefined" ? img.score : null,
-            is_reference: Number(img.is_reference) || 0,
-          }));
-          setTimeout(updateColumns, 0);
-        })
-        .catch((e) => {
-          imagesError.value = e.message;
-        })
-        .finally(() => {
-          imagesLoading.value = false;
-        });
-    }
-  });
+  fetchCharacters();
   window.addEventListener("resize", updateColumns);
   watch(thumbnailSize, updateColumns);
   setTimeout(updateColumns, 100); // Initial update after mount
@@ -960,19 +982,21 @@ function handleOverlayKeydown(e) {
   if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (overlayOpen.value && overlayImage.value) {
       toggleReference(overlayImage.value);
+      e.preventDefault();
+      return;
     } else if (selectedImageIds.value.length) {
       // Use the last selected image as the reference for toggle value
       const lastImg = images.value.find(
         (i) =>
           i.id === selectedImageIds.value[selectedImageIds.value.length - 1]
       );
-      if (lastImg) toggleReference(lastImg);
-    } else if (images.value.length) {
-      // If nothing selected, toggle the first image
-      toggleReference(images.value[0]);
+      if (lastImg) {
+        toggleReference(lastImg);
+        e.preventDefault();
+        return;
+      }
     }
-    e.preventDefault();
-    return;
+    // Do nothing if nothing is selected and overlay is not open
   }
   if (overlayOpen.value) {
     if (e.key === "ArrowLeft") {
@@ -1025,35 +1049,8 @@ function handleOverlayKeydown(e) {
     }
     e.preventDefault();
     return;
-  } else {
-    return;
   }
-  const isCtrl = e.ctrlKey || e.metaKey;
-  const isShift = e.shiftKey;
-  if (isShift && lastSelectedIndex !== null) {
-    // Range select
-    const start = Math.min(lastSelectedIndex, nextIdx);
-    const end = Math.max(lastSelectedIndex, nextIdx);
-    const rangeIds = images.value.slice(start, end + 1).map((i) => i.id);
-    const newSelection = isCtrl
-      ? Array.from(new Set([...selectedImageIds.value, ...rangeIds]))
-      : rangeIds;
-    selectedImageIds.value = newSelection;
-  } else if (isCtrl) {
-    // Toggle selection of nextIdx
-    const id = images.value[nextIdx].id;
-    if (selectedImageIds.value.includes(id)) {
-      selectedImageIds.value = selectedImageIds.value.filter((i) => i !== id);
-    } else {
-      selectedImageIds.value = [...selectedImageIds.value, id];
-    }
-    lastSelectedIndex = nextIdx;
-  } else {
-    // Single select
-    selectedImageIds.value = [images.value[nextIdx].id];
-    lastSelectedIndex = nextIdx;
-  }
-  e.preventDefault();
+  return;
 }
 
 onMounted(() => {
@@ -1190,6 +1187,7 @@ function onImageDragStart(img, idx, event) {
     JSON.stringify({ imageIds: ids })
   );
   event.dataTransfer.effectAllowed = "move";
+  dragSource.value = "grid";
 }
 function onCharacterDragOver(charId) {
   dragOverCharacter.value = charId;
@@ -1555,7 +1553,6 @@ function confirmDeleteCharacter() {
             label="Sort by"
             dense
             hide-details
-            variant="solo"
             style="min-width: 200px; max-width: 300px; margin-right: 8px"
           />
 
@@ -1602,7 +1599,7 @@ function confirmDeleteCharacter() {
           </v-btn>
           <v-btn
             icon
-            :color="showStars ? 'amber darken-2' : 'grey'"
+            :color="showStars ? 'orange' : 'grey'"
             @click="showStars = !showStars"
             title="Toggle star ratings"
             style="margin-left: 2px; margin-right: 2px"
@@ -1675,6 +1672,7 @@ function confirmDeleteCharacter() {
             <v-icon small style="margin-right: 8px">{{
               sidebarSections.people ? "mdi-chevron-down" : "mdi-chevron-right"
             }}</v-icon>
+            People
             <span style="flex: 1 1 auto"></span>
             <span
               style="
@@ -1773,7 +1771,6 @@ function confirmDeleteCharacter() {
                   }}</span>
                 </div>
               </div>
-              <div v-if="loading" class="sidebar-loading">Loading...</div>
             </div>
           </transition>
         </aside>
@@ -1792,15 +1789,13 @@ function confirmDeleteCharacter() {
                 @dragleave.prevent="handleGridDragLeave"
                 @drop.prevent="handleGridDrop"
                 @scroll="onGridScroll"
+                @click="handleGridBackgroundClick"
               >
                 <div
                   v-if="images.length === 0 && !imagesLoading && !imagesError"
                   class="empty-state"
                 >
                   No images found for this character.
-                </div>
-                <div v-if="imagesLoading" class="empty-state">
-                  Loading images...
                 </div>
                 <div v-if="imagesError" class="empty-state">
                   {{ imagesError }}
@@ -1816,51 +1811,66 @@ function confirmDeleteCharacter() {
                     isImageSelected(img.id) ? 'selected' : '',
                     getSelectionBorderClasses(idx),
                   ]"
-                  @click="handleImageSelect(img, idx, $event)"
                   :draggable="isImageSelected(img.id)"
                   @dragstart="onImageDragStart(img, idx, $event)"
+                  @click="handleGridBackgroundClick"
                 >
-                  <v-card>
-                    <div class="star-overlay" v-if="showStars">
-                      <v-icon
-                        v-for="n in 5"
-                        :key="n"
-                        small
-                        :color="
-                          n <= (img.score || 0) ? 'amber' : 'grey lighten-1'
+                  <v-card class="thumbnail-card">
+                    <div class="thumbnail-container">
+                      <div class="star-overlay" v-if="showStars">
+                        <v-icon
+                          v-for="n in 5"
+                          :key="n"
+                          small
+                          :color="
+                            n <= (img.score || 0) ? 'orange' : 'grey darken-2'
+                          "
+                          style="cursor: pointer"
+                          @click.stop="setImageScore(img, n)"
+                          >mdi-star</v-icon
+                        >
+                      </div>
+                      <img
+                        :src="
+                          croppedThumbnails[img.id] ||
+                          `${BACKEND_URL}/thumbnails/${img.id}`
+                        "
+                        class="thumbnail-img"
+                        @click.stop="
+                          (e) => {
+                            if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                              handleImageSelect(img, idx, e);
+                            } else {
+                              openOverlay(img);
+                            }
+                          }
+                        "
+                        @load="
+                          async (e) => {
+                            if (!croppedThumbnails[img.id]) {
+                              const dataUrl = await getCroppedThumbnail(img);
+                              croppedThumbnails[img.id] = dataUrl;
+                            }
+                            fetchScoreIfMissing(img);
+                          }
                         "
                         style="cursor: pointer"
-                        @click.stop="setImageScore(img, n)"
-                        >mdi-star</v-icon
+                      />
+                      <!-- Trophy icon for reference toggle -->
+                      <v-btn
+                        icon
+                        size="small"
+                        class="reference-trophy-btn trophy-bg"
+                        @click.stop="toggleReference(img)"
+                        title="Toggle reference picture"
                       >
+                        <v-icon
+                          :color="img.is_reference ? 'orange' : 'grey darken-2'"
+                          size="24px"
+                          >mdi-trophy</v-icon
+                        >
+                      </v-btn>
                     </div>
-                    <v-img
-                      :src="`${BACKEND_URL}/thumbnails/${img.id}`"
-                      :height="thumbnailSize"
-                      :width="thumbnailSize"
-                      @click.stop="
-                        (e) => {
-                          if (e.ctrlKey || e.metaKey || e.shiftKey) {
-                            handleImageSelect(img, idx, e);
-                          } else {
-                            openOverlay(img);
-                          }
-                        }
-                      "
-                      @load="fetchScoreIfMissing(img)"
-                      style="cursor: pointer"
-                    />
-                    <!-- Trophy icon for reference toggle -->
-                    <v-btn
-                      icon
-                      size="small"
-                      class="reference-trophy-btn"
-                      :color="img.is_reference ? 'orange darken-2' : 'grey'"
-                      @click.stop="toggleReference(img)"
-                      title="Toggle reference picture"
-                    >
-                      <v-icon color="white">mdi-trophy</v-icon>
-                    </v-btn>
                     <!-- Show date under thumbnail if sorting by date -->
                     <div
                       v-if="
@@ -1879,47 +1889,47 @@ function confirmDeleteCharacter() {
                   class="image-overlay"
                   @click.self="closeOverlay"
                 >
-                  <div class="overlay-content">
+                  <div class="overlay-content overlay-grid">
                     <button
                       class="overlay-close"
                       @click="closeOverlay"
                       aria-label="Close"
+                      style="
+                        position: absolute;
+                        top: 12px;
+                        right: 18px;
+                        z-index: 20;
+                      "
                     >
                       &times;
                     </button>
-                    <div class="overlay-flex-row">
-                      <button
-                        class="overlay-nav overlay-nav-left"
-                        @click.stop="showPrevImage"
-                        aria-label="Previous"
+                    <div
+                      class="overlay-grid-main"
+                      style="
+                        display: grid;
+                        grid-template-columns: 64px 1fr 64px;
+                        align-items: center;
+                        width: 100%;
+                        height: 100%;
+                      "
+                    >
+                      <div
+                        style="
+                          display: flex;
+                          justify-content: center;
+                          align-items: center;
+                          height: 100%;
+                        "
                       >
-                        &#8592;
-                      </button>
-                      <div class="overlay-img-container">
-                        <div
-                          class="overlay-star-row"
-                          v-if="overlayImage"
-                          style="
-                            display: flex;
-                            justify-content: center;
-                            align-items: center;
-                            margin-bottom: 12px;
-                          "
+                        <button
+                          class="overlay-nav overlay-nav-left"
+                          @click.stop="showPrevImage"
+                          aria-label="Previous"
                         >
-                          <v-icon
-                            v-for="n in 5"
-                            :key="n"
-                            large
-                            :color="
-                              n <= (overlayImage.score || 0)
-                                ? 'amber'
-                                : 'grey lighten-1'
-                            "
-                            style="cursor: pointer"
-                            @click.stop="setImageScore(overlayImage, n)"
-                            >mdi-star</v-icon
-                          >
-                        </div>
+                          <v-icon>mdi-skip-previous</v-icon>
+                        </button>
+                      </div>
+                      <div class="overlay-img-wrapper">
                         <div style="position: relative; display: inline-block">
                           <img
                             v-if="overlayImage"
@@ -1927,136 +1937,161 @@ function confirmDeleteCharacter() {
                             :alt="overlayImage.description || 'Full Image'"
                             class="overlay-img"
                           />
+                          <div class="star-overlay" v-if="overlayImage">
+                            <v-icon
+                              v-for="n in 5"
+                              :key="n"
+                              large
+                              :color="
+                                n <= (overlayImage.score || 0)
+                                  ? 'orange'
+                                  : 'grey darken-2'
+                              "
+                              style="cursor: pointer"
+                              @click.stop="setImageScore(overlayImage, n)"
+                              >mdi-star</v-icon
+                            >
+                          </div>
                           <v-btn
                             icon
                             size="small"
-                            class="reference-trophy-btn overlay-trophy-btn"
-                            :color="
-                              overlayImage.is_reference
-                                ? 'orange darken-2'
-                                : 'grey'
-                            "
+                            class="reference-trophy-btn trophy-bg"
                             @click.stop="toggleReference(overlayImage)"
                             title="Toggle reference picture"
                             style="
                               position: absolute;
-                              bottom: 8px;
                               right: 8px;
-                              z-index: 10;
-                              background: rgba(0, 0, 0, 0.3);
+                              bottom: 8px;
+                              z-index: 2;
                             "
                           >
-                            <v-icon color="white">mdi-trophy</v-icon>
+                            <v-icon
+                              :color="
+                                overlayImage.is_reference
+                                  ? 'orange'
+                                  : 'grey darken-2'
+                              "
+                              >mdi-trophy</v-icon
+                            >
                           </v-btn>
-                          <div
-                            v-if="
-                              overlayImage &&
-                              overlayImage.tags &&
-                              overlayImage.tags.length
-                            "
-                            class="overlay-tags"
-                            style="
-                              margin-top: 8px;
-                              margin-bottom: 0;
-                              text-align: center;
-                            "
-                          >
-                            <span
-                              v-for="tag in overlayImage.tags"
-                              :key="tag"
-                              class="overlay-tag"
-                              style="
-                                display: inline-flex;
-                                align-items: center;
-                                background: #eee;
-                                color: #333;
-                                border-radius: 16px;
-                                padding: 4px 16px 4px 14px;
-                                margin: 2px 2px;
-                                font-size: 1.15em;
-                                position: relative;
-                                min-height: 32px;
-                              "
-                            >
-                              {{ tag }}
-                              <button
-                                class="tag-delete-btn"
-                                @click.stop="removeTagFromOverlayImage(tag)"
-                                title="Remove tag"
-                                style="
-                                  background: none;
-                                  border: none;
-                                  color: #888;
-                                  font-size: 1.25em;
-                                  margin-left: 10px;
-                                  cursor: pointer;
-                                  display: flex;
-                                  align-items: center;
-                                  justify-content: center;
-                                  height: 24px;
-                                  width: 24px;
-                                  padding: 0;
-                                "
-                              >
-                                ×
-                              </button>
-                            </span>
-                            <!-- Add + button at the end for adding tags -->
-                            <button
-                              class="tag-add-btn"
-                              @click.stop="startAddTagOverlay()"
-                              title="Add tag"
-                              style="
-                                display: inline-flex;
-                                align-items: center;
-                                justify-content: center;
-                                background: #e0e0e0;
-                                color: #333;
-                                border: none;
-                                border-radius: 16px;
-                                font-size: 1.3em;
-                                margin: 2px 2px;
-                                height: 32px;
-                                width: 32px;
-                                cursor: pointer;
-                                padding: 0;
-                                vertical-align: middle;
-                              "
-                            >
-                              +
-                            </button>
-                            <!-- Input for adding a tag, shown only when adding -->
-                            <input
-                              v-if="addingTagOverlay"
-                              v-model="newTagOverlay"
-                              @keydown.enter="confirmAddTagOverlay"
-                              @blur="cancelAddTagOverlay"
-                              class="tag-add-input"
-                              style="
-                                margin-left: 8px;
-                                font-size: 1.1em;
-                                border-radius: 8px;
-                                border: 1px solid #bbb;
-                                padding: 2px 8px;
-                                min-width: 80px;
-                                outline: none;
-                              "
-                              placeholder="New tag"
-                              autofocus
-                            />
-                          </div>
-                        </div>
-                        <div class="overlay-desc">
-                          {{ overlayImage?.description }}
                         </div>
                       </div>
-                      <button
-                        class="overlay-nav overlay-nav-right"
-                        @click.stop="showNextImage"
-                        aria-label="Next"
+                      <div
+                        style="
+                          display: flex;
+                          justify-content: center;
+                          align-items: center;
+                          height: 100%;
+                        "
                       >
-                        &#8594;
+                        <button
+                          class="overlay-nav overlay-nav-right"
+                          @click.stop="showNextImage"
+                          aria-label="Next"
+                        >
+                          <v-icon>mdi-skip-next</v-icon>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="overlay-desc">
+                      {{ overlayImage?.description || "DUMMY DESCRIPTION" }}
+                    </div>
+                    <div
+                      v-if="
+                        overlayImage &&
+                        overlayImage.tags &&
+                        overlayImage.tags.length
+                      "
+                      class="overlay-tags"
+                      style="
+                        margin-top: 8px;
+                        margin-bottom: 0;
+                        text-align: center;
+                      "
+                    >
+                      <span
+                        v-for="tag in overlayImage.tags"
+                        :key="tag"
+                        class="overlay-tag"
+                        style="
+                          display: inline-flex;
+                          align-items: center;
+                          background: #eee;
+                          color: #333;
+                          border-radius: 16px;
+                          padding: 4px 16px 4px 14px;
+                          margin: 2px 2px;
+                          font-size: 1.15em;
+                          position: relative;
+                          min-height: 32px;
+                        "
+                      >
+                        {{ tag }}
+                        <button
+                          class="tag-delete-btn"
+                          @click.stop="removeTagFromOverlayImage(tag)"
+                          title="Remove tag"
+                          style="
+                            background: none;
+                            border: none;
+                            color: #888;
+                            font-size: 1.25em;
+                            margin-left: 10px;
+                            cursor: pointer;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            height: 24px;
+                            width: 24px;
+                            padding: 0;
+                          "
+                        >
+                          ×
+                        </button>
+                      </span>
+                      <!-- Add + button at the end for adding tags -->
+                      <button
+                        class="tag-add-btn"
+                        @click.stop="startAddTagOverlay()"
+                        title="Add tag"
+                        style="
+                          display: inline-flex;
+                          align-items: center;
+                          justify-content: center;
+                          background: #e0e0e0;
+                          color: #333;
+                          border: none;
+                          border-radius: 16px;
+                          font-size: 1.3em;
+                          margin: 2px 2px;
+                          height: 32px;
+                          width: 32px;
+                          cursor: pointer;
+                          padding: 0;
+                          vertical-align: middle;
+                        "
+                      >
+                        +
                       </button>
+                      <!-- Input for adding a tag, shown only when adding -->
+                      <input
+                        v-if="addingTagOverlay"
+                        v-model="newTagOverlay"
+                        @keydown.enter="confirmAddTagOverlay"
+                        @blur="cancelAddTagOverlay"
+                        class="tag-add-input"
+                        style="
+                          margin-left: 8px;
+                          font-size: 1.1em;
+                          border-radius: 8px;
+                          border: 1px solid #bbb;
+                          padding: 2px 8px;
+                          min-width: 80px;
+                          outline: none;
+                        "
+                        placeholder="New tag"
+                        autofocus
+                      />
                     </div>
                   </div>
                 </div>
@@ -2138,8 +2173,31 @@ body {
   right: 8px;
   bottom: 8px;
   z-index: 12;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   background: transparent;
+  padding: 0;
+}
+.trophy-bg {
+  background: rgba(255, 255, 255, 0.8) !important;
+  border-radius: 50%;
+  width: 32px !important;
+  height: 32px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none !important;
+  outline: none !important;
+  border: 3px solid transparent;
+  transition: border 0.2s;
+}
+.trophy-bg:hover {
+  background: rgba(255, 255, 255, 1) !important;
+}
+.trophy-bg:focus,
+.trophy-bg:active {
+  border: 2px solid transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
 }
 .image-card.selected {
   z-index: 2;
@@ -2302,9 +2360,9 @@ body {
   display: flex;
   align-items: center;
   margin-right: 12px;
-  width: 44px;
-  min-width: 44px;
   justify-content: center;
+  width: 44px;
+  height: 44px;
 }
 .sidebar-list-label {
   flex: 1;
@@ -2315,9 +2373,9 @@ body {
   text-align: left;
 }
 .sidebar-character-thumb {
-  width: 44px;
-  height: 44px;
-  object-fit: cover;
+  max-width: 44px;
+  max-height: 44px;
+  object-fit: contain;
   border-radius: 6px;
   box-shadow: 0 0px 0px #bbb;
 }
@@ -2394,7 +2452,7 @@ body {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.85);
+  background: rgba(0, 0, 0, 0.2);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -2402,24 +2460,49 @@ body {
 }
 .overlay-content {
   position: relative;
-  width: 80vw;
-  height: 80vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: #222;
+  background: rgba(117, 117, 117, 0.9);
   border-radius: 8px;
   box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
   padding: 24px 24px 16px 24px;
 }
-.overlay-flex-row {
-  display: flex;
-  flex-direction: row;
+/* Overlay grid: fixed width, dynamic height, max 90vh */
+.overlay-grid {
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  grid-template-columns: 1fr;
+  width: 90vw;
+  min-width: 320px;
+  max-width: 95vw;
+  max-height: 90vh;
+  border-radius: 8px;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
+  padding: 24px 24px 16px 24px;
   align-items: center;
-  justify-content: center;
+  justify-items: center;
+  position: relative;
+  overflow-y: auto;
+}
+.overlay-grid-main {
+  display: grid;
+  grid-template-columns: 56px 1fr 56px;
+  grid-template-rows: 1fr;
+  align-items: center;
   width: 100%;
   height: 100%;
+}
+.overlay-img-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
 }
 .overlay-img-container {
   height: 90%;
@@ -2431,10 +2514,11 @@ body {
 .overlay-img {
   max-width: 100%;
   max-height: 70vh;
+  min-height: 256px;
   object-fit: contain;
-  border-radius: 4px;
+  border-radius: 8px;
   background: #111;
-  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 .overlay-close {
   position: absolute;
@@ -2466,10 +2550,10 @@ body {
   position: absolute;
   top: 50%;
   font-size: 2.5rem;
-  color: #000;
-  background: #bbb;
-  width: 52px;
-  height: 52px;
+  color: #444;
+  background: rgba(255, 255, 255, 0.7);
+  max-width: 52px;
+  max-height: 52px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2487,7 +2571,7 @@ body {
 
 .overlay-nav:hover {
   background: #fff;
-  color: #000;
+  color: orange;
 }
 .overlay-nav {
   z-index: 1200;
@@ -2511,27 +2595,27 @@ body {
   margin-left: auto;
   margin-right: 0px;
   padding-right: 2px;
-  border-bottom: none;
-  box-shadow: none;
 }
 .star-overlay {
   position: absolute;
-  top: 5px;
-  right: 10px;
-  transform: translateX(-25%);
+  top: 8px;
+  right: 8px;
+  z-index: 12;
   display: flex;
   flex-direction: row;
-  z-index: 10;
-  background: rgba(255, 255, 255, 0.85);
-  border-radius: 6px;
-  padding: 1px 4px 1px 2px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 4px;
+  box-shadow: none;
   font-size: 0.85em;
+  margin: 4px 4px 4px 4px;
+}
+.star-overlay:hover {
+  background: rgba(255, 255, 255, 1);
 }
 .star-overlay .v-icon {
-  font-size: 16px !important;
-  width: 16px;
-  height: 16px;
+  font-size: 20px !important;
+  width: 20px;
+  height: 20px;
 }
 .image-card {
   position: relative;
@@ -2665,9 +2749,37 @@ button[disabled] {
   color: #ff5252;
   margin-left: 12px;
 }
-/* Remove rounded corners from v-select and v-text-field (solo variant) */
-::v-deep(.v-select .v-field, .search-bar-text-field .v-field) {
-  border-radius: 0 !important;
-  background-color: #ddd;
+.thumbnail-container {
+  width: 100%;
+  position: relative;
+  display: block;
+}
+.thumbnail-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  border-radius: 8px;
+}
+.thumbnail-container:hover .thumbnail-img,
+.thumbnail-container:focus-within .thumbnail-img {
+  transform: scale(1.02);
+  box-shadow: 0 4px 24px 0 rgba(25, 118, 210, 0.2),
+    0 1.5px 6px 0 rgba(0, 0, 0, 0.3);
+  z-index: 2;
+  transition: transform 0.18s cubic-bezier(0.4, 2, 0.6, 1), box-shadow 0.18s;
+}
+.thumbnail-img {
+  transition: transform 0.18s cubic-bezier(0.4, 2, 0.6, 1), box-shadow 0.18s;
+}
+.thumbnail-card {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+.v-btn:focus:not(:focus-visible),
+button:focus:not(:focus-visible) {
+  outline: none !important;
+  box-shadow: none !important;
 }
 </style>

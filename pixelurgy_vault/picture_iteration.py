@@ -64,7 +64,7 @@ class PictureIteration:
         is_master: bool = False,
     ) -> Tuple[str, "PictureIteration"]:
         """Create an iteration from raw bytes. Returns (picture_uuid, PictureIteration)."""
-        raw_sha = hashlib.sha256(image_bytes).hexdigest()
+        raw_sha = PictureIteration.calculate_hash_from_bytes(image_bytes)
         if not picture_id:
             raise ValueError(
                 "picture_uuid must be provided when creating a picture iteration."
@@ -157,3 +157,27 @@ class PictureIteration:
             digest = sha256.hexdigest()
             print(f"[HASH-DEBUG] SAMPLED: {file_path} size={file_size} hash={digest}")
             return digest
+
+    @staticmethod
+    def calculate_hash_from_bytes(image_bytes: bytes) -> str:
+        CHUNK_SIZE = 8192
+        N = 8
+        WHOLE_FILE_THRESHOLD = 128 * 1024  # 128KB
+        file_size = len(image_bytes)
+        sha256 = hashlib.sha256()
+        if file_size <= WHOLE_FILE_THRESHOLD:
+            for i in range(0, file_size, CHUNK_SIZE):
+                chunk = image_bytes[i : i + CHUNK_SIZE]
+                sha256.update(chunk)
+            digest = sha256.hexdigest()
+            print(f"[HASH-DEBUG] WHOLE: size={file_size} hash={digest}")
+            return digest
+        # For larger files, sample N evenly spaced blocks
+        offsets = [int(i * (file_size - CHUNK_SIZE) / (N - 1)) for i in range(N)]
+        for offset in offsets:
+            chunk = image_bytes[offset : offset + CHUNK_SIZE]
+            if chunk:
+                sha256.update(chunk)
+        digest = sha256.hexdigest()
+        print(f"[HASH-DEBUG] SAMPLED: hash={digest}")
+        return digest
