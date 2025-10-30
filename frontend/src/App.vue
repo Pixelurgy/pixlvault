@@ -14,6 +14,12 @@ import unknownPerson from "./assets/unknown-person.png"; // Import for unknown c
 // Drag-and-drop overlay state (for image grid only)
 const dragOverlayVisible = ref(false);
 const dragOverlayMessage = ref("");
+
+// Import progress modal state
+const importInProgress = ref(false);
+const importProgress = ref(0);
+const importTotal = ref(0);
+const importError = ref(null);
 const gridContainer = ref(null); // already used for grid
 
 const PIL_IMAGE_EXTENSIONS = [
@@ -175,13 +181,23 @@ watch([selectedSort, selectedCharacter, selectedReferenceMode], () => {
 });
 
 function handleGridDragEnter(e) {
-  console.debug("handleGridDragEnter", e);
+  // Only trigger if entering from outside the image-grid (not between children)
+  // If relatedTarget is inside the grid, ignore (moving within grid children).
+  if (e.relatedTarget && gridContainer.value && gridContainer.value.contains(e.relatedTarget)) return;
+  const clock = Date.now() / 1000;
+  console.debug(`handleGridDragEnter [${clock.toFixed(3)}s]`, e);
   if (!e.dataTransfer || !e.dataTransfer.items) return;
-  // Accept any image/* MIME type for overlay
-  const hasImageType = Array.from(e.dataTransfer.items).some((item) => {
-    return item.kind === "file" && item.type.startsWith("image/");
-  });
-  console.debug("hasImageType", hasImageType);
+  // Only check the first 20 items for image type, break immediately if found
+  const items = Array.from(e.dataTransfer.items);
+  let hasImageType = false;
+  for (let i = 0; i < Math.min(items.length, 20); i++) {
+    const item = items[i];
+    if (item.kind === "file" && item.type.startsWith("image/")) {
+      hasImageType = true;
+      break;
+    }
+  }
+  // Timing end
   if (hasImageType) {
     dragOverlayVisible.value = true;
     dragOverlayMessage.value = "Drop files here to import";
@@ -194,16 +210,13 @@ function handleGridDragEnter(e) {
 }
 
 function handleGridDragOver(e) {
-  console.debug(
-    "handleGridDragOver",
-    e,
-    "overlayVisible:",
-    dragOverlayVisible.value
-  );
+  const clock = Date.now() / 1000;
+  console.debug(`handleGridDragOver [${clock.toFixed(3)}s]`, e, "overlayVisible:", dragOverlayVisible.value);
   if (dragOverlayVisible.value) e.preventDefault();
 }
 function handleGridDragLeave(e) {
-  console.debug("handleGridDragLeave", e);
+  const clock = Date.now() / 1000;
+  console.debug(`handleGridDragLeave [${clock.toFixed(3)}s]`, e);
   // Only hide overlay if leaving the .image-grid entirely
   if (!e.relatedTarget || !e.currentTarget.contains(e.relatedTarget)) {
     dragOverlayVisible.value = false;
@@ -213,7 +226,8 @@ function handleGridDragLeave(e) {
   }
 }
 function handleGridDrop(e) {
-  console.debug("handleGridDrop", e);
+  const clock = Date.now() / 1000;
+  console.debug(`handleGridDrop [${clock.toFixed(3)}s]`, e);
   dragOverlayVisible.value = false;
   if (!e.dataTransfer || !e.dataTransfer.files) return;
   const files = Array.from(e.dataTransfer.files).filter(isSupportedImageFile);
@@ -221,11 +235,14 @@ function handleGridDrop(e) {
     alert("No supported image files found.");
     return;
   }
-  // Upload each file
-  const uploadPromises = files.map((file) => {
+  importInProgress.value = true;
+  importProgress.value = 0;
+  importTotal.value = files.length;
+  importError.value = null;
+  let completed = 0;
+  const uploadFile = async (file) => {
     const formData = new FormData();
-    formData.append("image", file); // Backend expects 'image'
-    // Optionally, add character id if needed
+    formData.append("image", file);
     if (
       selectedCharacter.value &&
       selectedCharacter.value !== ALL_PICTURES_ID &&
@@ -233,22 +250,33 @@ function handleGridDrop(e) {
     ) {
       formData.append("character_id", selectedCharacter.value);
     }
-    return fetch(`${BACKEND_URL}/pictures`, {
-      method: "POST",
-      body: formData,
-    }).then((res) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/pictures`, {
+        method: "POST",
+        body: formData,
+      });
       if (!res.ok) throw new Error("Upload failed");
-      return res.json();
-    });
-  });
-  Promise.all(uploadPromises)
-    .then(() => {
+      await res.json();
+      completed++;
+      importProgress.value = completed;
+    } catch (err) {
+      importError.value = err.message || String(err);
+      throw err;
+    }
+  };
+  (async () => {
+    try {
+      for (const file of files) {
+        await uploadFile(file);
+      }
+      importInProgress.value = false;
       refreshImages();
       fetchSidebarCounts();
-    })
-    .catch((e) => {
+    } catch (e) {
+      importInProgress.value = false;
       alert("One or more uploads failed: " + (e.message || e));
-    });
+    }
+  })();
 }
 
 // Infinite scroll: load more images as user scrolls near bottom
@@ -446,6 +474,22 @@ function handleImageSelect(img, idx, event) {
     // Single select
     selectedImageIds.value = [id];
     lastSelectedIndex = idx;
+  }
+}
+
+// Fetch score for an image if missing (called on thumbnail load)
+async function fetchScoreIfMissing(img) {
+  if (typeof img.score === "undefined" || img.score === null) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/pictures/${img.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        if ("score" in data) {
+          // Ensure reactivity
+          Object.assign(img, { score: data.score });
+        }
+      }
+    } catch (e) {}
   }
 }
 
@@ -1219,6 +1263,19 @@ function confirmDeleteCharacter() {
 
 <template>
   <v-app>
+    <!-- Import Progress Modal (fixed, outside app-viewport) -->
+    <div v-if="importInProgress" class="import-progress-modal">
+      <div class="import-progress-content">
+        <div class="import-progress-title">Importing Pictures...</div>
+        <div class="import-progress-bar-bg">
+          <div class="import-progress-bar" :style="{ width: ((importProgress / importTotal) * 100) + '%' }"></div>
+        </div>
+        <div class="import-progress-label">
+          {{ importProgress }} / {{ importTotal }}
+          <span v-if="importError" class="import-progress-error">Error: {{ importError }}</span>
+        </div>
+      </div>
+    </div>
     <div class="app-viewport">
       <div class="top-toolbar">
         <v-btn
@@ -1257,7 +1314,6 @@ function confirmDeleteCharacter() {
             :min="128"
             :max="256"
             :step="32"
-            :ticks="true"
             :tick-labels="thumbnailLabels"
             class="slider"
             hide-details
@@ -2294,5 +2350,58 @@ button[disabled] {
   letter-spacing: 0.01em;
   align-self: center;
   display: inline-block;
+}
+
+/* Import Progress Modal Styles */
+.import-progress-modal {
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(32, 32, 32, 0.65) !important;
+  z-index: 99999 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: all;
+}
+.import-progress-content {
+  background: #222;
+  color: #fff8e1;
+  padding: 32px 48px;
+  border-radius: 16px;
+  box-shadow: 0 4px 32px #000a;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.import-progress-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 24px;
+}
+.import-progress-bar-bg {
+  width: 100%;
+  height: 18px;
+  background: #444;
+  border-radius: 9px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.import-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #ff9800 0%, #ffc107 100%);
+  border-radius: 9px 0 0 9px;
+  transition: width 0.2s;
+}
+.import-progress-label {
+  font-size: 1.1rem;
+  margin-top: 8px;
+}
+.import-progress-error {
+  color: #ff5252;
+  margin-left: 12px;
 }
 </style>
