@@ -74,6 +74,7 @@ function isSupportedImageFile(file) {
 // Sorting and pagination state
 const sortOptions = ref([]);
 const selectedSort = ref("");
+const previousSort = ref(""); // Track previous sort for search restore
 const pageSize = ref(100);
 const pageOffset = ref(0);
 const hasMoreImages = ref(true);
@@ -365,6 +366,17 @@ async function searchImages(query) {
   const q = (typeof query === "string" ? query : searchQuery.value).trim();
   if (!q) return;
   searchQuery.value = q;
+  // Save previous sort before switching to likeness sort
+  previousSort.value = selectedSort.value;
+  // Switch sorting to 'Sort by Search Likeness' if available
+  const likenessSort = sortOptions.value.find(
+    (opt) =>
+      (opt.value && opt.value.toLowerCase().includes("search")) ||
+      (opt.label && opt.label.toLowerCase().includes("search"))
+  );
+  if (likenessSort) {
+    selectedSort.value = likenessSort.value;
+  }
   imagesLoading.value = true;
   imagesError.value = null;
   try {
@@ -385,6 +397,17 @@ async function searchImages(query) {
   } finally {
     imagesLoading.value = false;
   }
+// Watch for clearing of searchQuery to restore previous sort and refresh view
+watch(searchQuery, (newVal, oldVal) => {
+  if (!newVal && oldVal) {
+    // Restore previous sort if available
+    if (previousSort.value && previousSort.value !== selectedSort.value) {
+      selectedSort.value = previousSort.value;
+    }
+    // Refresh images for current character and sort
+    refreshImages();
+  }
+});
 }
 
 function handleImageSelect(img, idx, event) {
@@ -903,18 +926,22 @@ function onCharacterDragLeave(charId) {
 async function onCharacterDrop(characterId, event) {
   dragOverCharacter.value = null;
   let imageIds = [];
-  // If dragging from grid, use selectedImageIds
-  if (selectedImageIds.value.length) {
-    imageIds = [...selectedImageIds.value];
-  } else {
-    // Fallback: try to parse from dataTransfer (for future multi-drag support)
-    try {
-      const data = JSON.parse(event.dataTransfer.getData("application/json"));
-      if (data.imageIds && Array.isArray(data.imageIds))
-        imageIds = data.imageIds;
-    } catch (e) {}
+  // Always use drag event data for image IDs
+  try {
+    const data = JSON.parse(event.dataTransfer.getData("application/json"));
+    if (data.imageIds && Array.isArray(data.imageIds)) {
+      imageIds = data.imageIds;
+    }
+  } catch (e) {
+    // If drag data is missing or malformed, abort
+    alert("Could not determine which images to assign. Please try again.");
+    return;
   }
-  if (!imageIds.length) return;
+  if (!imageIds.length) {
+    alert("No images found in drag data.");
+    return;
+  }
+  // Always use the characterId from the drop target
   assignImagesToCharacter(imageIds, characterId);
 }
 
@@ -934,11 +961,15 @@ async function assignImagesToCharacter(imageIds, characterId) {
       })
     );
     await fetchCharacters();
+    // Remove reassigned images from the current grid if not viewing All Pictures or Unassigned
     if (
-      selectedCharacter.value === characterId ||
-      selectedCharacter.value === ALL_PICTURES_ID ||
-      selectedCharacter.value === UNASSIGNED_PICTURES_ID
+      selectedCharacter.value !== ALL_PICTURES_ID &&
+      selectedCharacter.value !== UNASSIGNED_PICTURES_ID &&
+      selectedCharacter.value !== characterId
     ) {
+      images.value = images.value.filter(img => !imageIds.includes(img.id));
+    } else {
+      // For All Pictures or Unassigned, refresh the grid as before
       const id = selectedCharacter.value;
       let url;
       if (id === ALL_PICTURES_ID) {
