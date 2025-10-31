@@ -192,16 +192,18 @@ async function fetchSortOptions() {
     // Set default sort if not set
     if (!selectedSort.value && options.length) {
       selectedSort.value =
-        options.find((o) => o.id === "date_desc")?.id || options[0].id;
+        options.find((o) => o.id === "unsorted")?.id || options[0].id;
     }
   } catch (e) {
     sortOptions.value = [
+      { label: "Unsorted", value: "unsorted" },
       { label: "Date: Latest First", value: "date_desc" },
       { label: "Date: Oldest First", value: "date_asc" },
       { label: "Score: Highest First", value: "score_desc" },
       { label: "Score: Lowest First", value: "score_asc" },
+      { label: "Score: Lowest First", value: "search_likeness" },
     ];
-    if (!selectedSort.value) selectedSort.value = "date_desc";
+    if (!selectedSort.value) selectedSort.value = "unsorted";
   }
 }
 
@@ -942,42 +944,7 @@ onMounted(() => {
   selectedCharacter.value = ALL_PICTURES_ID;
   selectedReferenceMode.value = false;
   fetchSortOptions();
-  fetchCharacters().then(() => {
-    // After loading characters, ensure All Pictures is still selected
-    selectedCharacter.value = ALL_PICTURES_ID;
-    selectedReferenceMode.value = false;
-    // Explicitly trigger image loading if already on All Pictures
-    if (
-      selectedCharacter.value === ALL_PICTURES_ID &&
-      !selectedReferenceMode.value
-    ) {
-      // This mimics the watcher logic
-      images.value = [];
-      imagesError.value = null;
-      selectedImageIds.value = [];
-      imagesLoading.value = true;
-      let url = `${BACKEND_URL}/pictures?info=true`;
-      fetch(url)
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to fetch images");
-          return res.json();
-        })
-        .then((baseImages) => {
-          images.value = baseImages.map((img) => ({
-            ...img,
-            score: typeof img.score !== "undefined" ? img.score : null,
-            is_reference: Number(img.is_reference) || 0,
-          }));
-          setTimeout(updateColumns, 0);
-        })
-        .catch((e) => {
-          imagesError.value = e.message;
-        })
-        .finally(() => {
-          imagesLoading.value = false;
-        });
-    }
-  });
+  fetchCharacters();
   window.addEventListener("resize", updateColumns);
   watch(thumbnailSize, updateColumns);
   setTimeout(updateColumns, 100); // Initial update after mount
@@ -1007,19 +974,21 @@ function handleOverlayKeydown(e) {
   if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (overlayOpen.value && overlayImage.value) {
       toggleReference(overlayImage.value);
+      e.preventDefault();
+      return;
     } else if (selectedImageIds.value.length) {
       // Use the last selected image as the reference for toggle value
       const lastImg = images.value.find(
         (i) =>
           i.id === selectedImageIds.value[selectedImageIds.value.length - 1]
       );
-      if (lastImg) toggleReference(lastImg);
-    } else if (images.value.length) {
-      // If nothing selected, toggle the first image
-      toggleReference(images.value[0]);
+      if (lastImg) {
+        toggleReference(lastImg);
+        e.preventDefault();
+        return;
+      }
     }
-    e.preventDefault();
-    return;
+    // Do nothing if nothing is selected and overlay is not open
   }
   if (overlayOpen.value) {
     if (e.key === "ArrowLeft") {
@@ -1621,7 +1590,7 @@ function confirmDeleteCharacter() {
           </v-btn>
           <v-btn
             icon
-            :color="showStars ? 'amber darken-2' : 'grey'"
+            :color="showStars ? 'orange' : 'grey'"
             @click="showStars = !showStars"
             title="Toggle star ratings"
             style="margin-left: 2px; margin-right: 2px"
@@ -1848,7 +1817,7 @@ function confirmDeleteCharacter() {
                           :key="n"
                           small
                           :color="
-                            n <= (img.score || 0) ? 'amber' : 'grey lighten-1'
+                            n <= (img.score || 0) ? 'orange' : 'grey darken-2'
                           "
                           style="cursor: pointer"
                           @click.stop="setImageScore(img, n)"
@@ -1914,60 +1883,81 @@ function confirmDeleteCharacter() {
                   class="image-overlay"
                   @click.self="closeOverlay"
                 >
-                  <div class="overlay-content">
+                  <div class="overlay-content overlay-grid">
                     <button
                       class="overlay-close"
                       @click="closeOverlay"
                       aria-label="Close"
+                      style="
+                        position: absolute;
+                        top: 12px;
+                        right: 18px;
+                        z-index: 20;
+                      "
                     >
                       &times;
                     </button>
-                    <div class="overlay-flex-row">
-                      <button
-                        class="overlay-nav overlay-nav-left"
-                        @click.stop="showPrevImage"
-                        aria-label="Previous"
+                    <div
+                      class="overlay-grid-main"
+                      style="
+                        display: grid;
+                        grid-template-columns: 64px 1fr 64px;
+                        align-items: center;
+                        width: 100%;
+                        height: 100%;
+                      "
+                    >
+                      <div
+                        style="
+                          display: flex;
+                          justify-content: center;
+                          align-items: center;
+                          height: 100%;
+                        "
                       >
-                        &#8592;
-                      </button>
-                      <div class="overlay-img-container">
+                        <button
+                          class="overlay-nav overlay-nav-left"
+                          @click.stop="showPrevImage"
+                          aria-label="Previous"
+                        >
+                          <v-icon>mdi-skip-previous</v-icon>
+                        </button>
+                      </div>
+                      <div class="overlay-img-wrapper">
                         <div style="position: relative; display: inline-block">
-                          <div
-                            class="star-overlay"
-                            v-if="overlayImage"
-                            style="
-                              display: flex;
-                              justify-content: center;
-                              align-items: center;
-                              margin-bottom: 12px;
-                            "
-                          >
-                            <v-icon
-                              v-for="n in 5"
-                              :key="n"
-                              large
-                              :color="
-                                n <= (overlayImage.score || 0)
-                                  ? 'amber'
-                                  : 'grey lighten-1'
-                              "
-                              style="cursor: pointer"
-                              @click.stop="setImageScore(overlayImage, n)"
-                              >mdi-star</v-icon
-                            >
-                          </div>
                           <img
                             v-if="overlayImage"
                             :src="`${BACKEND_URL}/pictures/${overlayImage.id}`"
                             :alt="overlayImage.description || 'Full Image'"
                             class="overlay-img"
                           />
+                          <div class="star-overlay" v-if="overlayImage">
+                            <v-icon
+                              v-for="n in 5"
+                              :key="n"
+                              large
+                              :color="
+                                n <= (overlayImage.score || 0)
+                                  ? 'orange'
+                                  : 'grey darken-2'
+                              "
+                              style="cursor: pointer"
+                              @click.stop="setImageScore(overlayImage, n)"
+                              >mdi-star</v-icon
+                            >
+                          </div>
                           <v-btn
                             icon
                             size="small"
                             class="reference-trophy-btn trophy-bg"
                             @click.stop="toggleReference(overlayImage)"
                             title="Toggle reference picture"
+                            style="
+                              position: absolute;
+                              right: 8px;
+                              bottom: 8px;
+                              z-index: 2;
+                            "
                           >
                             <v-icon
                               :color="
@@ -1975,22 +1965,30 @@ function confirmDeleteCharacter() {
                                   ? 'orange'
                                   : 'grey darken-2'
                               "
-                              size="24px"
                               >mdi-trophy</v-icon
                             >
                           </v-btn>
                         </div>
-                        <div class="overlay-desc">
-                          {{ overlayImage?.description }}
-                        </div>
                       </div>
-                      <button
-                        class="overlay-nav overlay-nav-right"
-                        @click.stop="showNextImage"
-                        aria-label="Next"
+                      <div
+                        style="
+                          display: flex;
+                          justify-content: center;
+                          align-items: center;
+                          height: 100%;
+                        "
                       >
-                        &#8594;
-                      </button>
+                        <button
+                          class="overlay-nav overlay-nav-right"
+                          @click.stop="showNextImage"
+                          aria-label="Next"
+                        >
+                          <v-icon>mdi-skip-next</v-icon>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="overlay-desc">
+                      {{ overlayImage?.description || "DUMMY DESCRIPTION" }}
                     </div>
                     <div
                       v-if="
@@ -2448,7 +2446,7 @@ body {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.2);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -2456,24 +2454,49 @@ body {
 }
 .overlay-content {
   position: relative;
-  width: 90vw;
-  height: 90vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(117, 117, 117, 0.9);
   border-radius: 8px;
   box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
   padding: 24px 24px 16px 24px;
 }
-.overlay-flex-row {
-  display: flex;
-  flex-direction: row;
+/* Overlay grid: fixed width, dynamic height, max 90vh */
+.overlay-grid {
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  grid-template-columns: 1fr;
+  width: 90vw;
+  min-width: 320px;
+  max-width: 95vw;
+  max-height: 90vh;
+  border-radius: 8px;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
+  padding: 24px 24px 16px 24px;
   align-items: center;
-  justify-content: center;
+  justify-items: center;
+  position: relative;
+  overflow-y: auto;
+}
+.overlay-grid-main {
+  display: grid;
+  grid-template-columns: 56px 1fr 56px;
+  grid-template-rows: 1fr;
+  align-items: center;
   width: 100%;
   height: 100%;
+}
+.overlay-img-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
 }
 .overlay-img-container {
   height: 90%;
@@ -2487,9 +2510,9 @@ body {
   max-height: 70vh;
   min-height: 256px;
   object-fit: contain;
-  border-radius: 4px;
+  border-radius: 8px;
   background: #111;
-  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 .overlay-close {
   position: absolute;
@@ -2521,10 +2544,10 @@ body {
   position: absolute;
   top: 50%;
   font-size: 2.5rem;
-  color: #000;
-  background: #bbb;
-  width: 52px;
-  height: 52px;
+  color: #444;
+  background: rgba(255, 255, 255, 0.7);
+  max-width: 52px;
+  max-height: 52px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2542,7 +2565,7 @@ body {
 
 .overlay-nav:hover {
   background: #fff;
-  color: #000;
+  color: orange;
 }
 .overlay-nav {
   z-index: 1200;
@@ -2584,9 +2607,9 @@ body {
   background: rgba(255, 255, 255, 1);
 }
 .star-overlay .v-icon {
-  font-size: 16px !important;
-  width: 16px;
-  height: 16px;
+  font-size: 20px !important;
+  width: 20px;
+  height: 20px;
 }
 .image-card {
   position: relative;
@@ -2747,5 +2770,10 @@ button[disabled] {
   width: 100%;
   height: 100%;
   position: relative;
+}
+.v-btn:focus:not(:focus-visible),
+button:focus:not(:focus-visible) {
+  outline: none !important;
+  box-shadow: none !important;
 }
 </style>
