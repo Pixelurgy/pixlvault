@@ -429,6 +429,15 @@ function handleGridDrop(e) {
   })();
 }
 
+// Clear selection if clicking on empty space in the image grid
+function handleGridBackgroundClick(e) {
+  // If the click is NOT inside an image-card, clear selection
+  if (!e.target.closest('.thumbnail-card')) {
+    selectedImageIds.value = [];
+    lastSelectedIndex = null;
+  }
+}
+
 // Infinite scroll: load more images as user scrolls near bottom
 function onGridScroll(e) {
   const el = e.target;
@@ -988,35 +997,8 @@ function handleOverlayKeydown(e) {
     }
     e.preventDefault();
     return;
-  } else {
-    return;
   }
-  const isCtrl = e.ctrlKey || e.metaKey;
-  const isShift = e.shiftKey;
-  if (isShift && lastSelectedIndex !== null) {
-    // Range select
-    const start = Math.min(lastSelectedIndex, nextIdx);
-    const end = Math.max(lastSelectedIndex, nextIdx);
-    const rangeIds = images.value.slice(start, end + 1).map((i) => i.id);
-    const newSelection = isCtrl
-      ? Array.from(new Set([...selectedImageIds.value, ...rangeIds]))
-      : rangeIds;
-    selectedImageIds.value = newSelection;
-  } else if (isCtrl) {
-    // Toggle selection of nextIdx
-    const id = images.value[nextIdx].id;
-    if (selectedImageIds.value.includes(id)) {
-      selectedImageIds.value = selectedImageIds.value.filter((i) => i !== id);
-    } else {
-      selectedImageIds.value = [...selectedImageIds.value, id];
-    }
-    lastSelectedIndex = nextIdx;
-  } else {
-    // Single select
-    selectedImageIds.value = [images.value[nextIdx].id];
-    lastSelectedIndex = nextIdx;
-  }
-  e.preventDefault();
+  return;
 }
 
 onMounted(() => {
@@ -1715,6 +1697,7 @@ function confirmDeleteCharacter() {
                 @dragleave.prevent="handleGridDragLeave"
                 @drop.prevent="handleGridDrop"
                 @scroll="onGridScroll"
+                @click="handleGridBackgroundClick"
               >
                 <div
                   v-if="images.length === 0 && !imagesLoading && !imagesError"
@@ -1739,28 +1722,26 @@ function confirmDeleteCharacter() {
                     isImageSelected(img.id) ? 'selected' : '',
                     getSelectionBorderClasses(idx),
                   ]"
-                  @click="handleImageSelect(img, idx, $event)"
                   :draggable="isImageSelected(img.id)"
                   @dragstart="onImageDragStart(img, idx, $event)"
+                  @click="handleGridBackgroundClick"
                 >
                   <v-card class="thumbnail-card">
-                    <div class="star-overlay" v-if="showStars">
-                      <v-icon
-                        v-for="n in 5"
-                        :key="n"
-                        small
-                        :color="
-                          n <= (img.score || 0) ? 'amber' : 'grey lighten-1'
-                        "
-                        style="cursor: pointer"
-                        @click.stop="setImageScore(img, n)"
-                        >mdi-star</v-icon
-                      >
-                    </div>
+                    <div class="thumbnail-container">
+                      <div class="star-overlay" v-if="showStars">
+                        <v-icon
+                          v-for="n in 5"
+                          :key="n"
+                          small
+                          :color="
+                            n <= (img.score || 0) ? 'amber' : 'grey lighten-1'
+                          "
+                          style="cursor: pointer"
+                          @click.stop="setImageScore(img, n)"
+                        >mdi-star</v-icon>
+                      </div>
                     <v-img
                       :src="`${BACKEND_URL}/thumbnails/${img.id}`"
-                      :height="thumbnailSize"
-                      :width="thumbnailSize"
                       class="thumbnail-img"
                       @click.stop="
                         (e) => {
@@ -1778,13 +1759,13 @@ function confirmDeleteCharacter() {
                     <v-btn
                       icon
                       size="small"
-                      class="reference-trophy-btn"
-                      :color="img.is_reference ? 'orange darken-2' : 'grey'"
+                      class="reference-trophy-btn trophy-bg"
                       @click.stop="toggleReference(img)"
                       title="Toggle reference picture"
                     >
-                      <v-icon color="white">mdi-trophy</v-icon>
+                      <v-icon :color="img.is_reference ? 'orange' : 'grey darken-2'">mdi-trophy</v-icon>
                     </v-btn>
+                    </div>
                     <!-- Show date under thumbnail if sorting by date -->
                     <div
                       v-if="
@@ -2062,8 +2043,33 @@ body {
   right: 8px;
   bottom: 8px;
   z-index: 12;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   background: transparent;
+  padding: 0;
+}
+.trophy-bg {
+  background: rgba(255,255,255,0.5) !important;
+  border-radius: 50%;
+  min-width: 32px !important;
+  min-height: 32px !important;
+  width: 32px !important;
+  height: 32px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none !important;
+  outline: none !important;
+  border: 3px solid transparent;
+  transition: border 0.2s;
+}
+.trophy-bg:hover {
+  background: rgba(255,255,255,1.0) !important;
+}
+.trophy-bg:focus,
+.trophy-bg:active {
+  border: 2px solid transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
 }
 .image-card.selected {
   z-index: 2;
@@ -2438,17 +2444,19 @@ body {
 }
 .star-overlay {
   position: absolute;
-  top: 5px;
-  right: 10px;
-  transform: translateX(-25%);
+  top: 8px;
+  right: 8px;
+  z-index: 12;
   display: flex;
   flex-direction: row;
-  z-index: 10;
-  background: rgba(255, 255, 255, 0.85);
-  border-radius: 6px;
-  padding: 1px 4px 1px 2px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 4px;
+  padding: 2px 2px 2px 2px;
+  box-shadow: none;
   font-size: 0.85em;
+}
+.star-overlay:hover {
+  background: rgba(255, 255, 255, 1.0);
 }
 .star-overlay .v-icon {
   font-size: 16px !important;
@@ -2587,11 +2595,27 @@ button[disabled] {
   color: #ff5252;
   margin-left: 12px;
 }
-.thumbnail-img {
-  object-fit: contain;
+.thumbnail-container {
   width: 100%;
   height: 100%;
+  position: relative;
   display: block;
+}
+.thumbnail-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.thumbnail-container:hover .thumbnail-img,
+.thumbnail-container:focus-within .thumbnail-img {
+  transform: scale(1.02);
+  box-shadow: 0 4px 24px 0 rgba(25, 118, 210, 0.2), 0 1.5px 6px 0 rgba(0,0,0,0.3);
+  z-index: 2;
+  transition: transform 0.18s cubic-bezier(.4,2,.6,1), box-shadow 0.18s;
+}
+.thumbnail-img {
+  transition: transform 0.18s cubic-bezier(.4,2,.6,1), box-shadow 0.18s;
 }
 .thumbnail-card {
   width: 100%;
