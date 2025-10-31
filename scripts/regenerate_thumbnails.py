@@ -1,7 +1,12 @@
 import os
+from tqdm import tqdm
+
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from pixelurgy_vault.vault import Vault
 from pixelurgy_vault.picture_iteration import PictureIteration
-from tqdm import tqdm
 
 
 def regenerate_thumbnails(db_path=None, image_root=None):
@@ -40,7 +45,7 @@ if __name__ == "__main__":
         description="Regenerate all thumbnails in the vault."
     )
     parser.add_argument(
-        "--db", type=str, default=None, help="Path to vault.db (optional)"
+        "--db", type=str, default="vault.tb", help="Path to vault.db (optional)"
     )
     parser.add_argument(
         "--image-root", type=str, default=None, help="Path to image root (optional)"
