@@ -20,17 +20,25 @@ const importInProgress = ref(false);
 const importProgress = ref(0);
 const importTotal = ref(0);
 const importError = ref(null);
-const importPhase = ref(''); // 'hashing', 'checking', 'uploading', 'done', 'error'
+const importPhase = ref(""); // 'hashing', 'checking', 'uploading', 'done', 'error'
 const importPhaseMessage = computed(() => {
   switch (importPhase.value) {
-    case 'hashing': return 'Hashing files...';
-    case 'checking': return 'Checking for duplicates...';
-    case 'uploading': return 'Uploading images...';
-    case 'done': return 'Import complete!';
-    case 'duplicates': return 'All files are duplicates.';
-    case 'cancelled': return 'Import cancelled.';
-    case 'error': return 'Import failed.';
-    default: return '';
+    case "hashing":
+      return "Hashing files...";
+    case "checking":
+      return "Checking for duplicates...";
+    case "uploading":
+      return "Uploading images...";
+    case "done":
+      return "Import complete!";
+    case "duplicates":
+      return "All files are duplicates.";
+    case "cancelled":
+      return "Import cancelled.";
+    case "error":
+      return "Import failed.";
+    default:
+      return "";
   }
 });
 const gridContainer = ref(null); // already used for grid
@@ -90,6 +98,44 @@ function isSupportedImageFile(file) {
   return PIL_IMAGE_EXTENSIONS.includes(ext);
 }
 
+// Cache for cropped thumbnail data URLs
+const croppedThumbnails = ref({}); // { [img.id]: dataUrl }
+
+// Crop an image to a square using canvas and return a data URL
+function cropImageToSquare(url, id) {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.crossOrigin = "Anonymous";
+    img.onload = function () {
+      const size = Math.min(img.width, img.height);
+      const sx = img.width > img.height ? (img.width - img.height) / 2 : 0;
+      const sy = img.height > img.width ? (img.height - img.width) / 2 : 0;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, sx, sy, size, size, 0, 0, size, size);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+// Get the cropped thumbnail data URL for an image, or start cropping if not cached
+async function getCroppedThumbnail(img) {
+  if (!img || !img.id) return "";
+  if (croppedThumbnails.value[img.id]) return croppedThumbnails.value[img.id];
+  const url = `${BACKEND_URL}/thumbnails/${img.id}`;
+  try {
+    const dataUrl = await cropImageToSquare(url, img.id);
+    croppedThumbnails.value[img.id] = dataUrl;
+    return dataUrl;
+  } catch {
+    return url; // fallback to original
+  }
+}
+
 async function hashFile(file) {
   // SHA-256 sampled hash: whole file if <=128KB, else 8 evenly spaced 8192-byte blocks
   const CHUNK_SIZE = 8192;
@@ -97,11 +143,15 @@ async function hashFile(file) {
   const WHOLE_FILE_THRESHOLD = 128 * 1024; // 128KB
   if (file.size <= WHOLE_FILE_THRESHOLD) {
     const buf = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
-    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    const hashBuffer = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
   }
   // For larger files, sample N evenly spaced blocks
-  const offsets = Array.from({length: N}, (_, i) => Math.floor(i * (file.size - CHUNK_SIZE) / (N - 1)));
+  const offsets = Array.from({ length: N }, (_, i) =>
+    Math.floor((i * (file.size - CHUNK_SIZE)) / (N - 1))
+  );
   const chunks = [];
   for (const offset of offsets) {
     const blob = file.slice(offset, offset + CHUNK_SIZE);
@@ -115,8 +165,10 @@ async function hashFile(file) {
     all.set(arr, pos);
     pos += arr.length;
   }
-  const hashBuffer = await crypto.subtle.digest('SHA-256', all);
-  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+  const hashBuffer = await crypto.subtle.digest("SHA-256", all);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 // Sorting and pagination state
@@ -226,7 +278,12 @@ watch([selectedSort, selectedCharacter, selectedReferenceMode], () => {
 function handleGridDragEnter(e) {
   // Only trigger if entering from outside the image-grid (not between children)
   // If relatedTarget is inside the grid, ignore (moving within grid children).
-  if (e.relatedTarget && gridContainer.value && gridContainer.value.contains(e.relatedTarget)) return;
+  if (
+    e.relatedTarget &&
+    gridContainer.value &&
+    gridContainer.value.contains(e.relatedTarget)
+  )
+    return;
   if (!e.dataTransfer || !e.dataTransfer.items) return;
   // Only check the first 20 items for image type, break immediately if found
   const items = Array.from(e.dataTransfer.items);
@@ -270,8 +327,8 @@ function handleGridDrop(e) {
   dragOverlayVisible.value = false;
   if (!e.dataTransfer || !e.dataTransfer.files) return;
   const files = Array.from(e.dataTransfer.files).filter(isSupportedImageFile);
-  console.debug('[IMPORT] Files dropped:', e.dataTransfer.files);
-  console.debug('[IMPORT] Supported files after filter:', files);
+  console.debug("[IMPORT] Files dropped:", e.dataTransfer.files);
+  console.debug("[IMPORT] Supported files after filter:", files);
   if (!files.length) {
     alert("No supported image files found.");
     return;
@@ -280,7 +337,7 @@ function handleGridDrop(e) {
   importInProgress.value = true;
   importProgress.value = 0;
   importError.value = null;
-  importPhase.value = 'hashing';
+  importPhase.value = "hashing";
   (async () => {
     // Step 1: Compute hashes for all files in parallel (with concurrency limit)
     importTotal.value = files.length;
@@ -319,7 +376,7 @@ function handleGridDrop(e) {
       fileHashes = await mapWithConcurrencyLimit(
         files,
         async (file, idx) => {
-          if (cancelImport.value) throw new Error('cancelled');
+          if (cancelImport.value) throw new Error("cancelled");
           const hash = await hashFile(file);
           hashProgress++;
           importProgress.value = hashProgress;
@@ -328,25 +385,27 @@ function handleGridDrop(e) {
         },
         CONCURRENCY
       );
-      console.debug('[IMPORT] fileHashes after hashing:', fileHashes);
+      console.debug("[IMPORT] fileHashes after hashing:", fileHashes);
     } catch (err) {
       importInProgress.value = false;
-      if (err.message === 'cancelled') {
-        importPhase.value = 'cancelled';
-        importError.value = 'Import cancelled.';
+      if (err.message === "cancelled") {
+        importPhase.value = "cancelled";
+        importError.value = "Import cancelled.";
       } else {
-        importPhase.value = 'error';
+        importPhase.value = "error";
         importError.value = "Failed to hash files.";
       }
-      setTimeout(() => { importInProgress.value = false; }, 1500);
+      setTimeout(() => {
+        importInProgress.value = false;
+      }, 1500);
       return;
     }
     // Step 2: Batch check with backend for existing hashes
-    importPhase.value = 'checking';
+    importPhase.value = "checking";
     let existing = [];
     try {
-      const hashesToSend = fileHashes.map(fh => fh.hash);
-      console.debug('[IMPORT] Sending hashes to /check_hashes:', hashesToSend);
+      const hashesToSend = fileHashes.map((fh) => fh.hash);
+      console.debug("[IMPORT] Sending hashes to /check_hashes:", hashesToSend);
       const res = await fetch(`${BACKEND_URL}/check_hashes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -354,30 +413,36 @@ function handleGridDrop(e) {
       });
       if (res.ok) {
         const data = await res.json();
-        console.debug('[IMPORT] /check_hashes response:', data);
+        console.debug("[IMPORT] /check_hashes response:", data);
         existing = data.existing || [];
       } else {
         throw new Error("Failed to check for duplicates");
       }
     } catch (err) {
-      importPhase.value = 'error';
+      importPhase.value = "error";
       importInProgress.value = false;
       importError.value = "Failed to check for duplicates.";
-      setTimeout(() => { importInProgress.value = false; }, 1500);
+      setTimeout(() => {
+        importInProgress.value = false;
+      }, 1500);
       return;
     }
     // Step 3: Filter out duplicates
-    const newFiles = fileHashes.filter(fh => !existing.includes(fh.hash)).map(fh => fh.file);
+    const newFiles = fileHashes
+      .filter((fh) => !existing.includes(fh.hash))
+      .map((fh) => fh.file);
     importTotal.value = newFiles.length;
     importProgress.value = 0;
     if (newFiles.length === 0) {
-      importPhase.value = 'duplicates';
+      importPhase.value = "duplicates";
       importError.value = "All files are duplicates.";
-      setTimeout(() => { importInProgress.value = false; }, 2000);
+      setTimeout(() => {
+        importInProgress.value = false;
+      }, 2000);
       return;
     }
     // Show found X new images
-    importPhase.value = 'uploading';
+    importPhase.value = "uploading";
     importError.value = `Found ${newFiles.length} new image(s).`;
     let completed = 0;
     const uploadFile = async (file) => {
@@ -401,7 +466,7 @@ function handleGridDrop(e) {
         importProgress.value = completed;
         await nextTick();
       } catch (err) {
-        importPhase.value = 'error';
+        importPhase.value = "error";
         importError.value = err.message || String(err);
         throw err;
       }
@@ -409,20 +474,24 @@ function handleGridDrop(e) {
     try {
       for (const file of newFiles) {
         if (cancelImport.value) {
-          importPhase.value = 'cancelled';
+          importPhase.value = "cancelled";
           importError.value = "Import cancelled by user.";
-          setTimeout(() => { importInProgress.value = false; }, 1500);
+          setTimeout(() => {
+            importInProgress.value = false;
+          }, 1500);
           return;
         }
         await uploadFile(file);
       }
-      importPhase.value = 'done';
+      importPhase.value = "done";
       importError.value = `Imported ${newFiles.length} image(s).`;
-      setTimeout(() => { importInProgress.value = false; }, 1500);
+      setTimeout(() => {
+        importInProgress.value = false;
+      }, 1500);
       refreshImages();
       fetchSidebarCounts();
     } catch (e) {
-      importPhase.value = 'error';
+      importPhase.value = "error";
       importInProgress.value = false;
       alert("One or more uploads failed: " + (e.message || e));
     }
@@ -432,7 +501,7 @@ function handleGridDrop(e) {
 // Clear selection if clicking on empty space in the image grid
 function handleGridBackgroundClick(e) {
   // If the click is NOT inside an image-card, clear selection
-  if (!e.target.closest('.thumbnail-card')) {
+  if (!e.target.closest(".thumbnail-card")) {
     selectedImageIds.value = [];
     lastSelectedIndex = null;
   }
@@ -585,17 +654,17 @@ async function searchImages(query) {
   } finally {
     imagesLoading.value = false;
   }
-// Watch for clearing of searchQuery to restore previous sort and refresh view
-watch(searchQuery, (newVal, oldVal) => {
-  if (!newVal && oldVal) {
-    // Restore previous sort if available
-    if (previousSort.value && previousSort.value !== selectedSort.value) {
-      selectedSort.value = previousSort.value;
+  // Watch for clearing of searchQuery to restore previous sort and refresh view
+  watch(searchQuery, (newVal, oldVal) => {
+    if (!newVal && oldVal) {
+      // Restore previous sort if available
+      if (previousSort.value && previousSort.value !== selectedSort.value) {
+        selectedSort.value = previousSort.value;
+      }
+      // Refresh images for current character and sort
+      refreshImages();
     }
-    // Refresh images for current character and sort
-    refreshImages();
-  }
-});
+  });
 }
 
 function handleImageSelect(img, idx, event) {
@@ -721,7 +790,9 @@ async function fetchSidebarCounts() {
   } catch {}
   // Unassigned Pictures
   try {
-    const resUnassigned = await fetch(`${BACKEND_URL}/category/summary?character_id=null`);
+    const resUnassigned = await fetch(
+      `${BACKEND_URL}/category/summary?character_id=null`
+    );
     if (resUnassigned.ok) {
       const data = await resUnassigned.json();
       categoryCounts.value[UNASSIGNED_PICTURES_ID] = data.image_count;
@@ -731,7 +802,11 @@ async function fetchSidebarCounts() {
   await Promise.all(
     characters.value.map(async (char) => {
       try {
-        const res = await fetch(`${BACKEND_URL}/category/summary?character_id=${encodeURIComponent(char.id)}`);
+        const res = await fetch(
+          `${BACKEND_URL}/category/summary?character_id=${encodeURIComponent(
+            char.id
+          )}`
+        );
         if (res.ok) {
           const data = await res.json();
           categoryCounts.value[char.id] = data.image_count;
@@ -1083,7 +1158,10 @@ async function setImageScore(img, n) {
       { method: "PATCH" }
     );
     if (!res.ok) throw new Error(`Failed to set score for image ${img.id}`);
-    if (selectedSort.value === "score_desc" || selectedSort.value === "score_asc") {
+    if (
+      selectedSort.value === "score_desc" ||
+      selectedSort.value === "score_asc"
+    ) {
       // Remove image from current position
       const idx = images.value.findIndex((i) => i.id === img.id);
       if (idx === -1) return;
@@ -1103,9 +1181,9 @@ async function setImageScore(img, n) {
       nextTick(() => {
         const grid = gridContainer.value;
         if (!grid) return;
-        const card = grid.querySelectorAll('.image-card')[insertIdx];
+        const card = grid.querySelectorAll(".image-card")[insertIdx];
         if (card && card.scrollIntoView) {
-          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          card.scrollIntoView({ behavior: "smooth", block: "center" });
         }
       });
     } else {
@@ -1160,8 +1238,13 @@ async function onCharacterDrop(characterId, event) {
     return;
   }
   // Log drop target and character id
-  const charObj = characters.value.find(c => c.id === characterId);
-  console.log("[DROP] Drop target characterId:", characterId, "name:", charObj ? charObj.name : "(not found)");
+  const charObj = characters.value.find((c) => c.id === characterId);
+  console.log(
+    "[DROP] Drop target characterId:",
+    characterId,
+    "name:",
+    charObj ? charObj.name : "(not found)"
+  );
   // Always use the characterId from the drop target
   assignImagesToCharacter(imageIds, characterId);
 }
@@ -1181,17 +1264,19 @@ async function assignImagesToCharacter(imageIds, characterId) {
           throw new Error(`Failed to assign character for image ${id}`);
       })
     );
-  await fetchCharacters();
-  fetchSidebarCounts();
+    await fetchCharacters();
+    fetchSidebarCounts();
     // Remove reassigned images from the current grid if not viewing All Pictures or Unassigned
     if (
       selectedCharacter.value !== ALL_PICTURES_ID &&
       selectedCharacter.value !== UNASSIGNED_PICTURES_ID &&
       selectedCharacter.value !== characterId
     ) {
-      images.value = images.value.filter(img => !imageIds.includes(img.id));
+      images.value = images.value.filter((img) => !imageIds.includes(img.id));
       // Also remove these IDs from selection
-      selectedImageIds.value = selectedImageIds.value.filter(id => images.value.some(img => img.id === id));
+      selectedImageIds.value = selectedImageIds.value.filter((id) =>
+        images.value.some((img) => img.id === id)
+      );
       lastSelectedIndex = null;
     } else {
       // For All Pictures or Unassigned, refresh the grid as before
@@ -1215,8 +1300,10 @@ async function assignImagesToCharacter(imageIds, characterId) {
           is_reference: Number(img.is_reference) || 0,
         }));
         // Remove any selected IDs not in the new images
-        const newIds = new Set(images.value.map(img => img.id));
-        selectedImageIds.value = selectedImageIds.value.filter(id => newIds.has(id));
+        const newIds = new Set(images.value.map((img) => img.id));
+        selectedImageIds.value = selectedImageIds.value.filter((id) =>
+          newIds.has(id)
+        );
         lastSelectedIndex = null;
         setTimeout(updateColumns, 0);
       }
@@ -1249,8 +1336,8 @@ async function assignImagesAsReference(imageIds, characterId) {
           throw new Error(`Failed to set reference for image ${id}`);
       })
     );
-  await fetchCharacters();
-  fetchSidebarCounts();
+    await fetchCharacters();
+    fetchSidebarCounts();
     // Refresh images if needed
     if (
       selectedCharacter.value === characterId ||
@@ -1277,8 +1364,10 @@ async function assignImagesAsReference(imageIds, characterId) {
           is_reference: Number(img.is_reference) || 0,
         }));
         // Remove any selected IDs not in the new images
-        const newIds = new Set(images.value.map(img => img.id));
-        selectedImageIds.value = selectedImageIds.value.filter(id => newIds.has(id));
+        const newIds = new Set(images.value.map((img) => img.id));
+        selectedImageIds.value = selectedImageIds.value.filter((id) =>
+          newIds.has(id)
+        );
         lastSelectedIndex = null;
         setTimeout(updateColumns, 0);
       }
@@ -1411,7 +1500,13 @@ function confirmDeleteCharacter() {
       <div class="import-progress-content">
         <div class="import-progress-title">{{ importPhaseMessage }}</div>
         <div class="import-progress-bar-bg">
-          <div class="import-progress-bar" :style="{ width: ((importTotal ? (importProgress / importTotal) : 0) * 100) + '%' }"></div>
+          <div
+            class="import-progress-bar"
+            :style="{
+              width:
+                (importTotal ? importProgress / importTotal : 0) * 100 + '%',
+            }"
+          ></div>
         </div>
         <div class="import-progress-label">
           <template v-if="importPhase === 'hashing'">
@@ -1435,9 +1530,22 @@ function confirmDeleteCharacter() {
           <template v-else-if="importPhase === 'error'">
             Import failed.
           </template>
-          <span v-if="importError" class="import-progress-error">{{ importError }}</span>
+          <span v-if="importError" class="import-progress-error">{{
+            importError
+          }}</span>
         </div>
-        <button class="cancel-button" @click="handleCancelImport" v-if="importPhase !== 'done' && importPhase !== 'duplicates' && importPhase !== 'cancelled' && importPhase !== 'error'">Cancel</button>
+        <button
+          class="cancel-button"
+          @click="handleCancelImport"
+          v-if="
+            importPhase !== 'done' &&
+            importPhase !== 'duplicates' &&
+            importPhase !== 'cancelled' &&
+            importPhase !== 'error'
+          "
+        >
+          Cancel
+        </button>
       </div>
     </div>
     <div class="app-viewport">
@@ -1558,7 +1666,9 @@ function confirmDeleteCharacter() {
                   <v-icon size="44">mdi-image-multiple</v-icon>
                 </span>
                 <span class="sidebar-list-label">All Pictures</span>
-                <span class="sidebar-list-count">{{ categoryCounts[ALL_PICTURES_ID] ?? '' }}</span>
+                <span class="sidebar-list-count">{{
+                  categoryCounts[ALL_PICTURES_ID] ?? ""
+                }}</span>
               </div>
               <div
                 :class="[
@@ -1571,7 +1681,9 @@ function confirmDeleteCharacter() {
                   <v-icon size="44">mdi-help-circle-outline</v-icon>
                 </span>
                 <span class="sidebar-list-label">Unassigned Pictures</span>
-                <span class="sidebar-list-count">{{ categoryCounts[UNASSIGNED_PICTURES_ID] ?? '' }}</span>
+                <span class="sidebar-list-count">{{
+                  categoryCounts[UNASSIGNED_PICTURES_ID] ?? ""
+                }}</span>
               </div>
             </div>
           </transition>
@@ -1675,7 +1787,9 @@ function confirmDeleteCharacter() {
                       </span>
                     </template>
                   </span>
-                  <span class="sidebar-list-count">{{ categoryCounts[char.id] ?? '' }}</span>
+                  <span class="sidebar-list-count">{{
+                    categoryCounts[char.id] ?? ""
+                  }}</span>
                 </div>
               </div>
               <div v-if="loading" class="sidebar-loading">Loading...</div>
@@ -1738,33 +1852,49 @@ function confirmDeleteCharacter() {
                           "
                           style="cursor: pointer"
                           @click.stop="setImageScore(img, n)"
-                        >mdi-star</v-icon>
+                          >mdi-star</v-icon
+                        >
                       </div>
-                    <v-img
-                      :src="`${BACKEND_URL}/thumbnails/${img.id}`"
-                      class="thumbnail-img"
-                      @click.stop="
-                        (e) => {
-                          if (e.ctrlKey || e.metaKey || e.shiftKey) {
-                            handleImageSelect(img, idx, e);
-                          } else {
-                            openOverlay(img);
+                      <img
+                        :src="
+                          croppedThumbnails[img.id] ||
+                          `${BACKEND_URL}/thumbnails/${img.id}`
+                        "
+                        class="thumbnail-img"
+                        @click.stop="
+                          (e) => {
+                            if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                              handleImageSelect(img, idx, e);
+                            } else {
+                              openOverlay(img);
+                            }
                           }
-                        }
-                      "
-                      @load="fetchScoreIfMissing(img)"
-                      style="cursor: pointer"
-                    />
-                    <!-- Trophy icon for reference toggle -->
-                    <v-btn
-                      icon
-                      size="small"
-                      class="reference-trophy-btn trophy-bg"
-                      @click.stop="toggleReference(img)"
-                      title="Toggle reference picture"
-                    >
-                      <v-icon :color="img.is_reference ? 'orange' : 'grey darken-2'">mdi-trophy</v-icon>
-                    </v-btn>
+                        "
+                        @load="
+                          async (e) => {
+                            if (!croppedThumbnails[img.id]) {
+                              const dataUrl = await getCroppedThumbnail(img);
+                              croppedThumbnails[img.id] = dataUrl;
+                            }
+                            fetchScoreIfMissing(img);
+                          }
+                        "
+                        style="cursor: pointer"
+                      />
+                      <!-- Trophy icon for reference toggle -->
+                      <v-btn
+                        icon
+                        size="small"
+                        class="reference-trophy-btn trophy-bg"
+                        @click.stop="toggleReference(img)"
+                        title="Toggle reference picture"
+                      >
+                        <v-icon
+                          :color="img.is_reference ? 'orange' : 'grey darken-2'"
+                          size="24px"
+                          >mdi-trophy</v-icon
+                        >
+                      </v-btn>
                     </div>
                     <!-- Show date under thumbnail if sorting by date -->
                     <div
@@ -1801,20 +1931,21 @@ function confirmDeleteCharacter() {
                         &#8592;
                       </button>
                       <div class="overlay-img-container">
-                        <div
-                          class="overlay-star-row"
+                        <div style="position: relative; display: inline-block">
+                          <div
+                            class="star-overlay"
                             v-if="overlayImage"
-                          style="
-                            display: flex;
-                            justify-content: center;
-                            align-items: center;
-                            margin-bottom: 12px;
-                          "
-                        >
+                            style="
+                              display: flex;
+                              justify-content: center;
+                              align-items: center;
+                              margin-bottom: 12px;
+                            "
+                          >
                             <v-icon
                               v-for="n in 5"
                               :key="n"
-                            large
+                              large
                               :color="
                                 n <= (overlayImage.score || 0)
                                   ? 'amber'
@@ -1822,10 +1953,9 @@ function confirmDeleteCharacter() {
                               "
                               style="cursor: pointer"
                               @click.stop="setImageScore(overlayImage, n)"
-                            >mdi-star</v-icon
-                          >
+                              >mdi-star</v-icon
+                            >
                           </div>
-                        <div style="position: relative; display: inline-block">
                           <img
                             v-if="overlayImage"
                             :src="`${BACKEND_URL}/pictures/${overlayImage.id}`"
@@ -1835,121 +1965,20 @@ function confirmDeleteCharacter() {
                           <v-btn
                             icon
                             size="small"
-                            class="reference-trophy-btn overlay-trophy-btn"
-                            :color="
-                              overlayImage.is_reference
-                                ? 'orange darken-2'
-                                : 'grey'
-                            "
+                            class="reference-trophy-btn trophy-bg"
                             @click.stop="toggleReference(overlayImage)"
                             title="Toggle reference picture"
-                            style="
-                              position: absolute;
-                              bottom: 8px;
-                              right: 8px;
-                              z-index: 10;
-                              background: rgba(0, 0, 0, 0.3);
-                            "
                           >
-                            <v-icon color="white">mdi-trophy</v-icon>
+                            <v-icon
+                              :color="
+                                overlayImage.is_reference
+                                  ? 'orange'
+                                  : 'grey darken-2'
+                              "
+                              size="24px"
+                              >mdi-trophy</v-icon
+                            >
                           </v-btn>
-                          <div
-                            v-if="
-                              overlayImage &&
-                              overlayImage.tags &&
-                              overlayImage.tags.length
-                            "
-                            class="overlay-tags"
-                            style="
-                              margin-top: 8px;
-                              margin-bottom: 0;
-                              text-align: center;
-                            "
-                          >
-                            <span
-                              v-for="tag in overlayImage.tags"
-                              :key="tag"
-                              class="overlay-tag"
-                              style="
-                                display: inline-flex;
-                                align-items: center;
-                                background: #eee;
-                                color: #333;
-                                border-radius: 16px;
-                                padding: 4px 16px 4px 14px;
-                                margin: 2px 2px;
-                                font-size: 1.15em;
-                                position: relative;
-                                min-height: 32px;
-                              "
-                            >
-                              {{ tag }}
-                              <button
-                                class="tag-delete-btn"
-                                @click.stop="removeTagFromOverlayImage(tag)"
-                                title="Remove tag"
-                                style="
-                                  background: none;
-                                  border: none;
-                                  color: #888;
-                                  font-size: 1.25em;
-                                  margin-left: 10px;
-                                  cursor: pointer;
-                                  display: flex;
-                                  align-items: center;
-                                  justify-content: center;
-                                  height: 24px;
-                                  width: 24px;
-                                  padding: 0;
-                                "
-                              >
-                                ×
-                              </button>
-                            </span>
-                            <!-- Add + button at the end for adding tags -->
-                            <button
-                              class="tag-add-btn"
-                              @click.stop="startAddTagOverlay()"
-                              title="Add tag"
-                              style="
-                                display: inline-flex;
-                                align-items: center;
-                                justify-content: center;
-                                background: #e0e0e0;
-                                color: #333;
-                                border: none;
-                                border-radius: 16px;
-                                font-size: 1.3em;
-                                margin: 2px 2px;
-                                height: 32px;
-                                width: 32px;
-                                cursor: pointer;
-                                padding: 0;
-                                vertical-align: middle;
-                              "
-                            >
-                              +
-                            </button>
-                            <!-- Input for adding a tag, shown only when adding -->
-                            <input
-                              v-if="addingTagOverlay"
-                              v-model="newTagOverlay"
-                              @keydown.enter="confirmAddTagOverlay"
-                              @blur="cancelAddTagOverlay"
-                              class="tag-add-input"
-                              style="
-                                margin-left: 8px;
-                                font-size: 1.1em;
-                                border-radius: 8px;
-                                border: 1px solid #bbb;
-                                padding: 2px 8px;
-                                min-width: 80px;
-                                outline: none;
-                              "
-                              placeholder="New tag"
-                              autofocus
-                            />
-                          </div>
                         </div>
                         <div class="overlay-desc">
                           {{ overlayImage?.description }}
@@ -1962,6 +1991,103 @@ function confirmDeleteCharacter() {
                       >
                         &#8594;
                       </button>
+                    </div>
+                    <div
+                      v-if="
+                        overlayImage &&
+                        overlayImage.tags &&
+                        overlayImage.tags.length
+                      "
+                      class="overlay-tags"
+                      style="
+                        margin-top: 8px;
+                        margin-bottom: 0;
+                        text-align: center;
+                      "
+                    >
+                      <span
+                        v-for="tag in overlayImage.tags"
+                        :key="tag"
+                        class="overlay-tag"
+                        style="
+                          display: inline-flex;
+                          align-items: center;
+                          background: #eee;
+                          color: #333;
+                          border-radius: 16px;
+                          padding: 4px 16px 4px 14px;
+                          margin: 2px 2px;
+                          font-size: 1.15em;
+                          position: relative;
+                          min-height: 32px;
+                        "
+                      >
+                        {{ tag }}
+                        <button
+                          class="tag-delete-btn"
+                          @click.stop="removeTagFromOverlayImage(tag)"
+                          title="Remove tag"
+                          style="
+                            background: none;
+                            border: none;
+                            color: #888;
+                            font-size: 1.25em;
+                            margin-left: 10px;
+                            cursor: pointer;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            height: 24px;
+                            width: 24px;
+                            padding: 0;
+                          "
+                        >
+                          ×
+                        </button>
+                      </span>
+                      <!-- Add + button at the end for adding tags -->
+                      <button
+                        class="tag-add-btn"
+                        @click.stop="startAddTagOverlay()"
+                        title="Add tag"
+                        style="
+                          display: inline-flex;
+                          align-items: center;
+                          justify-content: center;
+                          background: #e0e0e0;
+                          color: #333;
+                          border: none;
+                          border-radius: 16px;
+                          font-size: 1.3em;
+                          margin: 2px 2px;
+                          height: 32px;
+                          width: 32px;
+                          cursor: pointer;
+                          padding: 0;
+                          vertical-align: middle;
+                        "
+                      >
+                        +
+                      </button>
+                      <!-- Input for adding a tag, shown only when adding -->
+                      <input
+                        v-if="addingTagOverlay"
+                        v-model="newTagOverlay"
+                        @keydown.enter="confirmAddTagOverlay"
+                        @blur="cancelAddTagOverlay"
+                        class="tag-add-input"
+                        style="
+                          margin-left: 8px;
+                          font-size: 1.1em;
+                          border-radius: 8px;
+                          border: 1px solid #bbb;
+                          padding: 2px 8px;
+                          min-width: 80px;
+                          outline: none;
+                        "
+                        placeholder="New tag"
+                        autofocus
+                      />
                     </div>
                   </div>
                 </div>
@@ -2048,10 +2174,8 @@ body {
   padding: 0;
 }
 .trophy-bg {
-  background: rgba(255,255,255,0.5) !important;
+  background: rgba(255, 255, 255, 0.8) !important;
   border-radius: 50%;
-  min-width: 32px !important;
-  min-height: 32px !important;
   width: 32px !important;
   height: 32px !important;
   display: flex;
@@ -2063,7 +2187,7 @@ body {
   transition: border 0.2s;
 }
 .trophy-bg:hover {
-  background: rgba(255,255,255,1.0) !important;
+  background: rgba(255, 255, 255, 1) !important;
 }
 .trophy-bg:focus,
 .trophy-bg:active {
@@ -2324,7 +2448,7 @@ body {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.85);
+  background: rgba(0, 0, 0, 0.4);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -2332,13 +2456,13 @@ body {
 }
 .overlay-content {
   position: relative;
-  width: 80vw;
-  height: 80vh;
+  width: 90vw;
+  height: 90vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: #222;
+  background: rgba(0, 0, 0, 0.7);
   border-radius: 8px;
   box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
   padding: 24px 24px 16px 24px;
@@ -2450,14 +2574,14 @@ body {
   z-index: 12;
   display: flex;
   flex-direction: row;
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.7);
   border-radius: 4px;
   padding: 2px 2px 2px 2px;
   box-shadow: none;
   font-size: 0.85em;
 }
 .star-overlay:hover {
-  background: rgba(255, 255, 255, 1.0);
+  background: rgba(255, 255, 255, 1);
 }
 .star-overlay .v-icon {
   font-size: 16px !important;
@@ -2598,7 +2722,6 @@ button[disabled] {
 }
 .thumbnail-container {
   width: 100%;
-  height: 100%;
   position: relative;
   display: block;
 }
@@ -2607,16 +2730,18 @@ button[disabled] {
   height: 100%;
   object-fit: contain;
   display: block;
+  border-radius: 8px;
 }
 .thumbnail-container:hover .thumbnail-img,
 .thumbnail-container:focus-within .thumbnail-img {
   transform: scale(1.02);
-  box-shadow: 0 4px 24px 0 rgba(25, 118, 210, 0.2), 0 1.5px 6px 0 rgba(0,0,0,0.3);
+  box-shadow: 0 4px 24px 0 rgba(25, 118, 210, 0.2),
+    0 1.5px 6px 0 rgba(0, 0, 0, 0.3);
   z-index: 2;
-  transition: transform 0.18s cubic-bezier(.4,2,.6,1), box-shadow 0.18s;
+  transition: transform 0.18s cubic-bezier(0.4, 2, 0.6, 1), box-shadow 0.18s;
 }
 .thumbnail-img {
-  transition: transform 0.18s cubic-bezier(.4,2,.6,1), box-shadow 0.18s;
+  transition: transform 0.18s cubic-bezier(0.4, 2, 0.6, 1), box-shadow 0.18s;
 }
 .thumbnail-card {
   width: 100%;
