@@ -20,25 +20,17 @@ const importInProgress = ref(false);
 const importProgress = ref(0);
 const importTotal = ref(0);
 const importError = ref(null);
-const importPhase = ref(""); // 'hashing', 'checking', 'uploading', 'done', 'error'
+const importPhase = ref(''); // 'hashing', 'checking', 'uploading', 'done', 'error'
 const importPhaseMessage = computed(() => {
   switch (importPhase.value) {
-    case "hashing":
-      return "Hashing files...";
-    case "checking":
-      return "Checking for duplicates...";
-    case "uploading":
-      return "Uploading images...";
-    case "done":
-      return "Import complete!";
-    case "duplicates":
-      return "All files are duplicates.";
-    case "cancelled":
-      return "Import cancelled.";
-    case "error":
-      return "Import failed.";
-    default:
-      return "";
+    case 'hashing': return 'Hashing files...';
+    case 'checking': return 'Checking for duplicates...';
+    case 'uploading': return 'Uploading images...';
+    case 'done': return 'Import complete!';
+    case 'duplicates': return 'All files are duplicates.';
+    case 'cancelled': return 'Import cancelled.';
+    case 'error': return 'Import failed.';
+    default: return '';
   }
 });
 const gridContainer = ref(null); // already used for grid
@@ -105,15 +97,11 @@ async function hashFile(file) {
   const WHOLE_FILE_THRESHOLD = 128 * 1024; // 128KB
   if (file.size <= WHOLE_FILE_THRESHOLD) {
     const buf = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest("SHA-256", buf);
-    return Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
   }
   // For larger files, sample N evenly spaced blocks
-  const offsets = Array.from({ length: N }, (_, i) =>
-    Math.floor((i * (file.size - CHUNK_SIZE)) / (N - 1))
-  );
+  const offsets = Array.from({length: N}, (_, i) => Math.floor(i * (file.size - CHUNK_SIZE) / (N - 1)));
   const chunks = [];
   for (const offset of offsets) {
     const blob = file.slice(offset, offset + CHUNK_SIZE);
@@ -127,10 +115,8 @@ async function hashFile(file) {
     all.set(arr, pos);
     pos += arr.length;
   }
-  const hashBuffer = await crypto.subtle.digest("SHA-256", all);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const hashBuffer = await crypto.subtle.digest('SHA-256', all);
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // Sorting and pagination state
@@ -240,12 +226,7 @@ watch([selectedSort, selectedCharacter, selectedReferenceMode], () => {
 function handleGridDragEnter(e) {
   // Only trigger if entering from outside the image-grid (not between children)
   // If relatedTarget is inside the grid, ignore (moving within grid children).
-  if (
-    e.relatedTarget &&
-    gridContainer.value &&
-    gridContainer.value.contains(e.relatedTarget)
-  )
-    return;
+  if (e.relatedTarget && gridContainer.value && gridContainer.value.contains(e.relatedTarget)) return;
   if (!e.dataTransfer || !e.dataTransfer.items) return;
   // Only check the first 20 items for image type, break immediately if found
   const items = Array.from(e.dataTransfer.items);
@@ -289,8 +270,8 @@ function handleGridDrop(e) {
   dragOverlayVisible.value = false;
   if (!e.dataTransfer || !e.dataTransfer.files) return;
   const files = Array.from(e.dataTransfer.files).filter(isSupportedImageFile);
-  console.debug("[IMPORT] Files dropped:", e.dataTransfer.files);
-  console.debug("[IMPORT] Supported files after filter:", files);
+  console.debug('[IMPORT] Files dropped:', e.dataTransfer.files);
+  console.debug('[IMPORT] Supported files after filter:', files);
   if (!files.length) {
     alert("No supported image files found.");
     return;
@@ -299,7 +280,7 @@ function handleGridDrop(e) {
   importInProgress.value = true;
   importProgress.value = 0;
   importError.value = null;
-  importPhase.value = "hashing";
+  importPhase.value = 'hashing';
   (async () => {
     // Step 1: Compute hashes for all files in parallel (with concurrency limit)
     importTotal.value = files.length;
@@ -338,7 +319,7 @@ function handleGridDrop(e) {
       fileHashes = await mapWithConcurrencyLimit(
         files,
         async (file, idx) => {
-          if (cancelImport.value) throw new Error("cancelled");
+          if (cancelImport.value) throw new Error('cancelled');
           const hash = await hashFile(file);
           hashProgress++;
           importProgress.value = hashProgress;
@@ -347,27 +328,25 @@ function handleGridDrop(e) {
         },
         CONCURRENCY
       );
-      console.debug("[IMPORT] fileHashes after hashing:", fileHashes);
+      console.debug('[IMPORT] fileHashes after hashing:', fileHashes);
     } catch (err) {
       importInProgress.value = false;
-      if (err.message === "cancelled") {
-        importPhase.value = "cancelled";
-        importError.value = "Import cancelled.";
+      if (err.message === 'cancelled') {
+        importPhase.value = 'cancelled';
+        importError.value = 'Import cancelled.';
       } else {
-        importPhase.value = "error";
+        importPhase.value = 'error';
         importError.value = "Failed to hash files.";
       }
-      setTimeout(() => {
-        importInProgress.value = false;
-      }, 1500);
+      setTimeout(() => { importInProgress.value = false; }, 1500);
       return;
     }
     // Step 2: Batch check with backend for existing hashes
-    importPhase.value = "checking";
+    importPhase.value = 'checking';
     let existing = [];
     try {
-      const hashesToSend = fileHashes.map((fh) => fh.hash);
-      console.debug("[IMPORT] Sending hashes to /check_hashes:", hashesToSend);
+      const hashesToSend = fileHashes.map(fh => fh.hash);
+      console.debug('[IMPORT] Sending hashes to /check_hashes:', hashesToSend);
       const res = await fetch(`${BACKEND_URL}/check_hashes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -375,36 +354,30 @@ function handleGridDrop(e) {
       });
       if (res.ok) {
         const data = await res.json();
-        console.debug("[IMPORT] /check_hashes response:", data);
+        console.debug('[IMPORT] /check_hashes response:', data);
         existing = data.existing || [];
       } else {
         throw new Error("Failed to check for duplicates");
       }
     } catch (err) {
-      importPhase.value = "error";
+      importPhase.value = 'error';
       importInProgress.value = false;
       importError.value = "Failed to check for duplicates.";
-      setTimeout(() => {
-        importInProgress.value = false;
-      }, 1500);
+      setTimeout(() => { importInProgress.value = false; }, 1500);
       return;
     }
     // Step 3: Filter out duplicates
-    const newFiles = fileHashes
-      .filter((fh) => !existing.includes(fh.hash))
-      .map((fh) => fh.file);
+    const newFiles = fileHashes.filter(fh => !existing.includes(fh.hash)).map(fh => fh.file);
     importTotal.value = newFiles.length;
     importProgress.value = 0;
     if (newFiles.length === 0) {
-      importPhase.value = "duplicates";
+      importPhase.value = 'duplicates';
       importError.value = "All files are duplicates.";
-      setTimeout(() => {
-        importInProgress.value = false;
-      }, 2000);
+      setTimeout(() => { importInProgress.value = false; }, 2000);
       return;
     }
     // Show found X new images
-    importPhase.value = "uploading";
+    importPhase.value = 'uploading';
     importError.value = `Found ${newFiles.length} new image(s).`;
     let completed = 0;
     const uploadFile = async (file) => {
@@ -428,7 +401,7 @@ function handleGridDrop(e) {
         importProgress.value = completed;
         await nextTick();
       } catch (err) {
-        importPhase.value = "error";
+        importPhase.value = 'error';
         importError.value = err.message || String(err);
         throw err;
       }
@@ -436,24 +409,20 @@ function handleGridDrop(e) {
     try {
       for (const file of newFiles) {
         if (cancelImport.value) {
-          importPhase.value = "cancelled";
+          importPhase.value = 'cancelled';
           importError.value = "Import cancelled by user.";
-          setTimeout(() => {
-            importInProgress.value = false;
-          }, 1500);
+          setTimeout(() => { importInProgress.value = false; }, 1500);
           return;
         }
         await uploadFile(file);
       }
-      importPhase.value = "done";
+      importPhase.value = 'done';
       importError.value = `Imported ${newFiles.length} image(s).`;
-      setTimeout(() => {
-        importInProgress.value = false;
-      }, 1500);
+      setTimeout(() => { importInProgress.value = false; }, 1500);
       refreshImages();
       fetchSidebarCounts();
     } catch (e) {
-      importPhase.value = "error";
+      importPhase.value = 'error';
       importInProgress.value = false;
       alert("One or more uploads failed: " + (e.message || e));
     }
@@ -607,17 +576,17 @@ async function searchImages(query) {
   } finally {
     imagesLoading.value = false;
   }
-  // Watch for clearing of searchQuery to restore previous sort and refresh view
-  watch(searchQuery, (newVal, oldVal) => {
-    if (!newVal && oldVal) {
-      // Restore previous sort if available
-      if (previousSort.value && previousSort.value !== selectedSort.value) {
-        selectedSort.value = previousSort.value;
-      }
-      // Refresh images for current character and sort
-      refreshImages();
+// Watch for clearing of searchQuery to restore previous sort and refresh view
+watch(searchQuery, (newVal, oldVal) => {
+  if (!newVal && oldVal) {
+    // Restore previous sort if available
+    if (previousSort.value && previousSort.value !== selectedSort.value) {
+      selectedSort.value = previousSort.value;
     }
-  });
+    // Refresh images for current character and sort
+    refreshImages();
+  }
+});
 }
 
 function handleImageSelect(img, idx, event) {
@@ -743,9 +712,7 @@ async function fetchSidebarCounts() {
   } catch {}
   // Unassigned Pictures
   try {
-    const resUnassigned = await fetch(
-      `${BACKEND_URL}/category/summary?character_id=null`
-    );
+    const resUnassigned = await fetch(`${BACKEND_URL}/category/summary?character_id=null`);
     if (resUnassigned.ok) {
       const data = await resUnassigned.json();
       categoryCounts.value[UNASSIGNED_PICTURES_ID] = data.image_count;
@@ -755,11 +722,7 @@ async function fetchSidebarCounts() {
   await Promise.all(
     characters.value.map(async (char) => {
       try {
-        const res = await fetch(
-          `${BACKEND_URL}/category/summary?character_id=${encodeURIComponent(
-            char.id
-          )}`
-        );
+        const res = await fetch(`${BACKEND_URL}/category/summary?character_id=${encodeURIComponent(char.id)}`);
         if (res.ok) {
           const data = await res.json();
           categoryCounts.value[char.id] = data.image_count;
@@ -899,8 +862,37 @@ onMounted(() => {
     // After loading characters, ensure All Pictures is still selected
     selectedCharacter.value = ALL_PICTURES_ID;
     selectedReferenceMode.value = false;
-    // Always use refreshImages to honor sort order
-    refreshImages();
+    // Explicitly trigger image loading if already on All Pictures
+    if (
+      selectedCharacter.value === ALL_PICTURES_ID &&
+      !selectedReferenceMode.value
+    ) {
+      // This mimics the watcher logic
+      images.value = [];
+      imagesError.value = null;
+      selectedImageIds.value = [];
+      imagesLoading.value = true;
+      let url = `${BACKEND_URL}/pictures?info=true`;
+      fetch(url)
+        .then((res) => {
+          if (!res.ok) throw new Error("Failed to fetch images");
+          return res.json();
+        })
+        .then((baseImages) => {
+          images.value = baseImages.map((img) => ({
+            ...img,
+            score: typeof img.score !== "undefined" ? img.score : null,
+            is_reference: Number(img.is_reference) || 0,
+          }));
+          setTimeout(updateColumns, 0);
+        })
+        .catch((e) => {
+          imagesError.value = e.message;
+        })
+        .finally(() => {
+          imagesLoading.value = false;
+        });
+    }
   });
   window.addEventListener("resize", updateColumns);
   watch(thumbnailSize, updateColumns);
@@ -912,26 +904,23 @@ watch([selectedCharacter, selectedReferenceMode], async ([id, refMode]) => {
 });
 
 function handleOverlayKeydown(e) {
-  // Allow navigation keys in text fields, but block R and 1-5 shortcuts
+  // Don't trigger shortcuts if focus is in a text field
   const tag =
     e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
   const isEditable =
     e.target &&
     (e.target.isContentEditable || tag === "input" || tag === "textarea");
-
-  // Ctrl+A: select all images in grid (block in text fields)
+  if (isEditable) return;
+  // Ctrl+A: select all images in grid
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
-    if (isEditable) return;
     if (images.value.length) {
       selectedImageIds.value = images.value.map((img) => img.id);
       e.preventDefault();
     }
     return;
   }
-
-  // R: toggle reference for overlay image or selection (block in text fields)
+  // R: toggle reference for overlay image or selection
   if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    if (isEditable) return;
     if (overlayOpen.value && overlayImage.value) {
       toggleReference(overlayImage.value);
     } else if (selectedImageIds.value.length) {
@@ -944,19 +933,6 @@ function handleOverlayKeydown(e) {
     } else if (images.value.length) {
       // If nothing selected, toggle the first image
       toggleReference(images.value[0]);
-    }
-    e.preventDefault();
-    return;
-  }
-
-  // 1-5: set score (block in text fields)
-  if (/^[1-5]$/.test(e.key)) {
-    if (isEditable) return;
-    showStars.value = true;
-    if (overlayOpen.value && overlayImage.value) {
-      setImageScore(overlayImage.value, Number(e.key));
-    } else if (selectedImageIds.value.length) {
-      patchScoreForSelection(Number(e.key));
     }
     e.preventDefault();
     return;
@@ -995,56 +971,6 @@ function handleOverlayKeydown(e) {
   } else if (e.key === "ArrowDown") {
     if (idx + cols < images.value.length) nextIdx = idx + cols;
     else return;
-  } else if (e.key === "Home") {
-    nextIdx = Math.floor(idx / cols) * cols;
-  } else if (e.key === "End") {
-    // Use the total count for the current view (categoryCounts)
-    let currentCategoryId = selectedCharacter.value;
-    let totalCount;
-    if (selectedReferenceMode.value) {
-      totalCount = images.value.length;
-    } else {
-      totalCount = categoryCounts.value[currentCategoryId] ?? images.value.length;
-    }
-    // Calculate how many images fit in the viewport
-    const cols = columns.value;
-    let rows = 1;
-    if (gridContainer.value) {
-      rows = Math.floor(gridContainer.value.clientHeight / (thumbnailSize.value + 32));
-      rows = Math.max(1, rows);
-    }
-    const imagesInViewport = cols * rows;
-    // The index of the first image in the last full viewport
-    let firstIdx = Math.max(0, totalCount - imagesInViewport);
-    // If not all images are loaded, keep paging until we have enough
-    const scrollToEnd = () => {
-      if (gridContainer.value) {
-        nextTick(() => {
-          gridContainer.value.scrollTop = gridContainer.value.scrollHeight;
-        });
-      }
-    };
-    if (images.value.length < totalCount && hasMoreImages.value) {
-      const loadAll = async () => {
-        while (
-          images.value.length < totalCount &&
-          hasMoreImages.value &&
-          !imagesLoading.value
-        ) {
-          pageOffset.value += pageSize.value;
-          await refreshImages(true);
-        }
-        scrollToEnd();
-      };
-      loadAll();
-      return;
-    } else {
-      scrollToEnd();
-    }
-  } else if (e.key === "PageUp") {
-    nextIdx = Math.max(0, idx - cols * 4);
-  } else if (e.key === "PageDown") {
-    nextIdx = Math.min(images.value.length - 1, idx + cols * 4);
   } else if (e.key === "Delete") {
     if (selectedImageIds.value.length) {
       deleteSelectedImages();
@@ -1062,7 +988,35 @@ function handleOverlayKeydown(e) {
     }
     e.preventDefault();
     return;
+  } else {
+    return;
   }
+  const isCtrl = e.ctrlKey || e.metaKey;
+  const isShift = e.shiftKey;
+  if (isShift && lastSelectedIndex !== null) {
+    // Range select
+    const start = Math.min(lastSelectedIndex, nextIdx);
+    const end = Math.max(lastSelectedIndex, nextIdx);
+    const rangeIds = images.value.slice(start, end + 1).map((i) => i.id);
+    const newSelection = isCtrl
+      ? Array.from(new Set([...selectedImageIds.value, ...rangeIds]))
+      : rangeIds;
+    selectedImageIds.value = newSelection;
+  } else if (isCtrl) {
+    // Toggle selection of nextIdx
+    const id = images.value[nextIdx].id;
+    if (selectedImageIds.value.includes(id)) {
+      selectedImageIds.value = selectedImageIds.value.filter((i) => i !== id);
+    } else {
+      selectedImageIds.value = [...selectedImageIds.value, id];
+    }
+    lastSelectedIndex = nextIdx;
+  } else {
+    // Single select
+    selectedImageIds.value = [images.value[nextIdx].id];
+    lastSelectedIndex = nextIdx;
+  }
+  e.preventDefault();
 }
 
 onMounted(() => {
@@ -1147,10 +1101,7 @@ async function setImageScore(img, n) {
       { method: "PATCH" }
     );
     if (!res.ok) throw new Error(`Failed to set score for image ${img.id}`);
-    if (
-      selectedSort.value === "score_desc" ||
-      selectedSort.value === "score_asc"
-    ) {
+    if (selectedSort.value === "score_desc" || selectedSort.value === "score_asc") {
       // Remove image from current position
       const idx = images.value.findIndex((i) => i.id === img.id);
       if (idx === -1) return;
@@ -1170,9 +1121,9 @@ async function setImageScore(img, n) {
       nextTick(() => {
         const grid = gridContainer.value;
         if (!grid) return;
-        const card = grid.querySelectorAll(".image-card")[insertIdx];
+        const card = grid.querySelectorAll('.image-card')[insertIdx];
         if (card && card.scrollIntoView) {
-          card.scrollIntoView({ behavior: "smooth", block: "center" });
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
       });
     } else {
@@ -1227,13 +1178,8 @@ async function onCharacterDrop(characterId, event) {
     return;
   }
   // Log drop target and character id
-  const charObj = characters.value.find((c) => c.id === characterId);
-  console.log(
-    "[DROP] Drop target characterId:",
-    characterId,
-    "name:",
-    charObj ? charObj.name : "(not found)"
-  );
+  const charObj = characters.value.find(c => c.id === characterId);
+  console.log("[DROP] Drop target characterId:", characterId, "name:", charObj ? charObj.name : "(not found)");
   // Always use the characterId from the drop target
   assignImagesToCharacter(imageIds, characterId);
 }
@@ -1253,19 +1199,17 @@ async function assignImagesToCharacter(imageIds, characterId) {
           throw new Error(`Failed to assign character for image ${id}`);
       })
     );
-    await fetchCharacters();
-    fetchSidebarCounts();
+  await fetchCharacters();
+  fetchSidebarCounts();
     // Remove reassigned images from the current grid if not viewing All Pictures or Unassigned
     if (
       selectedCharacter.value !== ALL_PICTURES_ID &&
       selectedCharacter.value !== UNASSIGNED_PICTURES_ID &&
       selectedCharacter.value !== characterId
     ) {
-      images.value = images.value.filter((img) => !imageIds.includes(img.id));
+      images.value = images.value.filter(img => !imageIds.includes(img.id));
       // Also remove these IDs from selection
-      selectedImageIds.value = selectedImageIds.value.filter((id) =>
-        images.value.some((img) => img.id === id)
-      );
+      selectedImageIds.value = selectedImageIds.value.filter(id => images.value.some(img => img.id === id));
       lastSelectedIndex = null;
     } else {
       // For All Pictures or Unassigned, refresh the grid as before
@@ -1289,10 +1233,8 @@ async function assignImagesToCharacter(imageIds, characterId) {
           is_reference: Number(img.is_reference) || 0,
         }));
         // Remove any selected IDs not in the new images
-        const newIds = new Set(images.value.map((img) => img.id));
-        selectedImageIds.value = selectedImageIds.value.filter((id) =>
-          newIds.has(id)
-        );
+        const newIds = new Set(images.value.map(img => img.id));
+        selectedImageIds.value = selectedImageIds.value.filter(id => newIds.has(id));
         lastSelectedIndex = null;
         setTimeout(updateColumns, 0);
       }
@@ -1325,8 +1267,8 @@ async function assignImagesAsReference(imageIds, characterId) {
           throw new Error(`Failed to set reference for image ${id}`);
       })
     );
-    await fetchCharacters();
-    fetchSidebarCounts();
+  await fetchCharacters();
+  fetchSidebarCounts();
     // Refresh images if needed
     if (
       selectedCharacter.value === characterId ||
@@ -1353,10 +1295,8 @@ async function assignImagesAsReference(imageIds, characterId) {
           is_reference: Number(img.is_reference) || 0,
         }));
         // Remove any selected IDs not in the new images
-        const newIds = new Set(images.value.map((img) => img.id));
-        selectedImageIds.value = selectedImageIds.value.filter((id) =>
-          newIds.has(id)
-        );
+        const newIds = new Set(images.value.map(img => img.id));
+        selectedImageIds.value = selectedImageIds.value.filter(id => newIds.has(id));
         lastSelectedIndex = null;
         setTimeout(updateColumns, 0);
       }
@@ -1489,13 +1429,7 @@ function confirmDeleteCharacter() {
       <div class="import-progress-content">
         <div class="import-progress-title">{{ importPhaseMessage }}</div>
         <div class="import-progress-bar-bg">
-          <div
-            class="import-progress-bar"
-            :style="{
-              width:
-                (importTotal ? importProgress / importTotal : 0) * 100 + '%',
-            }"
-          ></div>
+          <div class="import-progress-bar" :style="{ width: ((importTotal ? (importProgress / importTotal) : 0) * 100) + '%' }"></div>
         </div>
         <div class="import-progress-label">
           <template v-if="importPhase === 'hashing'">
@@ -1519,22 +1453,9 @@ function confirmDeleteCharacter() {
           <template v-else-if="importPhase === 'error'">
             Import failed.
           </template>
-          <span v-if="importError" class="import-progress-error">{{
-            importError
-          }}</span>
+          <span v-if="importError" class="import-progress-error">{{ importError }}</span>
         </div>
-        <button
-          class="cancel-button"
-          @click="handleCancelImport"
-          v-if="
-            importPhase !== 'done' &&
-            importPhase !== 'duplicates' &&
-            importPhase !== 'cancelled' &&
-            importPhase !== 'error'
-          "
-        >
-          Cancel
-        </button>
+        <button class="cancel-button" @click="handleCancelImport" v-if="importPhase !== 'done' && importPhase !== 'duplicates' && importPhase !== 'cancelled' && importPhase !== 'error'">Cancel</button>
       </div>
     </div>
     <div class="app-viewport">
@@ -1564,7 +1485,6 @@ function confirmDeleteCharacter() {
             label="Sort by"
             dense
             hide-details
-            variant="solo"
             style="min-width: 200px; max-width: 300px; margin-right: 8px"
           />
 
@@ -1656,9 +1576,7 @@ function confirmDeleteCharacter() {
                   <v-icon size="44">mdi-image-multiple</v-icon>
                 </span>
                 <span class="sidebar-list-label">All Pictures</span>
-                <span class="sidebar-list-count">{{
-                  categoryCounts[ALL_PICTURES_ID] ?? ""
-                }}</span>
+                <span class="sidebar-list-count">{{ categoryCounts[ALL_PICTURES_ID] ?? '' }}</span>
               </div>
               <div
                 :class="[
@@ -1671,9 +1589,7 @@ function confirmDeleteCharacter() {
                   <v-icon size="44">mdi-help-circle-outline</v-icon>
                 </span>
                 <span class="sidebar-list-label">Unassigned Pictures</span>
-                <span class="sidebar-list-count">{{
-                  categoryCounts[UNASSIGNED_PICTURES_ID] ?? ""
-                }}</span>
+                <span class="sidebar-list-count">{{ categoryCounts[UNASSIGNED_PICTURES_ID] ?? '' }}</span>
               </div>
             </div>
           </transition>
@@ -1777,11 +1693,10 @@ function confirmDeleteCharacter() {
                       </span>
                     </template>
                   </span>
-                  <span class="sidebar-list-count">{{
-                    categoryCounts[char.id] ?? ""
-                  }}</span>
+                  <span class="sidebar-list-count">{{ categoryCounts[char.id] ?? '' }}</span>
                 </div>
               </div>
+              <div v-if="loading" class="sidebar-loading">Loading...</div>
             </div>
           </transition>
         </aside>
@@ -1807,89 +1722,81 @@ function confirmDeleteCharacter() {
                 >
                   No images found for this character.
                 </div>
+                <div v-if="imagesLoading" class="empty-state">
+                  Loading images...
+                </div>
                 <div v-if="imagesError" class="empty-state">
                   {{ imagesError }}
                 </div>
                 <div v-if="dragOverlayVisible" class="drag-overlay-grid">
                   <span>{{ dragOverlayMessage }}</span>
                 </div>
-                <template v-for="(img, idx) in pagedImages">
-                  <div
-                    v-if="
-                      selectedSort ===
-                      (selectedSort && selectedSort.value
-                        ? selectedSort.value
-                        : selectedSort)
-                    "
-                    :key="img.id"
-                    class="image-card"
-                    :class="[
-                      isImageSelected(img.id) ? 'selected' : '',
-                      getSelectionBorderClasses(idx),
-                    ]"
-                    @click="handleImageSelect(img, idx, $event)"
-                    :draggable="isImageSelected(img.id)"
-                    @dragstart="onImageDragStart(img, idx, $event)"
-                  >
-                    <v-card>
-                      <div class="star-overlay" v-if="showStars">
-                        <v-icon
-                          v-for="n in 5"
-                          :key="n"
-                          small
-                          :color="
-                            n <= (img.score || 0) ? 'amber' : 'grey lighten-1'
-                          "
-                          style="cursor: pointer"
-                          @click.stop="setImageScore(img, n)"
-                          >mdi-star</v-icon
-                        >
-                      </div>
-                      <v-img
-                        :src="`${BACKEND_URL}/thumbnails/${img.id}`"
-                        :height="thumbnailSize"
-                        :width="thumbnailSize"
-                        @click.stop="
-                          (e) => {
-                            if (e.ctrlKey || e.metaKey || e.shiftKey) {
-                              handleImageSelect(img, idx, e);
-                            } else {
-                              openOverlay(img);
-                            }
-                          }
+                <div
+                  v-for="(img, idx) in pagedImages"
+                  :key="img.id"
+                  class="image-card"
+                  :class="[
+                    isImageSelected(img.id) ? 'selected' : '',
+                    getSelectionBorderClasses(idx),
+                  ]"
+                  @click="handleImageSelect(img, idx, $event)"
+                  :draggable="isImageSelected(img.id)"
+                  @dragstart="onImageDragStart(img, idx, $event)"
+                >
+                  <v-card class="thumbnail-card">
+                    <div class="star-overlay" v-if="showStars">
+                      <v-icon
+                        v-for="n in 5"
+                        :key="n"
+                        small
+                        :color="
+                          n <= (img.score || 0) ? 'amber' : 'grey lighten-1'
                         "
-                        @load="fetchScoreIfMissing(img)"
                         style="cursor: pointer"
-                      />
-                      <!-- Trophy icon for reference toggle -->
-                      <v-btn
-                        icon
-                        size="small"
-                        class="reference-trophy-btn"
-                        :color="img.is_reference ? 'orange darken-2' : 'grey'"
-                        @click.stop="toggleReference(img)"
-                        title="Toggle reference picture"
+                        @click.stop="setImageScore(img, n)"
+                        >mdi-star</v-icon
                       >
-                        <v-icon color="white">mdi-trophy</v-icon>
-                      </v-btn>
-                      <!-- Show date under thumbnail if sorting by date -->
-                      <div
-                        v-if="
-                          selectedSort === 'date_desc' ||
-                          selectedSort === 'date_asc'
-                        "
-                        class="thumbnail-date"
-                      >
-                        {{ new Date(img.created_at).toLocaleString() }}
-                      </div>
-                    </v-card>
-                  </div>
-                  <div v-else :key="'skip-' + img.id" style="display: none">
-                    <span style="display: none"
-                      >Sort mismatch, skipping render for {{ img.id }}</span
+                    </div>
+                    <v-img
+                      :src="`${BACKEND_URL}/thumbnails/${img.id}`"
+                      :height="thumbnailSize"
+                      :width="thumbnailSize"
+                      class="thumbnail-img"
+                      @click.stop="
+                        (e) => {
+                          if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                            handleImageSelect(img, idx, e);
+                          } else {
+                            openOverlay(img);
+                          }
+                        }
+                      "
+                      @load="fetchScoreIfMissing(img)"
+                      style="cursor: pointer"
+                    />
+                    <!-- Trophy icon for reference toggle -->
+                    <v-btn
+                      icon
+                      size="small"
+                      class="reference-trophy-btn"
+                      :color="img.is_reference ? 'orange darken-2' : 'grey'"
+                      @click.stop="toggleReference(img)"
+                      title="Toggle reference picture"
                     >
-                  </div>
-                </template>
+                      <v-icon color="white">mdi-trophy</v-icon>
+                    </v-btn>
+                    <!-- Show date under thumbnail if sorting by date -->
+                    <div
+                      v-if="
+                        selectedSort === 'date_desc' ||
+                        selectedSort === 'date_asc'
+                      "
+                      class="thumbnail-date"
+                    >
+                      {{ new Date(img.created_at).toLocaleString() }}
+                    </div>
+                  </v-card>
+                </div>
                 <!-- Full image overlay -->
                 <div
                   v-if="overlayOpen"
@@ -2319,9 +2226,9 @@ body {
   display: flex;
   align-items: center;
   margin-right: 12px;
-  width: 44px;
-  min-width: 44px;
   justify-content: center;
+  width: 44px;
+  height: 44px;
 }
 .sidebar-list-label {
   flex: 1;
@@ -2332,9 +2239,9 @@ body {
   text-align: left;
 }
 .sidebar-character-thumb {
-  width: 44px;
-  height: 44px;
-  object-fit: cover;
+  max-width: 44px;
+  max-height: 44px;
+  object-fit: contain;
   border-radius: 6px;
   box-shadow: 0 0px 0px #bbb;
 }
@@ -2528,8 +2435,6 @@ body {
   margin-left: auto;
   margin-right: 0px;
   padding-right: 2px;
-  border-bottom: none;
-  box-shadow: none;
 }
 .star-overlay {
   position: absolute;
@@ -2682,9 +2587,15 @@ button[disabled] {
   color: #ff5252;
   margin-left: 12px;
 }
-/* Remove rounded corners from v-select and v-text-field (solo variant) */
-::v-deep(.v-select .v-field, .search-bar-text-field .v-field) {
-  border-radius: 0 !important;
-  background-color: #ddd;
+.thumbnail-img {
+  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.thumbnail-card {
+  width: 100%;
+  height: 100%;
+  position: relative;
 }
 </style>

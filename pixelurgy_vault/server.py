@@ -196,6 +196,7 @@ class Server:
             """
             Return a face-cropped thumbnail for the highest scored picture of the character.
             If no scored picture, fallback to first image. If no face bbox, fallback to normal thumbnail.
+            Cropped region is resized to fit within 96x96, preserving aspect ratio.
             """
             import io
             from PIL import Image
@@ -251,8 +252,13 @@ class Server:
                 y2 = max(0, min(h, y2))
                 if x2 > x1 and y2 > y1:
                     thumb_img = thumb_img.crop((x1, y1, x2, y2))
-            # Resize to 96x96 for sidebar (twice the previous size)
-            thumb_img = thumb_img.resize((96, 96), Image.LANCZOS)
+            # Resize so height=96px, width scaled proportionally
+            target_height = 96
+            w, h = thumb_img.size
+            if h != target_height:
+                scale = target_height / h
+                new_w = int(round(w * scale))
+                thumb_img = thumb_img.resize((new_w, target_height), Image.LANCZOS)
             buf = io.BytesIO()
             thumb_img.save(buf, format="PNG")
             return Response(content=buf.getvalue(), media_type="image/png")
