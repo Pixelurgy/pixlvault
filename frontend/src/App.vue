@@ -95,9 +95,28 @@ const PIL_IMAGE_EXTENSIONS = [
   "heif",
   "avif",
 ];
+const VIDEO_EXTENSIONS = [
+  "mp4",
+  "avi",
+  "mov",
+  "webm",
+  "mkv",
+  "flv",
+  "wmv",
+  "m4v",
+];
 function isSupportedImageFile(file) {
   const ext = file.name.split(".").pop().toLowerCase();
   return PIL_IMAGE_EXTENSIONS.includes(ext);
+}
+
+function isSupportedVideoFile(file) {
+  const ext = file.name.split(".").pop().toLowerCase();
+  return VIDEO_EXTENSIONS.includes(ext);
+}
+
+function isSupportedMediaFile(file) {
+  return isSupportedImageFile(file) || isSupportedVideoFile(file);
 }
 
 // Cache for cropped thumbnail data URLs
@@ -105,6 +124,10 @@ const croppedThumbnails = ref({}); // { [img.id]: dataUrl }
 
 // Crop an image to a square using canvas and return a data URL
 function cropImageToSquare(url, id) {
+  // For videos, just return the url (the backend already provides a thumbnail image)
+  if (typeof url === "object" && url.isVideo) {
+    return Promise.resolve(url.src);
+  }
   return new Promise((resolve, reject) => {
     const img = new window.Image();
     img.crossOrigin = "Anonymous";
@@ -128,6 +151,32 @@ function cropImageToSquare(url, id) {
 async function getCroppedThumbnail(img) {
   if (!img || !img.id) return "";
   if (croppedThumbnails.value[img.id]) return croppedThumbnails.value[img.id];
+  // If it's a video, just use the backend thumbnail as is
+  if (
+    img.format &&
+    [
+      "mp4",
+      "avi",
+      "mov",
+      "webm",
+      "mkv",
+      "flv",
+      "wmv",
+      "m4v",
+      "MP4",
+      "AVI",
+      "MOV",
+      "WEBM",
+      "MKV",
+      "FLV",
+      "WMV",
+      "M4V",
+    ].includes(img.format.toLowerCase())
+  ) {
+    const url = `${BACKEND_URL}/thumbnails/${img.id}`;
+    croppedThumbnails.value[img.id] = url;
+    return url;
+  }
   const url = `${BACKEND_URL}/thumbnails/${img.id}`;
   try {
     const dataUrl = await cropImageToSquare(url, img.id);
@@ -335,7 +384,7 @@ function handleGridDrop(e) {
     return;
   }
   if (!e.dataTransfer || !e.dataTransfer.files) return;
-  const files = Array.from(e.dataTransfer.files).filter(isSupportedImageFile);
+  const files = Array.from(e.dataTransfer.files).filter(isSupportedMediaFile);
   console.debug("[IMPORT] Files dropped:", e.dataTransfer.files);
   console.debug("[IMPORT] Supported files after filter:", files);
   if (!files.length) {
@@ -440,7 +489,8 @@ function handleGridDrop(e) {
     // Step 3: Filter out duplicates
     const newFiles = fileHashes
       .filter((fh) => !existing.includes(fh.hash))
-      .map((fh) => fh.file);
+      .map((fh) => fh.file)
+      .filter(isSupportedMediaFile);
     importTotal.value = newFiles.length;
     importProgress.value = 0;
     if (newFiles.length === 0) {
@@ -1829,32 +1879,76 @@ function confirmDeleteCharacter() {
                           >mdi-star</v-icon
                         >
                       </div>
-                      <img
-                        :src="
-                          croppedThumbnails[img.id] ||
-                          `${BACKEND_URL}/thumbnails/${img.id}`
-                        "
-                        class="thumbnail-img"
-                        @click.stop="
-                          (e) => {
-                            if (e.ctrlKey || e.metaKey || e.shiftKey) {
-                              handleImageSelect(img, idx, e);
-                            } else {
-                              openOverlay(img);
+                      <template
+                        v-if="img.format && isSupportedVideoFile(img.format)"
+                      >
+                        <img
+                          :src="
+                            croppedThumbnails[img.id] ||
+                            `${BACKEND_URL}/thumbnails/${img.id}`
+                          "
+                          class="thumbnail-img video-thumb"
+                          @click.stop="
+                            (e) => {
+                              if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                                handleImageSelect(img, idx, e);
+                              } else {
+                                openOverlay(img);
+                              }
                             }
-                          }
-                        "
-                        @load="
-                          async (e) => {
-                            if (!croppedThumbnails[img.id]) {
-                              const dataUrl = await getCroppedThumbnail(img);
-                              croppedThumbnails[img.id] = dataUrl;
+                          "
+                          @load="
+                            async (e) => {
+                              if (!croppedThumbnails[img.id]) {
+                                const dataUrl = await getCroppedThumbnail(img);
+                                croppedThumbnails[img.id] = dataUrl;
+                              }
+                              fetchScoreIfMissing(img);
                             }
-                            fetchScoreIfMissing(img);
-                          }
-                        "
-                        style="cursor: pointer"
-                      />
+                          "
+                          style="cursor: pointer; border: 2px solid #2196f3"
+                        />
+                        <v-icon
+                          class="video-icon-overlay"
+                          style="
+                            position: absolute;
+                            bottom: 8px;
+                            right: 8px;
+                            color: #2196f3;
+                            background: white;
+                            border-radius: 50%;
+                          "
+                          >mdi-play-circle</v-icon
+                        >
+                      </template>
+                      <template v-else>
+                        <img
+                          :src="
+                            croppedThumbnails[img.id] ||
+                            `${BACKEND_URL}/thumbnails/${img.id}`
+                          "
+                          class="thumbnail-img"
+                          @click.stop="
+                            (e) => {
+                              if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                                handleImageSelect(img, idx, e);
+                              } else {
+                                openOverlay(img);
+                              }
+                            }
+                          "
+                          @load="
+                            async (e) => {
+                              if (!croppedThumbnails[img.id]) {
+                                const dataUrl = await getCroppedThumbnail(img);
+                                croppedThumbnails[img.id] = dataUrl;
+                              }
+                              fetchScoreIfMissing(img);
+                            }
+                          "
+                          style="cursor: pointer"
+                        />
+                      </template>
                       <!-- Trophy icon for reference toggle -->
                       <v-btn
                         icon
