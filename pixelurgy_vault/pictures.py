@@ -13,7 +13,6 @@ logger = get_logger(__name__)
 
 # Enum for sorting mechanisms
 class SortMechanism(str, Enum):
-    UNSORTED = "unsorted"
     DATE_DESC = "date_desc"
     DATE_ASC = "date_asc"
     SCORE_DESC = "score_desc"
@@ -27,7 +26,6 @@ def get_sort_mechanisms():
     return [
         {"id": sm.value, "label": label}
         for sm, label in [
-            (SortMechanism.UNSORTED, "Unsorted"),
             (SortMechanism.DATE_DESC, "Date (latest first)"),
             (SortMechanism.DATE_ASC, "Date (oldest first)"),
             (SortMechanism.SCORE_DESC, "Score (highest first)"),
