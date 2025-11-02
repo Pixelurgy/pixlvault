@@ -70,6 +70,15 @@ class Server:
         # Load image roots config
         with open(config_path, "r") as f:
             self.config = json.load(f)
+        # Ensure new config options exist
+        if "sort" not in self.config:
+            self.config["sort"] = "date_desc"
+        if "thumbnail" not in self.config:
+            self.config["thumbnail"] = "default"
+        if "show_stars" not in self.config:
+            self.config["show_stars"] = True
+        if "show_only_reference" not in self.config:
+            self.config["show_only_reference"] = False
         # SSL config
         self.require_ssl = self.server_config.get("require_ssl", False)
         self.ssl_keyfile = self.server_config.get("ssl_keyfile", "ssl/key.pem")
@@ -1022,30 +1031,25 @@ class Server:
             - If character_id is set: that character's pictures
             """
 
-            cursor = self.vault.connection.cursor()
             # Determine which set to query
-            if character_id is None:
-                # All pictures
-                cursor.execute("SELECT * FROM pictures")
-                char_id = None
-            elif (
-                character_id == ""
+            if (
+                character_id is None
+                or character_id == ""
                 or character_id.lower() == "none"
                 or character_id == "null"
             ):
                 # Unassigned
-                cursor.execute("SELECT * FROM pictures WHERE character_id IS NULL")
+                pics = self.vault.pictures.find(character_id=None)
                 char_id = None
             else:
-                cursor.execute(
-                    "SELECT * FROM pictures WHERE character_id = ?", (character_id,)
-                )
+                pics = self.vault.pictures.find(character_id=character_id)
                 char_id = character_id
-            pics = cursor.fetchall()
+
             image_count = len(pics)
-            reference_image_count = sum(1 for p in pics if p["is_reference"] == 1)
+
+            reference_image_count = sum(1 for p in pics if p.is_reference == 1)
             last_updated = max(
-                (p["created_at"] for p in pics if p["created_at"]), default=None
+                (p.created_at for p in pics if p.created_at), default=None
             )
             # Thumbnail URL (reuse existing endpoint)
             thumb_url = None
@@ -1059,6 +1063,81 @@ class Server:
                 "thumbnail_url": thumb_url,
             }
             return summary
+
+        @self.app.get("/config")
+        async def get_config():
+            """
+            Return the current image roots config (config.json).
+            """
+            logger.info("About to transmit current config")
+            logger.info(f"Transmitting current config {self.config}")
+            return self.config
+
+        @self.app.patch("/config")
+        async def patch_config(request: Request):
+            """
+            Update existing config values or append to existing lists. Does not allow adding new keys.
+            Body: { key: value, ... } (value replaces or is appended to existing key)
+            If the value is a list and the existing value is a list, appends items.
+            Ensures new image root directories and DBs are created as needed.
+            """
+            import os
+
+            patch_data = await request.json()
+            updated = False
+            image_root_changed = False
+            for key, value in patch_data.items():
+                if key not in self.config:
+                    # Allow adding 'sort', 'thumbnail', 'show_stars', 'show_only_reference' keys if missing
+                    if key in (
+                        "sort",
+                        "thumbnail",
+                        "show_stars",
+                        "show_only_reference",
+                    ):
+                        self.config[key] = value
+                        updated = True
+                        continue
+                    raise HTTPException(
+                        status_code=400, detail=f"Key '{key}' does not exist in config."
+                    )
+                if key == "image_roots" and isinstance(value, list):
+                    # Ensure all image root directories exist
+                    for v in value:
+                        if not os.path.exists(v):
+                            os.makedirs(v, exist_ok=True)
+                if (
+                    key == "selected_image_root"
+                    and self.config.get("selected_image_root") != value
+                ):
+                    image_root_changed = True
+                if isinstance(self.config[key], list) and isinstance(value, list):
+                    # Append unique items
+                    for v in value:
+                        if v not in self.config[key]:
+                            self.config[key].append(v)
+                            updated = True
+                else:
+                    # Replace value
+                    if self.config[key] != value:
+                        self.config[key] = value
+                        updated = True
+            if updated:
+                # Save config
+                config_path = CONFIG_PATH
+                with open(config_path, "w") as f:
+                    json.dump(self.config, f, indent=2)
+            # If selected_image_root changed, re-initialize vault with new root
+            if image_root_changed:
+                new_root = self.config["selected_image_root"]
+                if not os.path.exists(new_root):
+                    os.makedirs(new_root, exist_ok=True)
+                # Re-initialize vault (and DB) with new root
+                self.vault = Vault(
+                    image_root=new_root,
+                    description=self.config.get("description"),
+                )
+            return {"status": "success", "updated": updated, "config": self.config}
 
     def get_version(self):
         try:

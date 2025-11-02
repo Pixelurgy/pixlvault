@@ -5,6 +5,7 @@ import {
   onMounted,
   watch,
   onBeforeUnmount,
+  reactive,
   nextTick,
 } from "vue";
 import { VTextField } from "vuetify/components";
@@ -203,7 +204,6 @@ async function fetchSortOptions() {
     }
   } catch (e) {
     sortOptions.value = [
-      { label: "Unsorted", value: "unsorted" },
       { label: "Date: Latest First", value: "date_desc" },
       { label: "Date: Oldest First", value: "date_asc" },
       { label: "Score: Highest First", value: "score_desc" },
@@ -218,7 +218,6 @@ const selectedCharacter = ref(ALL_PICTURES_ID);
 const selectedReferenceMode = ref(false);
 
 // Track thumbnail load state globally by image ID
-import { reactive } from "vue";
 const thumbLoaded = reactive({});
 
 // Fetch images for the current character and mode, with pagination and sorting
@@ -832,6 +831,7 @@ const loading = ref(false);
 const error = ref(null);
 
 // Reference filter for toolbar (local only, no backend refresh)
+const showStars = ref(true);
 const referenceFilterMode = ref(false);
 const filteredImages = computed(() => {
   if (referenceFilterMode.value) {
@@ -940,6 +940,139 @@ async function toggleReference(img) {
   }
 }
 
+const settingsDialog = ref(false);
+watch(settingsDialog, (val) => {
+  if (val) fetchConfig();
+});
+const config = reactive({
+  image_roots: [],
+  selected_image_root: "",
+  sort: "",
+  thumbnail: 256,
+  show_stars: true,
+  show_only_reference: false,
+});
+
+async function fetchConfig() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/config`);
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("Failed to fetch /config:", res.status, text);
+      return;
+    }
+    const data = await res.json();
+    config.image_roots = data.image_roots || [];
+    config.selected_image_root = data.selected_image_root || "";
+    // UI options
+    if (data.sort) selectedSort.value = data.sort;
+    if (data.thumbnail) thumbnailSize.value = data.thumbnail;
+    if (typeof data.show_stars === "boolean") showStars.value = data.show_stars;
+    if (typeof data.show_only_reference === "boolean")
+      referenceFilterMode.value = data.show_only_reference;
+    // Also update config for PATCHing
+    config.sort = data.sort || selectedSort.value;
+    config.thumbnail = data.thumbnail || thumbnailSize.value;
+    config.show_stars =
+      typeof data.show_stars === "boolean" ? data.show_stars : showStars.value;
+    config.show_only_reference =
+      typeof data.show_only_reference === "boolean"
+        ? data.show_only_reference
+        : referenceFilterMode.value;
+  } catch (e) {
+    console.error("Error fetching /config:", e);
+  }
+}
+
+// Settings dialog: image roots add/remove/select logic
+const newImageRoot = ref("");
+async function addImageRoot() {
+  const val = newImageRoot.value.trim();
+  if (!val || config.image_roots.includes(val)) return;
+  config.image_roots.push(val);
+  newImageRoot.value = "";
+  // PATCH only image_roots
+  await fetch(`${BACKEND_URL}/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_roots: config.image_roots }),
+  });
+}
+function removeImageRoot(root) {
+  if (config.image_roots.length <= 1) return;
+  const idx = config.image_roots.indexOf(root);
+  if (idx !== -1) {
+    config.image_roots.splice(idx, 1);
+    // If removed root was selected, pick first remaining
+    if (config.selected_image_root === root) {
+      config.selected_image_root = config.image_roots[0] || "";
+    }
+    saveConfig();
+  }
+}
+
+async function updateSelectedRoot() {
+  // PATCH only selected_image_root
+  await fetch(`${BACKEND_URL}/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ selected_image_root: config.selected_image_root }),
+  });
+  // Refresh grid and sidebar after vault change
+  await fetchConfig();
+  await fetchCharacters();
+  await fetchSidebarCounts();
+  await refreshImages();
+}
+
+// --- UI option PATCH logic ---
+async function patchConfigUIOptions(opts = {}) {
+  // Merge with config
+  const patch = {
+    sort: selectedSort.value,
+    thumbnail: thumbnailSize.value,
+    show_stars: showStars.value,
+    show_only_reference: referenceFilterMode.value,
+    ...opts,
+  };
+  Object.assign(config, patch);
+  await fetch(`${BACKEND_URL}/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
+function selectImageRoot(root) {
+  if (config.selected_image_root !== root) {
+    config.selected_image_root = root;
+    updateSelectedRoot();
+  }
+}
+
+async function saveConfig() {
+  // Save config to backend (POST /config)
+  await fetch(`/${BACKEND_URL}/config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      image_roots: config.image_roots,
+      selected_image_root: config.selected_image_root,
+    }),
+  });
+}
+
+function openSettingsDialog() {
+  console.debug("Opening settings dialog");
+  fetchConfig();
+  settingsDialog.value = true;
+}
+
+// Fetch config and sync UI options on mount
+onMounted(() => {
+  fetchConfig();
+});
+
 onMounted(() => {
   // Always select All Pictures at startup
   selectedCharacter.value = ALL_PICTURES_ID;
@@ -949,6 +1082,20 @@ onMounted(() => {
   window.addEventListener("resize", updateColumns);
   watch(thumbnailSize, updateColumns);
   setTimeout(updateColumns, 100); // Initial update after mount
+});
+
+// Watch and PATCH UI config options when changed
+watch(selectedSort, (val) => {
+  patchConfigUIOptions({ sort: val });
+});
+watch(thumbnailSize, (val) => {
+  patchConfigUIOptions({ thumbnail: val });
+});
+watch(showStars, (val) => {
+  patchConfigUIOptions({ show_stars: val });
+});
+watch(referenceFilterMode, (val) => {
+  patchConfigUIOptions({ show_only_reference: val });
 });
 
 watch([selectedCharacter, selectedReferenceMode], async ([id, refMode]) => {
@@ -1164,8 +1311,6 @@ async function setImageScore(img, n) {
     alert(e.message);
   }
 }
-
-const showStars = ref(true);
 
 // Drag and drop logic for assigning images to characters
 const dragOverCharacter = ref(null);
@@ -1603,6 +1748,15 @@ function confirmDeleteCharacter() {
           </v-btn>
           <v-btn
             icon
+            :color="settingsDialog ? 'primary' : 'grey'"
+            @click="openSettingsDialog"
+            title="Settings"
+            style="margin-left: 2px; margin-right: 2px"
+          >
+            <v-icon>mdi-cog</v-icon>
+          </v-btn>
+          <v-btn
+            icon
             color="red darken-2"
             :disabled="!selectedImageIds.length"
             @click="deleteSelectedImages"
@@ -1611,6 +1765,101 @@ function confirmDeleteCharacter() {
           >
             <v-icon>mdi-trash-can-outline</v-icon>
           </v-btn>
+          <!-- Settings Dialog -->
+          <v-dialog v-model="settingsDialog" max-width="50vw">
+            <v-card class="settings-dialog-card">
+              <div class="settings-dialog-titlebar">
+                <div class="settings-dialog-title">Settings</div>
+                <button
+                  class="settings-dialog-close"
+                  @click="settingsDialog = false"
+                  aria-label="Close"
+                >
+                  &times;
+                </button>
+              </div>
+              <v-card-text>
+                <div class="settings-section">
+                  <strong>Image Roots</strong>
+                  <ul class="settings-image-roots">
+                    <li
+                      v-for="root in config.image_roots"
+                      :key="root"
+                      @click="selectImageRoot(root)"
+                      :class="[
+                        'settings-image-root',
+                        { selected: root === config.selected_image_root },
+                      ]"
+                      style="
+                        cursor: pointer;
+                        user-select: none;
+                        display: flex;
+                        align-items: center;
+                        padding: 8px 0 8px 8px;
+                        border-radius: 8px;
+                        margin-bottom: 2px;
+                      "
+                    >
+                      <span style="flex: 1">{{ root }}</span>
+                      <span
+                        v-if="root === config.selected_image_root"
+                        style="
+                          color: #1976d2;
+                          font-weight: bold;
+                          margin-left: 8px;
+                        "
+                        >(selected)</span
+                      >
+                      <button
+                        v-if="config.image_roots.length > 1"
+                        @click.stop="removeImageRoot(root)"
+                        title="Remove root"
+                        style="
+                          margin-left: 8px;
+                          background: none;
+                          border: none;
+                          color: #888;
+                          font-size: 1.2em;
+                          cursor: pointer;
+                        "
+                      >
+                        &times;
+                      </button>
+                    </li>
+                  </ul>
+                  <div style="display: flex; margin-top: 12px; gap: 8px">
+                    <input
+                      v-model="newImageRoot"
+                      @keydown.enter="addImageRoot"
+                      placeholder="Add new root"
+                      style="
+                        flex: 1;
+                        padding: 6px 10px;
+                        border-radius: 8px;
+                        border: 1px solid #bbb;
+                        font-size: 1em;
+                      "
+                    />
+                    <button
+                      @click="addImageRoot"
+                      :disabled="!newImageRoot.trim()"
+                      style="
+                        padding: 6px 16px;
+                        border-radius: 8px;
+                        background: #1976d2;
+                        color: #fff;
+                        border: none;
+                        font-weight: 600;
+                        cursor: pointer;
+                      "
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-dialog>
         </div>
       </div>
       <div class="file-manager">
@@ -2290,13 +2539,13 @@ body {
 }
 .v-img {
   display: block;
-  margin: 0 auto;
-  box-sizing: border-box;
-  padding: 0;
-}
-.v-card-title {
-  width: 100%;
-  max-width: 256px;
+  min-width: 400px;
+  max-width: 90vw;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 32px 32px 20px 32px;
+  position: relative;
   min-height: 2.5em;
   font-size: 1rem;
   text-align: center;
@@ -2842,5 +3091,87 @@ button[disabled] {
 button:focus:not(:focus-visible) {
   outline: none !important;
   box-shadow: none !important;
+}
+
+.settings-dialog-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: #f5f5f7;
+  border-bottom: 1px solid #e0e0e0;
+  padding: 0.5em 1.5em 0.5em 1.5em;
+  box-sizing: border-box;
+  margin-bottom: 0;
+  border-radius: 0;
+}
+.settings-dialog-title {
+  font-size: 1.18em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #333;
+  margin: 0;
+}
+.settings-dialog-close {
+  background: none;
+  border: none;
+  font-size: 1.5em;
+  color: #888;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 8px;
+  transition: color 0.2s;
+  margin-left: 12px;
+}
+.settings-dialog-close:hover {
+  color: #1976d2;
+}
+
+/* Settings dialog styled to match overlay dialog */
+.settings-dialog-card {
+  min-width: 400px;
+  max-width: 90vw;
+  border-radius: 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25), 0 1.5px 6px rgba(0, 0, 0, 0.08);
+  background: #fff;
+  padding: 0px 0px 0px 0px;
+  position: relative;
+}
+.settings-section {
+  margin-bottom: 24px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eee;
+}
+.settings-image-roots {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.settings-image-root {
+  display: block;
+  padding: 8px 0 8px 8px;
+  font-size: 1.12em;
+  color: #333;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+.settings-image-root.selected {
+  font-weight: bold;
+  color: #1976d2;
+  background: #e3f2fd;
+}
+.settings-dialog-card .headline {
+  font-size: 1.35em;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.settings-dialog-card .v-card-actions {
+  margin-bottom: 24px;
+  padding: 24px 20px 16px 20px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.07);
+  border: none;
+  min-width: 90px;
 }
 </style>
