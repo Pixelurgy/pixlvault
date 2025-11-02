@@ -97,6 +97,7 @@ class ImageLoadingPrepDataset(torch.utils.data.Dataset):
             # Extract first, middle, last frames from video
             try:
                 import cv2
+
                 cap = cv2.VideoCapture(img_path)
                 if not cap.isOpened():
                     logger.error(f"Could not open video file: {img_path}")
@@ -116,7 +117,9 @@ class ImageLoadingPrepDataset(torch.utils.data.Dataset):
                     cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
                     ret, frame = cap.read()
                     if not ret:
-                        logger.error(f"Could not read frame {idx} from video: {img_path}")
+                        logger.error(
+                            f"Could not read frame {idx} from video: {img_path}"
+                        )
                         continue
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     pil_img = Image.fromarray(frame_rgb)

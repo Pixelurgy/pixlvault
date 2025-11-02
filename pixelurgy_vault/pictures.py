@@ -80,6 +80,7 @@ class Pictures:
                 import os
                 import cv2
                 from pixelurgy_vault.picture_iteration import PictureIteration
+
                 file_path = master_iter.file_path
                 ext = os.path.splitext(file_path)[1].lower()
                 faces = []
@@ -103,14 +104,18 @@ class Pictures:
                             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
                             ret, frame = cap.read()
                             if not ret or frame is None:
-                                logger.warning(f"Could not read frame {idx} from video: {file_path}")
+                                logger.warning(
+                                    f"Could not read frame {idx} from video: {file_path}"
+                                )
                                 continue
                             frame_faces = self._insightface_app.get(frame)
                             if frame_faces:
                                 faces.extend(frame_faces)
                         cap.release()
                 else:
-                    logger.warning(f"Unsupported file extension for face embedding: {file_path}")
+                    logger.warning(
+                        f"Unsupported file extension for face embedding: {file_path}"
+                    )
                 if not faces:
                     logger.warning(
                         f"No face found in {file_path} for picture {pic_id}."

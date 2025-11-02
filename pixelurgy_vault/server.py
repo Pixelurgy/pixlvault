@@ -1,17 +1,19 @@
-from contextlib import asynccontextmanager
-from fastapi import Body, FastAPI, File, Form, Request, UploadFile, Query, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
-
-from .logging import get_logger, setup_logging
 import uvicorn
+import io
 import os
 import json
 import uuid
 import argparse
 import mimetypes
 
+from contextlib import asynccontextmanager
+from fastapi import Body, FastAPI, File, Form, Request, UploadFile, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, Response
+from PIL import Image
 from platformdirs import user_config_dir
+
+from pixelurgy_vault.logging import get_logger, setup_logging
 from pixelurgy_vault.vault import Vault
 from pixelurgy_vault.picture import Picture
 from pixelurgy_vault.picture_iteration import PictureIteration
@@ -199,35 +201,28 @@ class Server:
             If no scored picture, fallback to first image. If no face bbox, fallback to normal thumbnail.
             Cropped region is resized to fit within 96x96, preserving aspect ratio.
             """
-            import io
-            from PIL import Image
-
-            # Find all pictures for this character
-            pics = self.vault.pictures.find(character_id=character_id)
-            if not pics:
-                raise HTTPException(status_code=404, detail="No pictures for character")
-            # Find master iterations for these pictures
-            its = []
-            for pic in pics:
-                master_its = self.vault.iterations.find(picture_id=pic.id, is_master=1)
-                if master_its:
-                    it = master_its[0]
-                    its.append((it, pic))
-            if not its:
-                raise HTTPException(
-                    status_code=404, detail="No master iterations for character"
-                )
+            logger.info(f"Generating face thumbnail for character_id: {character_id}")
+            its = self.vault.iterations.find(character_id=character_id, is_master=1)
+            logger.info(
+                f"Found {len(its)} master iterations for character_id: {character_id}"
+            )
 
             # Sort by score descending, then by created_at
-            def score_key(tup):
-                it, pic = tup
-                return (it.score if it.score is not None else -1, pic.created_at)
+            def score_key(picture_iteration):
+                return (
+                    picture_iteration.score
+                    if picture_iteration.score is not None
+                    else -1,
+                    picture_iteration.created_at,
+                )
 
             its.sort(key=score_key, reverse=True)
-            it, pic = its[0]
+            it = its[0]
             # Try to get face_bbox from the picture
+            pic = self.vault.pictures.find(id=it.picture_id)
+
             face_bbox = None
-            if hasattr(pic, "face_bbox") and pic.face_bbox:
+            if hasattr(it, "face_bbox") and it.face_bbox:
                 try:
                     face_bbox = (
                         json.loads(pic.face_bbox)
@@ -236,6 +231,10 @@ class Server:
                     )
                 except Exception:
                     face_bbox = None
+            else:
+                logger.info(
+                    f"No face_bbox attribute on picture for character_id: {character_id}"
+                )
             # Load thumbnail image
             if not it.thumbnail:
                 raise HTTPException(status_code=404, detail="No thumbnail available")
@@ -245,6 +244,7 @@ class Server:
                 raise HTTPException(status_code=400, detail="Invalid thumbnail image")
             # If face_bbox is available, crop to it
             if face_bbox and len(face_bbox) == 4:
+                logger.info(f"Cropping thumbnail to face bbox: {face_bbox}")
                 x1, y1, x2, y2 = [int(round(v)) for v in face_bbox]
                 w, h = thumb_img.size
                 x1 = max(0, min(w, x1))
