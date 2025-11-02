@@ -846,13 +846,14 @@ const expandedCharacters = ref({}); // { [characterId]: true/false }
 const sidebarSections = ref({
   pictures: true,
   people: true,
+  search: true,
 });
+
 const images = ref([]);
 const imagesLoading = ref(false);
 const imagesError = ref(null);
 
 // Thumbnail size slider state
-const thumbnailSizes = [128, 192, 256];
 const thumbnailLabels = ["Small", "Medium", "Large"];
 const thumbnailSize = ref(256);
 
@@ -1751,20 +1752,7 @@ function confirmDeleteCharacter() {
         >
           <v-icon>{{ sidebarVisible ? "mdi-menu-open" : "mdi-menu" }}</v-icon>
         </v-btn>
-        <!-- SearchBar moved to sidebar -->
         <div class="toolbar-actions">
-          <!-- Sorting dropdown -->
-          <v-select
-            v-model="selectedSort"
-            :items="sortOptions"
-            item-title="label"
-            item-value="value"
-            label="Sort by"
-            dense
-            hide-details
-            style="min-width: 200px; max-width: 300px; margin-right: 8px"
-          />
-
           <v-icon style="display: flex; align-items: center; height: 100%"
             >mdi-image-size-select-small</v-icon
           >
@@ -1777,8 +1765,7 @@ function confirmDeleteCharacter() {
             class="slider"
             hide-details
             style="
-              min-width: 256px;
-              max-width: 320px;
+              min-width: 100px;
               vertical-align: middle;
               margin-top: 4px;
               margin-bottom: 4px;
@@ -2181,6 +2168,43 @@ function confirmDeleteCharacter() {
             </div>
           </transition>
 
+          <div
+            class="sidebar-section-header"
+            @click="sidebarSections.search = !sidebarSections.search"
+          >
+            <v-icon small style="margin-right: 8px">{{
+              sidebarSections.search ? "mdi-chevron-down" : "mdi-chevron-right"
+            }}</v-icon>
+            Search & Sorting
+            <span style="flex: 1 1 auto"></span>
+          </div>
+          <transition name="fade">
+            <div class="search-and-sort" v-show="sidebarSections.search">
+              <div class="sidebar-searchbar-wrapper">
+                <SearchBar
+                  v-model="searchQuery"
+                  placeholder="Search images..."
+                  class="sidebar-searchbar"
+                  @search="searchImages"
+                />
+              </div>
+              <div class="sidebar-searchbar-wrapper">
+                <!-- Sorting dropdown -->
+                <v-select
+                  v-model="selectedSort"
+                  :items="sortOptions"
+                  class="sidebar-sort-select"
+                  item-title="label"
+                  item-value="value"
+                  label="Sort by"
+                  dense
+                  hide-details
+                />
+              </div>
+            </div>
+          </transition>
+
+          <!-- Settings button at the bottom left of the sidebar -->
           <div
             style="
               position: absolute;
@@ -2923,7 +2947,7 @@ body {
 .slider {
   flex: 1;
   margin: 0 8px;
-  min-width: 120px;
+  min-width: 100px;
   max-width: 220px;
 }
 .thumbnail-slider {
@@ -3365,29 +3389,27 @@ button:focus:not(:focus-visible) {
   border: none;
   min-width: 90px;
 }
+.search-and-sort {
+  display: flex;
+  flex-direction: column;
+}
+.sidebar-sort-select {
+  background: rgba(200, 200, 200, 0.6);
+}
+
 .sidebar-searchbar-wrapper {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 12px 8px 8px 8px;
+  position: relative;
+  width: 100%;
+  padding: 4px 4px 4px 4px;
 }
 .sidebar-searchbar {
   width: 100%;
-  max-width: 220px;
   min-width: 0;
+  position: relative;
   transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.sidebar-searchbar:focus-within,
-.sidebar-searchbar:focus {
-  max-width: none;
-  width: 80vw;
-  z-index: 10;
-  position: absolute;
-  left: 10vw;
-  right: 10vw;
-  background: white;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-  border-radius: 8px;
 }
 </style>
