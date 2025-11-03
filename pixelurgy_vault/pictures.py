@@ -129,7 +129,7 @@ class Pictures:
                 "UPDATE pictures SET tags = ? WHERE id = ?", (tags_json, picture_id)
             )
 
-    def start_embeddings_worker(self, interval=0.25):
+    def start_embeddings_worker(self, interval=0.1):
         import threading
 
         if hasattr(self, "_tag_worker") and self._tag_worker.is_alive():
@@ -144,7 +144,7 @@ class Pictures:
         if hasattr(self, "_tag_worker_stop"):
             self._tag_worker_stop.set()
         if hasattr(self, "_tag_worker"):
-            self._tag_worker.join(timeout=5)
+            self._tag_worker.join(timeout=10)
 
     def set_embedding_null(self, picture_id):
         """Set the embedding field to NULL for a given picture."""

@@ -31,12 +31,12 @@ SUB_DIR_FILES = ["variables.data-00000-of-00001", "variables.index"]
 CSV_FILE = FILES[-1]
 MODEL_DIR = "wd14_tagger_model"
 BATCH_SIZE = 1
-MAX_CONCURRENT_IMAGES = 8
+MAX_CONCURRENT_IMAGES = 16
 GENERAL_THRESHOLD = 0.4
 CHARACTER_THRESHOLD = 0.45
 RECURSIVE = False
 REMOVE_UNDERSCORE = False
-UNDESIRED_TAGS = "solo, general, male_focus, meme, blurry"
+UNDESIRED_TAGS = "solo, general, male_focus, meme, blurry, sensitive, realistic"
 FREQUENCY_TAGS = False
 ONNX = True
 USE_RATING_TAGS = True
@@ -59,19 +59,21 @@ except ImportError:
 
 def tags_to_sentence_with_lm(tags):
     """
-    Use a small language model (distilgpt2) to turn tags into a natural English sentence.
+    Use a small language model to turn tags into a natural English sentence.
     Requires transformers library. Returns a fallback if not available.
     """
     if _tag_to_sentence_pipeline is None:
         logger.warning("No LM found, using simple join fallback.")
         return ", ".join(tags)
     prompt = (
-        "Create a natural english sentence to describe a picture defined by the following tags: "
-        + ", ".join(tags)
-        + "."
+        "Write a short, natural English sentence describing a photo based on the provided tags. "
+        "Focus on the main subject, clothing, and setting if present. "
+        "Do not just list tags. Tags: " + ", ".join(tags) + "."
     )
-    result = _tag_to_sentence_pipeline(prompt, max_new_tokens=60)
+    result = _tag_to_sentence_pipeline(prompt, max_new_tokens=50)
     generated = result[0]["generated_text"].strip()
+
+    logger.info("LM output before deduplication: " + generated)
 
     # Remove duplicate phrases/words (simple greedy approach)
     def dedup_text(text):

@@ -656,6 +656,16 @@ function closeChatOverlay() {
   chatOpen.value = false;
 }
 
+// Scroll chat to bottom utility
+function scrollChatToBottom() {
+  nextTick(() => {
+    if (chatMessagesContainer.value) {
+      chatMessagesContainer.value.scrollTop =
+        chatMessagesContainer.value.scrollHeight;
+    }
+  });
+}
+
 // Search bar state and logic
 const searchQuery = ref(""); // Used for actual search
 async function searchImages(query) {
@@ -1709,7 +1719,8 @@ function confirmDeleteCharacter() {
 }
 
 // Chat state
-const chatMessages = ref([]); // {role: 'user'|'assistant', content: string}
+// Add optional pictureUrl to assistant messages
+const chatMessages = ref([]); // {role: 'user'|'assistant', content: string, pictureUrl?: string}
 const chatInput = ref("");
 const chatLoading = ref(false);
 const chatMessagesContainer = ref(null);
@@ -1719,6 +1730,27 @@ function renderMarkdown(text) {
   return marked.parse(text || "");
 }
 
+// Computed: Get the selected character object (if any)
+const selectedCharacterObj = computed(() => {
+  if (
+    selectedCharacter.value &&
+    selectedCharacter.value !== ALL_PICTURES_ID &&
+    selectedCharacter.value !== UNASSIGNED_PICTURES_ID
+  ) {
+    const char =
+      characters.value.find((c) => c.id === selectedCharacter.value) || null;
+    if (char && typeof char.name === "string" && char.name.length > 0) {
+      // Capitalize first letter only
+      return {
+        ...char,
+        name: char.name.charAt(0).toUpperCase() + char.name.slice(1),
+      };
+    }
+    return char;
+  }
+  return null;
+});
+
 async function sendChatMessageAndFocus() {
   const input = chatInput.value.trim();
   if (!input || chatLoading.value) return;
@@ -1726,11 +1758,7 @@ async function sendChatMessageAndFocus() {
   chatInput.value = "";
   chatLoading.value = true;
   await nextTick();
-  // Scroll to bottom
-  if (chatMessagesContainer.value) {
-    chatMessagesContainer.value.scrollTop =
-      chatMessagesContainer.value.scrollHeight;
-  }
+  scrollChatToBottom();
   try {
     const url = `http://${config.openai_host}:${config.openai_port}/v1/chat/completions`;
     const res = await fetch(url, {
@@ -1748,11 +1776,61 @@ async function sendChatMessageAndFocus() {
     if (!res.ok) throw new Error("OpenAI server error");
     const data = await res.json();
     const reply = data.choices?.[0]?.message?.content || "(No response)";
+    // Add the AI response first
     chatMessages.value.push({ role: "assistant", content: reply });
     await nextTick();
-    if (chatMessagesContainer.value) {
-      chatMessagesContainer.value.scrollTop =
-        chatMessagesContainer.value.scrollHeight;
+    scrollChatToBottom();
+
+    // After AI responds, trigger /search with character name + last user input + last AI response
+    let lastUser = null;
+    for (let i = chatMessages.value.length - 2; i >= 0; i--) {
+      if (chatMessages.value[i].role === "user") {
+        lastUser = chatMessages.value[i].content;
+        break;
+      }
+    }
+    let searchQuery = reply;
+    if (lastUser) {
+      searchQuery = lastUser + " " + reply;
+    }
+    if (selectedCharacterObj.value && selectedCharacterObj.value.name) {
+      searchQuery = selectedCharacterObj.value.name + " " + searchQuery;
+    }
+    try {
+      const searchRes = await fetch(
+        `${BACKEND_URL}/search?query=${encodeURIComponent(searchQuery)}`
+      );
+      if (searchRes.ok) {
+        const searchData = await searchRes.json();
+        if (searchData && Array.isArray(searchData) && searchData.length > 0) {
+          // Weighted random selection by likeness_score
+          const totalScore = searchData.reduce(
+            (sum, pic) => sum + (pic.likeness_score || 0),
+            0
+          );
+          let r = Math.random() * totalScore;
+          let chosen = searchData[0];
+          for (const pic of searchData) {
+            r -= pic.likeness_score || 0;
+            if (r <= 0) {
+              chosen = pic;
+              break;
+            }
+          }
+          // Compose the image URL (assuming /pictures/:id)
+          const imageUrl = `${BACKEND_URL}/pictures/${chosen.id}`;
+          // Add the picture URL to the last assistant message
+          const lastMsg = chatMessages.value
+            .slice()
+            .reverse()
+            .find((m) => m.role === "assistant" && !m.pictureUrl);
+          if (lastMsg) {
+            lastMsg.pictureUrl = imageUrl;
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore search errors
     }
   } catch (e) {
     chatMessages.value.push({
@@ -2498,7 +2576,12 @@ async function sendChatMessageAndFocus() {
                 >
                   <div class="chat-overlay-content">
                     <div class="chat-overlay-header">
-                      <span>AI Chat</span>
+                      <span>
+                        <template v-if="selectedCharacterObj">
+                          Chat with {{ selectedCharacterObj.name }}
+                        </template>
+                        <template v-else> AI Chat </template>
+                      </span>
                       <button
                         class="overlay-close"
                         @click="closeChatOverlay"
@@ -2509,12 +2592,17 @@ async function sendChatMessageAndFocus() {
                     </div>
                     <div
                       class="overlay-chat-main"
-                      style="flex: 1; display: flex; flex-direction: column"
+                      style="
+                        flex: 1;
+                        display: flex;
+                        flex-direction: column;
+                        min-height: 0;
+                      "
                     >
                       <div
                         class="chat-messages"
                         ref="chatMessagesContainer"
-                        style="flex: 1; overflow-y: auto"
+                        style="flex: 1 1 0; overflow-y: auto; min-height: 0"
                       >
                         <div
                           v-for="(msg, i) in chatMessages"
@@ -2538,6 +2626,25 @@ async function sendChatMessageAndFocus() {
                                 class="chat-text"
                                 v-html="renderMarkdown(msg.content)"
                               ></span>
+                              <div
+                                v-if="msg.pictureUrl"
+                                class="chat-picture-result"
+                                style="margin-top: 0.5em"
+                              >
+                                <img
+                                  :src="msg.pictureUrl"
+                                  alt="result"
+                                  style="
+                                    max-width: 50%;
+                                    height: auto;
+                                    display: block;
+                                    margin: 0 auto;
+                                    border-radius: 8px;
+                                    box-shadow: 0 2px 8px #0002;
+                                  "
+                                  @load="scrollChatToBottom"
+                                />
+                              </div>
                             </div>
                           </template>
                         </div>
@@ -2551,6 +2658,14 @@ async function sendChatMessageAndFocus() {
                       <form
                         class="chat-input-row"
                         @submit.prevent="sendChatMessageAndFocus"
+                        style="
+                          flex-shrink: 0;
+                          background: #f8fafd;
+                          border-top: 1px solid #e0e0e0;
+                          padding: 0.5em 0.7em;
+                          display: flex;
+                          align-items: flex-end;
+                        "
                       >
                         <textarea
                           v-model="chatInput"
@@ -2560,12 +2675,23 @@ async function sendChatMessageAndFocus() {
                           :disabled="chatLoading"
                           ref="chatInputField"
                           @keydown.enter.exact.prevent="sendChatMessageAndFocus"
+                          style="
+                            flex: 1;
+                            resize: none;
+                            min-height: 2.2em;
+                            max-height: 7em;
+                            border-radius: 6px;
+                            border: 1px solid #d0d0d0;
+                            margin-right: 0.5em;
+                            background: #fff;
+                          "
                         ></textarea>
                         <v-btn
                           type="submit"
                           :disabled="!chatInput.trim() || chatLoading"
                           color="primary"
                           class="chat-send-btn"
+                          style="min-width: 40px; min-height: 40px"
                         >
                           <v-icon>mdi-send</v-icon>
                         </v-btn>
