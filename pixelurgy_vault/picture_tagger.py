@@ -147,6 +147,7 @@ class PictureTagger:
         ),
         force_download=False,
         silent=True,
+        device=None,
     ):
         self._model_location = model_location
         self._silent = silent
@@ -159,7 +160,11 @@ class PictureTagger:
                 "ViT-B-32", pretrained="laion2b_s34b_b79k"
             )
         )
-        self._clip_device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device is not None:
+            self._clip_device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self._clip_device = device
+
         self._clip_model = self._clip_model.to(self._clip_device)
         self._clip_tokenizer = open_clip.get_tokenizer("ViT-B-32")
 
@@ -257,9 +262,9 @@ class PictureTagger:
             tag_replacements = escaped_tag_replacements.split(";")
             for tag_replacement in tag_replacements:
                 tags = tag_replacement.split(",")  # source, target
-                assert len(tags) == 2, (
-                    f"tag replacement must be in the format of `source,target`: {TAG_REPLACEMENT}"
-                )
+                assert (
+                    len(tags) == 2
+                ), f"tag replacement must be in the format of `source,target`: {TAG_REPLACEMENT}"
                 source, target = [
                     tag.replace("@@@@", ",").replace("####", ";") for tag in tags
                 ]
@@ -426,8 +431,10 @@ class PictureTagger:
                             undesired_tags,
                             always_first_tags,
                         )
-                        # batch_result: {image_path: [tags]}
                         tags = batch_result.get(str(image_path), [])
+                        # Naturalize tags immediately
+                        tags = [TagNaturaliser.get_natural_tag(tag) for tag in tags]
+                        tags = [t for t in tags if t]
                         combined_tags.update(tags)
                     all_results[str(image_path)] = list(combined_tags)
                 else:
@@ -436,7 +443,7 @@ class PictureTagger:
                     if len(b_imgs) >= BATCH_SIZE:
                         b_imgs = [
                             (str(image_path), image) for image_path, image in b_imgs
-                        ]  # Convert image_path to string
+                        ]
                         batch_result = self._run_batch(
                             b_imgs,
                             tag_freq,
@@ -444,16 +451,23 @@ class PictureTagger:
                             undesired_tags,
                             always_first_tags,
                         )
+                        # Naturalize tags for each image
+                        for k, tags in batch_result.items():
+                            tags = [TagNaturaliser.get_natural_tag(tag) for tag in tags]
+                            tags = [t for t in tags if t]
+                            batch_result[k] = tags
                         all_results.update(batch_result)
                         b_imgs.clear()
 
         if len(b_imgs) > 0:
-            b_imgs = [
-                (str(image_path), image) for image_path, image in b_imgs
-            ]  # Convert image_path to string
+            b_imgs = [(str(image_path), image) for image_path, image in b_imgs]
             batch_result = self._run_batch(
                 b_imgs, tag_freq, caption_separator, undesired_tags, always_first_tags
             )
+            for k, tags in batch_result.items():
+                tags = [TagNaturaliser.get_natural_tag(tag) for tag in tags]
+                tags = [t for t in tags if t]
+                batch_result[k] = tags
             all_results.update(batch_result)
 
         if FREQUENCY_TAGS:
@@ -483,11 +497,8 @@ class PictureTagger:
                     texts.append(obj.strip())
             elif isinstance(obj, dict):
                 for k, v in obj.items():
-                    # If this is a tags field, map tags
                     if k == "tags" and isinstance(v, (list, tuple, set)):
-                        mapped = [TagNaturaliser.get_natural_tag(tag) for tag in v]
-                        mapped = [m for m in mapped if m]
-                        texts.extend(mapped)
+                        texts.extend([t for t in v if t])
                     else:
                         texts.extend(collect_text(v, visited))
             elif isinstance(obj, (list, tuple, set)):
@@ -504,11 +515,8 @@ class PictureTagger:
                         "picture_tagger",
                     ):
                         continue
-                    # If this is a tags field, map tags
                     if attr == "tags" and isinstance(value, (list, tuple, set)):
-                        mapped = [TagNaturaliser.get_natural_tag(tag) for tag in value]
-                        mapped = [m for m in mapped if m]
-                        texts.extend(mapped)
+                        texts.extend([t for t in value if t])
                     else:
                         texts.extend(collect_text(value, visited))
             return texts
@@ -540,7 +548,7 @@ class PictureTagger:
             )
             raise ValueError("No text data for embedding.")
         full_text = ", ".join(texts)
-        logger.debug(f"Embedding: full_text for CLIP: {full_text}")
+        logger.info(f"Embedding: full_text for CLIP: {full_text}")
         try:
             with torch.no_grad():
                 text_tokens = self._clip_tokenizer([full_text]).to(self._clip_device)

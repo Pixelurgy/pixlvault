@@ -114,6 +114,12 @@ function isSupportedImageFile(file) {
   return PIL_IMAGE_EXTENSIONS.includes(ext);
 }
 
+// Format likeness score as percentage with 2 decimals function
+function formatLikenessScore(score) {
+  if (typeof score !== "number") return "";
+  return `Likeness: ${(score * 100).toFixed(2)}%`;
+}
+
 // Extracts the format/extension for overlayImage robustly function
 function getOverlayFormat(overlayImage) {
   if (!overlayImage) return "";
@@ -211,9 +217,9 @@ async function fetchSortOptions() {
       { label: "Date: Oldest First", value: "date_asc" },
       { label: "Score: Highest First", value: "score_desc" },
       { label: "Score: Lowest First", value: "score_asc" },
-      { label: "Score: Lowest First", value: "search_likeness" },
+      { label: "Search Likeness", value: "search_likeness" },
     ];
-    if (!selectedSort.value) selectedSort.value = "unsorted";
+    if (!selectedSort.value) selectedSort.value = "date_desc";
   }
 }
 
@@ -670,7 +676,7 @@ async function searchImages(query) {
   try {
     const url = `${BACKEND_URL}/search?query=${encodeURIComponent(
       q
-    )}&threshold=0.3&top_n=1000`;
+    )}&threshold=0.5&top_n=1000`;
     const res = await fetch(url);
     if (!res.ok) throw new Error("Search failed");
     const baseImages = await res.json();
@@ -864,7 +870,6 @@ const imagesLoading = ref(false);
 const imagesError = ref(null);
 
 // Thumbnail size slider state
-const thumbnailLabels = ["Small", "Medium", "Large"];
 const thumbnailSize = ref(256);
 
 // Responsive columns
@@ -1005,14 +1010,14 @@ async function fetchConfig() {
     config.image_roots = data.image_roots || [];
     config.selected_image_root = data.selected_image_root || "";
     // UI options
-    if (data.sort) selectedSort.value = data.sort;
-    if (data.thumbnail) thumbnailSize.value = data.thumbnail;
+    if (data.sort) selectedSort.value = data.sort_order;
+    if (data.thumbnail) thumbnailSize.value = data.thumbnail_size;
     if (typeof data.show_stars === "boolean") showStars.value = data.show_stars;
     if (typeof data.show_only_reference === "boolean")
       referenceFilterMode.value = data.show_only_reference;
     // Also update config for PATCHing
-    config.sort = data.sort || selectedSort.value;
-    config.thumbnail = data.thumbnail || thumbnailSize.value;
+    config.sort_order = data.sort || selectedSort.value;
+    config.thumbnail_size = data.thumbnail || thumbnailSize.value;
     config.show_stars =
       typeof data.show_stars === "boolean" ? data.show_stars : showStars.value;
     config.show_only_reference =
@@ -1826,7 +1831,6 @@ async function sendChatMessage() {
             :min="128"
             :max="256"
             :step="32"
-            :tick-labels="thumbnailLabels"
             class="slider"
             hide-details
             style="
@@ -2168,6 +2172,15 @@ async function sendChatMessage() {
             <div v-show="sidebarSections.people">
               <div v-if="error" class="sidebar-error">{{ error }}</div>
               <div
+                v-if="sortedCharacters.length === 0"
+                class="sidebar-character-group"
+              >
+                <div class="sidebar-list-item">
+                  No characters found. Click the + button to add one.
+                </div>
+              </div>
+              <div
+                v-if="sortedCharacters.length > 0"
                 v-for="char in sortedCharacters"
                 :key="char.id"
                 class="sidebar-character-group"
@@ -2452,9 +2465,16 @@ async function sendChatMessage() {
                         selectedSort === 'date_desc' ||
                         selectedSort === 'date_asc'
                       "
-                      class="thumbnail-date"
+                      class="thumbnail-info"
                     >
                       {{ new Date(img.created_at).toLocaleString() }}
+                    </div>
+                    <!-- Show likeness score under thumbnail if sorting by likeness-->
+                    <div
+                      v-if="selectedSort === 'search_likeness'"
+                      class="thumbnail-info"
+                    >
+                      {{ formatLikenessScore(img.likeness_score) }}
                     </div>
                   </v-card>
                 </div>
@@ -3425,7 +3445,7 @@ button[disabled] {
   pointer-events: none;
 }
 
-.thumbnail-date {
+.thumbnail-info {
   font-size: 0.85em;
   color: #666;
   margin-top: 2px;
