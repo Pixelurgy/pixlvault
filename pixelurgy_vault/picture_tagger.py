@@ -32,20 +32,66 @@ CSV_FILE = FILES[-1]
 MODEL_DIR = "wd14_tagger_model"
 BATCH_SIZE = 1
 MAX_CONCURRENT_IMAGES = 8
-GENERAL_THRESHOLD = 0.35
-CHARACTER_THRESHOLD = 0.35
+GENERAL_THRESHOLD = 0.4
+CHARACTER_THRESHOLD = 0.45
 RECURSIVE = False
-REMOVE_UNDERSCORE = True
-UNDESIRED_TAGS = ""
+REMOVE_UNDERSCORE = False
+UNDESIRED_TAGS = "solo, general, male_focus, meme, blurry"
 FREQUENCY_TAGS = False
 ONNX = True
-APPEND_TAGS = False
 USE_RATING_TAGS = True
 USE_RATING_TAGS_AS_LAST_TAG = False
 ALWAYS_FIRST_TAGS = None
 CAPTION_SEPARATOR = ", "
 TAG_REPLACEMENT = None
 CHARACTER_TAG_EXPAND = False
+
+try:
+    from transformers import pipeline
+
+    _tag_to_sentence_pipeline = pipeline(
+        "text2text-generation", model="google/flan-t5-base", device=-1
+    )
+
+except ImportError:
+    _tag_to_sentence_pipeline = None
+
+
+def tags_to_sentence_with_lm(tags):
+    """
+    Use a small language model (distilgpt2) to turn tags into a natural English sentence.
+    Requires transformers library. Returns a fallback if not available.
+    """
+    if _tag_to_sentence_pipeline is None:
+        logger.warning("No LM found, using simple join fallback.")
+        return ", ".join(tags)
+    prompt = (
+        "Create a natural english sentence to describe a picture defined by the following tags: "
+        + ", ".join(tags)
+        + "."
+    )
+    result = _tag_to_sentence_pipeline(prompt, max_new_tokens=60)
+    generated = result[0]["generated_text"].strip()
+
+    # Remove duplicate phrases/words (simple greedy approach)
+    def dedup_text(text):
+        import re
+
+        # Split on comma, 'and', or period
+        parts = re.split(r"[,.]| and ", text)
+        seen = set()
+        deduped = []
+        for part in parts:
+            cleaned = part.strip().lower()
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                deduped.append(part.strip())
+        # Reconstruct sentence
+        return ", ".join(deduped).replace(" ,", ",").strip()
+
+    deduped = dedup_text(generated)
+    logger.info("LM output after deduplication: " + deduped)
+    return deduped
 
 
 def preprocess_image(image, image_size=IMAGE_SIZE):
@@ -387,6 +433,7 @@ class PictureTagger:
         undesired_tags = set(
             [tag.strip() for tag in undesired_tags if tag.strip() != ""]
         )
+        logger.info("Removing tags: " + ", ".join(undesired_tags))
 
         always_first_tags = None
         if ALWAYS_FIRST_TAGS is not None:
@@ -521,17 +568,16 @@ class PictureTagger:
                         texts.extend(collect_text(value, visited))
             return texts
 
-        logger.debug(
+        logger.info(
             f"generate_embedding called with character={character}, picture={picture}"
         )
         import re
 
         texts = []
-        texts.extend(collect_text(character))
         texts.extend(collect_text(picture))
         # Remove duplicates, empty strings, UUIDs, and date strings
         uuid_regex = re.compile(
-            r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
         )
         date_regex = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z$")
         texts = [
@@ -547,14 +593,20 @@ class PictureTagger:
                 picture,
             )
             raise ValueError("No text data for embedding.")
-        full_text = ", ".join(texts)
+
+        logger.info(f"Embedding: tags going into LM: {texts}")
+        full_text = tags_to_sentence_with_lm(texts)
+        full_text = (
+            character.name + ", " if character and character.name else ""
+        ) + full_text.lower()
         logger.info(f"Embedding: full_text for CLIP: {full_text}")
+
         try:
             with torch.no_grad():
                 text_tokens = self._clip_tokenizer([full_text]).to(self._clip_device)
                 embedding = self._clip_model.encode_text(text_tokens)
                 embedding = embedding.cpu().numpy()[0]
-            return embedding
+            return embedding, full_text
         except RuntimeError as e:
             if (
                 ("CUDA out of memory" in str(e))
@@ -572,6 +624,6 @@ class PictureTagger:
                     )
                     embedding = self._clip_model.encode_text(text_tokens)
                     embedding = embedding.cpu().numpy()[0]
-                return embedding
+                return embedding, full_text
             else:
                 raise

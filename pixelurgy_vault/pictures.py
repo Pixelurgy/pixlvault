@@ -146,6 +146,14 @@ class Pictures:
         if hasattr(self, "_tag_worker"):
             self._tag_worker.join(timeout=5)
 
+    def set_embedding_null(self, picture_id):
+        """Set the embedding field to NULL for a given picture."""
+        with self._connection:
+            cursor = self._connection.cursor()
+            cursor.execute(
+                "UPDATE pictures SET embedding = NULL WHERE id = ?", (picture_id,)
+            )
+
     def _tag_embeddings_loop(self, interval):
         import sqlite3
 
@@ -392,14 +400,14 @@ class Pictures:
                         character_obj = self._characters[int(char_id)]
                     except Exception:
                         character_obj = None
-                embedding = picture_tagger.generate_embedding(
+                embedding, full_text = picture_tagger.generate_embedding(
                     picture=pic, character=character_obj
                 )
                 with thread_conn:
                     cursor = thread_conn.cursor()
                     cursor.execute(
-                        "UPDATE pictures SET embedding = ? WHERE id = ?",
-                        (embedding.astype("float32").tobytes(), pic.id),
+                        "UPDATE pictures SET embedding = ?, description = ? WHERE id = ?",
+                        (embedding.astype("float32").tobytes(), full_text, pic.id),
                     )
                 pic.has_embedding = True
             except Exception as e:
@@ -593,7 +601,7 @@ class Pictures:
             )
             return []
         # Generate query embedding
-        query_emb = self._picture_tagger.generate_embedding(
+        query_emb, _ = self._picture_tagger.generate_embedding(
             picture={"description": text}
         )
         logger.debug(

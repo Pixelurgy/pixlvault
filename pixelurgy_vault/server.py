@@ -389,7 +389,7 @@ class Server:
             all_pics = self.vault.pictures.find()
             fuzzy_scores = {}
             for pic in all_pics:
-                best_tag_score = 0
+                tag_scores = []
                 # Add character name to tags for fuzzy search
                 tags_and_name = list(pic.tags)
                 char_name = None
@@ -402,41 +402,51 @@ class Server:
                     except Exception:
                         char_name = None
                 if char_name:
-                    tags_and_name.append(char_name)
                     names = char_name.split(" ")
                     for name in names:
                         tags_and_name.append(name)
                 for q_word in q_split:
+                    max_score = 0
                     logger.info(f"Query word: {q_word}")
                     for tag in tags_and_name:
-                        score = fuzz.ratio(q_word, str(tag).lower())
-                        if score > best_tag_score:
-                            best_tag_score = score
-                        logger.info(
-                            f"Tag match: PicID={pic.id} Tag='{tag}' Score={score}"
+                        score = fuzz.ratio(q_word, str(tag).lower()) / 100
+                        score *= min(len(q_word), len(tag)) / max(
+                            len(q_word), len(tag), 1
                         )
-                    desc_score = fuzz.ratio(q_word, (pic.description or "").lower())
+                        if score > max_score:
+                            max_score = score
+                    tag_scores.append(max_score)
+                    desc_score = (
+                        fuzz.ratio(q_word, (pic.description or "").lower()) / 100.0
+                    )
                 logger.info(
-                    f"PicID={pic.id} Desc='{pic.description}' Score={desc_score}, Tag score={best_tag_score}"
+                    f"PicID={pic.id} Desc='{pic.description}' Desc score={desc_score}, Tag scores={tag_scores}"
                 )
-                max_score = max(best_tag_score, desc_score) / 100.0
-                if max_score > threshold:
-                    fuzzy_scores[pic.id] = max_score
+                avg_score = sum(tag_scores) / len(tag_scores) if tag_scores else 0
+                max_score = max(tag_scores) if tag_scores else 0
+                total_score = max(0.4 * avg_score + 0.6 * max_score, desc_score)
+                logger.info(
+                    f"PicID={pic.id} Desc='{pic.description}' Desc score={desc_score}, Tag scores={tag_scores}, total score={total_score}"
+                )
+                fuzzy_scores[pic.id] = total_score
 
             # Embedding search
             # For 1-2 words, expand query for better semantic results
             if n_words <= 3:
                 expanded = f"A photo of {q}" if n_words >= 1 else q
                 semantic_results = self.vault.pictures.find_by_text(
-                    expanded, top_n=top_n * 3, include_scores=True, threshold=threshold
+                    expanded,
+                    top_n=top_n * 3,
+                    include_scores=True,
+                    threshold=threshold / 2,
                 )
                 if not semantic_results:
                     semantic_results = self.vault.pictures.find_by_text(
-                        q, top_n=top_n * 3, include_scores=True, threshold=threshold
+                        q, top_n=top_n * 3, include_scores=True, threshold=threshold / 2
                     )
             else:
                 semantic_results = self.vault.pictures.find_by_text(
-                    q, top_n=top_n * 3, include_scores=True, threshold=threshold
+                    q, top_n=top_n * 3, include_scores=True, threshold=threshold / 2
                 )
             semantic_scores = {pic.id: score for pic, score in semantic_results}
 
@@ -446,9 +456,9 @@ class Server:
             # 4 words: 30% fuzzy, 70% semantic
             # 5+ 20% fuzzy, 80% semantic
             if n_words <= 2:
-                fuzzy_w, sem_w = 0.8, 0.2
+                fuzzy_w, sem_w = 0.9, 0.1
             elif n_words == 3:
-                fuzzy_w, sem_w = 0.5, 0.5
+                fuzzy_w, sem_w = 0.6, 0.4
             elif n_words == 4:
                 fuzzy_w, sem_w = 0.3, 0.7
             else:
@@ -461,7 +471,7 @@ class Server:
                 fuzzy_score = fuzzy_scores.get(pic_id, 0)
                 sem_score = semantic_scores.get(pic_id, 0)
                 combined_score = fuzzy_w * fuzzy_score + sem_w * sem_score
-                logger.debug(
+                logger.info(
                     f"Got combined score of {combined_score} for PicID={pic_id} (Fuzzy={fuzzy_score}, Semantic={sem_score})"
                 )
                 pic = next((p for p in all_pics if p.id == pic_id), None)
@@ -589,6 +599,10 @@ class Server:
             if name is not None and name != char.name:
                 char.name = name
                 updated = True
+                # Drop embeddings for all pictures with this character_id
+                pics = self.vault.pictures.find(character_id=id)
+                for pic in pics:
+                    self.vault.pictures.set_embedding_null(pic.id)
             if description is not None and description != char.description:
                 char.description = description
                 updated = True
@@ -836,13 +850,15 @@ class Server:
             except KeyError:
                 raise HTTPException(status_code=404, detail="Picture not found")
             updated = False
-            # If tags are provided in JSON body, replace tags
+            # If tags are provided in JSON body, replace tags and drop embedding
             if json_body and "tags" in json_body:
                 tags = json_body["tags"]
                 if not isinstance(tags, list):
                     raise HTTPException(status_code=400, detail="tags must be a list")
                 pic.tags = tags
                 updated = True
+                # Drop embedding if tags change
+                self.vault.pictures.set_embedding_null(id)
             # Otherwise, update fields from query params
             for key, value in params.items():
                 if key == "score":
@@ -852,8 +868,12 @@ class Server:
                 except Exception:
                     cast_val = value
                 if hasattr(pic, key):
+                    old_val = getattr(pic, key)
                     setattr(pic, key, cast_val)
                     updated = True
+                    # Drop embedding if character_id changes
+                    if key == "character_id" and old_val != cast_val:
+                        self.vault.pictures.set_embedding_null(id)
                 # If updating character_id, also update all iterations
                 if key == "character_id":
                     # Log character id and name
