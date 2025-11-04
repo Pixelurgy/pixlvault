@@ -174,7 +174,6 @@ class PictureIteration:
             ret, frame = cap.read()
             if not ret:
                 logger.error("Could not read first frame from video for thumbnail.")
-                frame = None
             else:
                 height, width = frame.shape[:2]
                 thumbnail_bytes = PictureIteration._generate_thumbnail_bytes(frame)
