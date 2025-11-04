@@ -249,7 +249,7 @@ class PictureIteration:
                 while chunk := f.read(CHUNK_SIZE):
                     sha256.update(chunk)
             digest = sha256.hexdigest()
-            print(f"[HASH-DEBUG] WHOLE: {file_path} size={file_size} hash={digest}")
+            logger.debug(f"WHOLE: {file_path} size={file_size} hash={digest}")
             return digest
         # For larger files, sample N evenly spaced blocks
         offsets = [int(i * (file_size - CHUNK_SIZE) / (N - 1)) for i in range(N)]
@@ -260,7 +260,7 @@ class PictureIteration:
                 if chunk:
                     sha256.update(chunk)
             digest = sha256.hexdigest()
-            print(f"[HASH-DEBUG] SAMPLED: {file_path} size={file_size} hash={digest}")
+            logger.debug(f"SAMPLED: {file_path} size={file_size} hash={digest}")
             return digest
 
     @staticmethod
@@ -275,7 +275,7 @@ class PictureIteration:
                 chunk = image_bytes[i : i + CHUNK_SIZE]
                 sha256.update(chunk)
             digest = sha256.hexdigest()
-            print(f"[HASH-DEBUG] WHOLE: size={file_size} hash={digest}")
+            logger.debug(f"WHOLE: size={file_size} hash={digest}")
             return digest
         # For larger files, sample N evenly spaced blocks
         offsets = [int(i * (file_size - CHUNK_SIZE) / (N - 1)) for i in range(N)]
@@ -284,5 +284,5 @@ class PictureIteration:
             if chunk:
                 sha256.update(chunk)
         digest = sha256.hexdigest()
-        print(f"[HASH-DEBUG] SAMPLED: hash={digest}")
+        logger.debug(f"SAMPLED: hash={digest}")
         return digest
