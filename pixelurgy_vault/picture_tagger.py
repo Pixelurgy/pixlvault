@@ -249,7 +249,7 @@ class PictureTagger:
         return texts
 
     @classmethod
-    def collect_text(cls, obj, visited=None):
+    def _collect_text(cls, obj, visited=None):
         if visited is None:
             visited = set()
         texts = []
@@ -265,10 +265,10 @@ class PictureTagger:
                 if k == "tags" and isinstance(v, (list, tuple, set)):
                     texts.extend([t for t in v if t])
                 else:
-                    texts.extend(cls.collect_text(v, visited))
+                    texts.extend(cls._collect_text(v, visited))
         elif isinstance(obj, (list, tuple, set)):
             for item in obj:
-                texts.extend(cls.collect_text(item, visited))
+                texts.extend(cls._collect_text(item, visited))
         elif hasattr(obj, "__dict__"):
             for attr, value in obj.__dict__.items():
                 if attr.startswith("_"):
@@ -283,10 +283,19 @@ class PictureTagger:
                 if attr == "tags" and isinstance(value, (list, tuple, set)):
                     texts.extend([t for t in value if t])
                 else:
-                    texts.extend(cls.collect_text(value, visited))
+                    texts.extend(cls._collect_text(value, visited))
         return texts
 
     def tag_images(self, image_paths):
+        """
+        Tag images using the WD14 tagger model.
+
+        Args:
+            image_paths (list of str): List of image file paths to be tagged.
+
+        Returns:
+            dict: A dictionary mapping image paths to their corresponding list of tags.
+        """
         undesired_tags = UNDESIRED_TAGS.split(CAPTION_SEPARATOR.strip())
         undesired_tags = set(
             [tag.strip() for tag in undesired_tags if tag.strip() != ""]
@@ -352,6 +361,13 @@ class PictureTagger:
         """
         Generate a CLIP embedding from all text found in character and picture objects (recursively), avoiding cycles.
         Uses the TagNaturaliser to convert tags to natural language.
+
+        Args:
+            character (Character, optional): Character object.
+            picture (Picture, optional): Picture object.
+
+        Returns:
+            tuple: A tuple containing the embedding (numpy array) and the full text (str).
         """
 
         logger.info(
