@@ -209,9 +209,9 @@ class PictureTagger:
             )
         )
         if device is not None:
-            self._clip_device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
             self._clip_device = device
+        else:
+            self._clip_device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self._clip_model = self._clip_model.to(self._clip_device)
         self._clip_tokenizer = open_clip.get_tokenizer("ViT-B-32")
