@@ -11,6 +11,7 @@ from fastapi import Body, FastAPI, File, Form, Request, UploadFile, Query, HTTPE
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from PIL import Image
+from rapidfuzz import fuzz
 
 from pixelurgy_vault.logging import get_logger, setup_logging
 from pixelurgy_vault.vault import Vault
@@ -350,7 +351,6 @@ class Server:
             Combined hybrid search: fuzzy tag/description and embedding, weighted by query length.
             Query params: ?query=...&top_n=...&threshold=...
             """
-            from rapidfuzz import fuzz
 
             def pic_to_dict(pic, likeness_score=None):
                 d = {
@@ -499,35 +499,10 @@ class Server:
             """
             Get all reference pictures for a character (is_reference=1, master iteration only).
             """
-            pics = self.vault.pictures.find(character_id=id)
-            reference_pics = [
-                pic for pic in pics if getattr(pic, "is_reference", 0) == 1
-            ]
-            pic_ids = [pic.id for pic in reference_pics]
-            iter_map = {}
-            if pic_ids:
-                cursor = self.vault.connection.cursor()
-                qmarks = ",".join(["?"] * len(pic_ids))
-                cursor.execute(
-                    f"SELECT id, picture_id FROM picture_iterations WHERE is_master=1 AND picture_id IN ({qmarks})",
-                    tuple(pic_ids),
-                )
-                for row in cursor.fetchall():
-                    iter_map[row[1]] = row[0]
-            results = []
-            for pic in reference_pics:
-                iteration_id = iter_map.get(pic.id)
-                if iteration_id:
-                    results.append(
-                        {
-                            "picture_id": pic.id,
-                            "iteration_id": iteration_id,
-                            "description": pic.description,
-                            "tags": pic.tags,
-                            "created_at": pic.created_at,
-                        }
-                    )
-            return {"reference_pictures": results}
+            try:
+                return {"reference_pictures": self.vault.reference_pictures(id)}
+            except KeyError:
+                raise HTTPException(status_code=404, detail="Character not found")
 
         @self.api.post("/characters/reference_pictures")
         async def add_reference_picture(
@@ -601,22 +576,12 @@ class Server:
 
         @self.api.delete("/characters/{id}")
         def delete_character(id: int):
-            # Remove character_id from all pictures and picture_iterations
-            cursor = self.vault.connection.cursor()
-            cursor.execute(
-                "UPDATE pictures SET character_id = NULL WHERE character_id = ?", (id,)
-            )
-            cursor.execute(
-                "UPDATE picture_iterations SET character_id = NULL WHERE character_id = ?",
-                (id,),
-            )
-            self.vault.connection.commit()
             # Delete the character
             try:
-                self.vault.characters.delete(id)
+                self.vault.delete_character(id)
+                return {"status": "success", "deleted_id": id}
             except KeyError:
                 raise HTTPException(status_code=404, detail="Character not found")
-            return {"status": "success", "deleted_id": id}
 
         @self.api.get("/characters")
         def get_characters(name: str = Query(None)):
@@ -1084,33 +1049,7 @@ class Server:
                 pics = pics[offset : offset + limit]
 
             if info:
-                # Batch fetch all master iteration scores for these pictures
-                pic_ids = [pic.id for pic in pics]
-                score_map = {}
-                if pic_ids:
-                    cursor = self.vault.connection.cursor()
-                    qmarks = ",".join(["?"] * len(pic_ids))
-                    cursor.execute(
-                        f"SELECT picture_id, score FROM picture_iterations WHERE is_master=1 AND picture_id IN ({qmarks})",
-                        tuple(pic_ids),
-                    )
-                    for row in cursor.fetchall():
-                        score_map[row[0]] = row[1]
-                result = []
-                for pic in pics:
-                    score = score_map.get(pic.id)
-                    result.append(
-                        {
-                            "id": pic.id,
-                            "character_id": pic.character_id,
-                            "description": pic.description,
-                            "tags": pic.tags,
-                            "created_at": pic.created_at,
-                            "score": score,
-                            "is_reference": getattr(pic, "is_reference", 0),
-                        }
-                    )
-                return result
+                return self.vault.list_pictures_info(pics)
             else:
                 # Return the master iteration for each picture (is_master=1)
                 results = []
