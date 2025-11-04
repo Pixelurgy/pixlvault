@@ -12,6 +12,7 @@ import { marked } from "marked";
 import { VTextField } from "vuetify/components";
 import SearchBar from "./components/SearchBar.vue";
 import unknownPerson from "./assets/unknown-person.png"; // Import for unknown character icon
+import nlp from "compromise";
 
 const BACKEND_URL = `http://${window.location.hostname}:9537`;
 
@@ -120,6 +121,16 @@ function formatLikenessScore(score) {
   return `Likeness: ${(score * 100).toFixed(2)}%`;
 }
 
+function extractKeywords(text) {
+  const doc = nlp(text);
+  // Get all noun and adjective phrases as keywords
+  const nouns = doc.nouns().out("array");
+  const adjectives = doc.adjectives().out("array");
+  // Combine and deduplicate
+  const keywords = Array.from(new Set([...nouns, ...adjectives]));
+  return keywords.join(" ");
+}
+
 // Extracts the format/extension for overlayImage robustly function
 function getOverlayFormat(overlayImage) {
   if (!overlayImage) return "";
@@ -144,7 +155,6 @@ function isSupportedVideoFile(input) {
   } else if (input && input.name) {
     ext = input.name.split(".").pop().toLowerCase();
   }
-  console.log("[VIDEO] Is it a valid video format:", input, "ext:", ext);
 
   return VIDEO_EXTENSIONS.includes(ext);
 }
@@ -1789,9 +1799,9 @@ async function sendChatMessageAndFocus() {
         break;
       }
     }
-    let searchQuery = reply;
+    let searchQuery = extractKeywords(reply);
     if (lastUser) {
-      searchQuery = lastUser + " " + reply;
+      searchQuery = lastUser + " " + searchQuery;
     }
     if (selectedCharacterObj.value && selectedCharacterObj.value.name) {
       searchQuery = selectedCharacterObj.value.name + " " + searchQuery;
