@@ -24,7 +24,7 @@ def main():
     )
     args = parser.parse_args()
 
-    server = Server(config_path=args.config_path, server_config_path=args.server_config)
+    server = Server(config_path=args.config, server_config_path=args.server_config)
     server.run()
 
 
