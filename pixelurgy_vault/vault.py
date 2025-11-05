@@ -6,13 +6,13 @@ import shutil
 
 from typing import Optional
 
+from build.lib.pixelurgy_vault import pictures
+
 from .logging import get_logger
 from .characters import Characters
 from .pictures import Pictures
-from .picture_iterations import PictureIterations
 
 from .character import Character
-from .picture_iteration import PictureIteration
 from .picture import Picture
 from .vault_upgrade import VaultUpgrade
 
@@ -36,7 +36,6 @@ class Vault:
         db_path (str): Path to the SQLite database file.
         connection (Optional[sqlite3.Connection]): SQLite connection object.
         pictures (Pictures): Pictures manager.
-        iterations (PictureIterations): PictureIterations manager.
         characters (Characters): Characters manager.
         upgrader (VaultUpgrade): VaultUpgrade instance for schema upgrades.
     """
@@ -82,30 +81,29 @@ class Vault:
         if description is not None:
             self.set_metadata("description", description)
 
-        self.iterations = PictureIterations(self.connection, self._db_path)
         self.characters = Characters(self.connection)
         self.pictures = Pictures(
-            self.connection, self.iterations, self._db_path, self.characters
+            self.connection, self._db_path, self.characters
         )
 
-        self.iterations.start_quality_worker()
+        self.pictures.start_quality_worker()
         self.pictures.start_embeddings_worker()
 
     def stop_background_workers(self):
-        if hasattr(self, "iterations") and hasattr(
-            self.iterations, "stop_quality_worker"
+        if hasattr(self, "pictures") and hasattr(
+            self.pictures, "stop_quality_worker"
         ):
-            self.iterations.stop_quality_worker()
+            self.pictures.stop_quality_worker()
         if hasattr(self, "pictures") and hasattr(
             self.pictures, "stop_embeddings_worker"
         ):
             self.pictures.stop_embeddings_worker()
 
     def start_background_workers(self):
-        if hasattr(self, "iterations") and hasattr(
-            self.iterations, "start_quality_worker"
+        if hasattr(self, "pictures") and hasattr(
+            self.pictures, "start_quality_worker"
         ):
-            self.iterations.start_quality_worker()
+            self.pictures.start_quality_worker()
         if hasattr(self, "pictures") and hasattr(
             self.pictures, "start_embeddings_worker"
         ):
@@ -163,49 +161,28 @@ class Vault:
             CREATE TABLE IF NOT EXISTS pictures (
                 id TEXT PRIMARY KEY,
                 character_id INTEGER,
+                file_path TEXT NOT NULL,
                 description TEXT,
                 tags TEXT,
-                created_at TEXT,
-                is_reference INTEGER DEFAULT 0 CHECK(is_reference BETWEEN 0 AND 1),
-                embedding BLOB,
-                face_embedding TEXT,
-                FOREIGN KEY(character_id) REFERENCES characters(id)
-            )
-            """
-        )
-
-        # Picture iterations (content snapshots) table
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS picture_iterations (
-                id TEXT PRIMARY KEY,
-                picture_id TEXT NOT NULL,
-                character_id INTEGER,
-                file_path TEXT NOT NULL,
                 format TEXT,
                 width INTEGER,
                 height INTEGER,
                 size_bytes INTEGER,
                 created_at TEXT,
-                is_master INTEGER DEFAULT 0 CHECK(is_master BETWEEN 0 AND 1),
-                derived_from TEXT,
-                transform_metadata TEXT,
+                is_reference INTEGER DEFAULT 0 CHECK(is_reference BETWEEN 0 AND 1),
+                embedding BLOB,
+                face_embedding TEXT,
                 thumbnail BLOB,
                 quality TEXT,
                 face_quality TEXT,
                 score INTEGER CHECK(score BETWEEN 0 AND 5),
                 character_likeness FLOAT CHECK(character_likeness >= 0.0 AND character_likeness <= 1.0),
                 pixel_sha TEXT,
-                FOREIGN KEY(picture_id) REFERENCES pictures(id),
                 FOREIGN KEY(character_id) REFERENCES characters(id)
             )
             """
         )
 
-        # Helpful indexes
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_iterations_picture_id ON picture_iterations(picture_id)"
-        )
         self.connection.commit()
 
     def set_metadata(self, key: str, value: str):
@@ -227,14 +204,14 @@ class Vault:
         row = cursor.fetchone()
         return row["value"] if row else None
 
-    def reference_pictures(self, character_id) -> list[dict]:
+    def reference_pictures(self, character_id) -> list[Picture]:
         """
         Get the reference pictures for a given character ID.
 
         Args:
             character_id (str): The character ID.
         Returns:
-            list[dict]: The reference PictureIterations or an empty list if not found.
+            list[Picture]: The reference Pictures or an empty list if not found.
         """
         cursor = self.connection.cursor()
         cursor.execute(
@@ -242,42 +219,28 @@ class Vault:
             (character_id,),
         )
         reference_pics = cursor.fetchall()
-        pic_ids = [row["id"] for row in reference_pics]
-
-        iter_map = {}
-        if pic_ids:
-            qmarks = ",".join(["?"] * len(pic_ids))
-            cursor.execute(
-                f"SELECT id, picture_id, thumbnail, score FROM picture_iterations WHERE is_master=1 AND picture_id IN ({qmarks})",
-                tuple(pic_ids),
-            )
-            for row in cursor.fetchall():
-                iter_map[row["picture_id"]] = row
 
         pictures = []
         for pic in reference_pics:
-            iteration = iter_map.get(pic["id"], None)
-            if iteration:
-                thumbnail_b64 = (
-                    base64.b64encode(iteration["thumbnail"]).decode("ascii")
-                    if iteration and iteration["thumbnail"]
+            thumbnail_b64 = (
+                base64.b64encode(pic["thumbnail"]).decode("ascii")
+                if pic["thumbnail"]
                     else None
                 )
 
-                pictures.append(
-                    {
-                        "picture_id": pic["id"],
-                        "iteration_id": iteration["id"],
-                        "description": pic["description"],
-                        "tags": json.loads(pic["tags"]) if pic["tags"] else [],
-                        "score": iteration["score"],
-                        "thumbnail": thumbnail_b64,
-                        "created_at": pic["created_at"],
-                    }
-                )
+            pictures.append(
+                {
+                    "picture_id": pic["id"],
+                    "description": pic["description"],
+                    "tags": json.loads(pic["tags"]) if pic["tags"] else [],
+                    "score": pic["score"],
+                    "thumbnail": thumbnail_b64,
+                    "created_at": pic["created_at"],
+                }
+            )
         return pictures
 
-    def list_pictures_info(self, pics) -> list[dict]:
+    def pictures(self, pics) -> list[dict]:
         """
         Batch fetch all picture information with scores
 
@@ -323,10 +286,6 @@ class Vault:
         cursor = self.connection.cursor()
         cursor.execute(
             "UPDATE pictures SET character_id = NULL WHERE character_id = ?",
-            (character_id,),
-        )
-        cursor.execute(
-            "UPDATE picture_iterations SET character_id = NULL WHERE character_id = ?",
             (character_id,),
         )
         cursor.execute(

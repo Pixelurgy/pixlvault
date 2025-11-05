@@ -7,7 +7,6 @@ import time
 from typing import List
 
 from pixelurgy_vault.logging import get_logger
-from pixelurgy_vault.picture_iteration import PictureIteration
 from pixelurgy_vault.picture_quality import PictureQuality
 
 logger = get_logger(__name__)
@@ -77,7 +76,7 @@ class PictureIterations:
                     logger.debug(
                         f"Opening file {file_path} for quality/face quality calculation"
                     )
-                    image_np = self._load_image_for_quality(file_path)
+                    image_np = self.load_image_or_video(file_path)
                     if image_np is not None:
                         self._calculate_and_store_quality(
                             thread_conn, it_id, image_np, quality_val, face_quality_val
@@ -86,7 +85,8 @@ class PictureIterations:
                 logger.error(f"Quality worker error: {e}")
             self._quality_worker_stop.wait(interval)
 
-    def _load_image_for_quality(self, file_path):
+    @staticmethod
+    def load_image_or_video(file_path):
         try:
             # Try to open as image first
             from PIL import Image
