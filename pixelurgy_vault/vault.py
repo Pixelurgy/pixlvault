@@ -1,12 +1,8 @@
-import base64
 import json
 import os
 import sqlite3
-import shutil
 
 from typing import Optional
-
-from build.lib.pixelurgy_vault import pictures
 
 from .logging import get_logger
 from .characters import Characters
@@ -82,17 +78,13 @@ class Vault:
             self.set_metadata("description", description)
 
         self.characters = Characters(self.connection)
-        self.pictures = Pictures(
-            self.connection, self._db_path, self.characters
-        )
+        self.pictures = Pictures(self.connection, self._db_path, self.characters)
 
         self.pictures.start_quality_worker()
         self.pictures.start_embeddings_worker()
 
     def stop_background_workers(self):
-        if hasattr(self, "pictures") and hasattr(
-            self.pictures, "stop_quality_worker"
-        ):
+        if hasattr(self, "pictures") and hasattr(self.pictures, "stop_quality_worker"):
             self.pictures.stop_quality_worker()
         if hasattr(self, "pictures") and hasattr(
             self.pictures, "stop_embeddings_worker"
@@ -100,9 +92,7 @@ class Vault:
             self.pictures.stop_embeddings_worker()
 
     def start_background_workers(self):
-        if hasattr(self, "pictures") and hasattr(
-            self.pictures, "start_quality_worker"
-        ):
+        if hasattr(self, "pictures") and hasattr(self.pictures, "start_quality_worker"):
             self.pictures.start_quality_worker()
         if hasattr(self, "pictures") and hasattr(
             self.pictures, "start_embeddings_worker"
@@ -171,7 +161,7 @@ class Vault:
                 created_at TEXT,
                 is_reference INTEGER DEFAULT 0 CHECK(is_reference BETWEEN 0 AND 1),
                 embedding BLOB,
-                face_embedding TEXT,
+                face_bbox TEXT,
                 thumbnail BLOB,
                 quality TEXT,
                 face_quality TEXT,
@@ -204,81 +194,105 @@ class Vault:
         row = cursor.fetchone()
         return row["value"] if row else None
 
-    def reference_pictures(self, character_id) -> list[Picture]:
+    def get_pictures_from_ids(self, picture_ids: list[str]) -> list[Picture]:
         """
-        Get the reference pictures for a given character ID.
+        Fetch picture objects for the given list of picture IDs.
 
         Args:
-            character_id (str): The character ID.
+            picture_ids (list[str]): List of picture IDs to fetch.
         Returns:
-            list[Picture]: The reference Pictures or an empty list if not found.
+            list[Picture]: The matching Pictures or an empty list if not found.
         """
         cursor = self.connection.cursor()
-        cursor.execute(
-            "SELECT * FROM pictures WHERE character_id = ? AND is_reference = 1",
-            (character_id,),
-        )
-        reference_pics = cursor.fetchall()
 
-        pictures = []
-        for pic in reference_pics:
-            thumbnail_b64 = (
-                base64.b64encode(pic["thumbnail"]).decode("ascii")
-                if pic["thumbnail"]
-                    else None
-                )
+        if not picture_ids:
+            return []
 
-            pictures.append(
-                {
-                    "picture_id": pic["id"],
-                    "description": pic["description"],
-                    "tags": json.loads(pic["tags"]) if pic["tags"] else [],
-                    "score": pic["score"],
-                    "thumbnail": thumbnail_b64,
-                    "created_at": pic["created_at"],
-                }
-            )
-        return pictures
+        placeholders = ",".join(["?"] * len(picture_ids))
+        sql = f"SELECT * FROM pictures WHERE id IN ({placeholders})"
+        rows = cursor.execute(sql, picture_ids)
 
-    def pictures(self, pics) -> list[dict]:
+        return [Picture.from_dict(row) for row in rows] if rows else []
+
+    def get_picture_info(self, filters: dict) -> list[Picture]:
         """
-        Batch fetch all picture information with scores
+        Fetch picture objects for all matching pictures based on filters.
 
         Args:
-            pics (list[Picture]): List of Picture objects to fetch info for.
+            filters (dict): A dictionary of filters to apply.
         Returns:
-            list[dict]: List of picture info dictionaries.
+            list[Picture]: The matching Pictures or an empty list if not found.
         """
-        pic_ids = [pic.id for pic in pics]
-        score_map = {}
-        if pic_ids:
-            cursor = self.connection.cursor()
-            qmarks = ",".join(["?"] * len(pic_ids))
-            cursor.execute(
-                f"SELECT picture_id, score FROM picture_iterations WHERE is_master=1 AND picture_id IN ({qmarks})",
-                tuple(pic_ids),
-            )
-            for row in cursor.fetchall():
-                score_map[row[0]] = row[1]
-        result = []
-        for pic in pics:
-            score = score_map.get(pic.id)
-            result.append(
-                {
-                    "id": pic.id,
-                    "character_id": pic.character_id,
-                    "description": pic.description,
-                    "tags": pic.tags,
-                    "created_at": pic.created_at,
-                    "score": score,
-                    "is_reference": getattr(pic, "is_reference", 0),
-                }
-            )
-        return result
+        cursor = self.connection.cursor()
+
+        if not filters:
+            cursor.execute("SELECT * FROM pictures")
+            rows = cursor.fetchall()
+        else:
+            where_clause = " AND ".join([f"{k}=?" for k in filters.keys()])
+            sql = f"SELECT * FROM pictures WHERE {where_clause}"
+            params = list(filters.values())
+            rows = cursor.execute(sql, params)
+
+        return [Picture.from_dict(row) for row in rows] if rows else []
+
+    def delete_pictures(self, picture_id: list[str]):
+        """
+        Delete pictures by their IDs.
+
+        Args:
+            picture_id (list[str]): List of picture IDs to delete.
+        """
+        cursor = self.connection.cursor()
+
+        # Delete the pictures themselves
+        cursor.executemany(
+            "DELETE FROM pictures WHERE id = ?",
+            [(pid,) for pid in picture_id],
+        )
+        # Disassociate pictures from any characters
+        cursor.executemany(
+            "UPDATE characters SET character_id = NULL WHERE id = ?",
+            [(pid,) for pid in picture_id],
+        )
+
+        self.connection.commit()
+
+    def insert_pictures(self, pictures: list[Picture]):
+        """
+        Insert multiple pictures into the database.
+
+        Args:
+            pictures (list[Picture]): List of Picture instances to insert.
+        """
+        cursor = self.connection.cursor()
+        for picture in pictures:
+            dict = picture.to_dict()
+            columns = ", ".join(dict.keys())
+            placeholders = ", ".join([f":{k}" for k in dict.keys()])
+            sql = f"INSERT INTO pictures ({columns}) VALUES ({placeholders})"
+            cursor.execute(sql, dict)
+        self.connection.commit()
+
+    def update_pictures(self, pictures: list[Picture]):
+        """
+        Update multiple pictures in the database.
+
+        Args:
+            pictures (list[Picture]): List of Picture instances to update.
+        """
+        cursor = self.connection.cursor()
+        for picture in pictures:
+            dict = picture.to_dict()
+            columns = ", ".join(dict.keys())
+            placeholders = ", ".join([f":{k}" for k in dict.keys()])
+            sql = f"UPDATE pictures SET ({columns}) = ({placeholders}) WHERE id = :id"
+            cursor.execute(sql, dict)
+        self.connection.commit()
 
     def delete_character(self, character_id: int):
         """
-        Delete a character by ID, and unset character_id in related pictures and iterations.
+        Delete a character by ID, and unset character_id in related pictures.
 
         Args:
             character_id (int): The ID of the character to delete.
@@ -294,6 +308,50 @@ class Vault:
         )
         self.connection.commit()
 
+    def update_character(self, character: Character):
+        """
+        Update a character's information in the database.
+
+        Args:
+            character (Character): The Character instance with updated information.
+        """
+        cursor = self.connection.cursor()
+        dict = character.to_dict()
+        cursor.execute(
+            """
+            UPDATE characters
+            SET name = ?, original_seed = ?, original_prompt = ?, lora_model = ?, description = ?
+            WHERE id = ?
+            """,
+            (
+                dict["name"],
+                dict["original_seed"],
+                dict["original_prompt"],
+                json.dumps(dict["loras"]) if dict["loras"] else None,
+                dict["description"],
+                dict["id"],
+            ),
+        )
+
+        self.connection.commit()
+
+    def get_character(self, character_id: int) -> Optional[Character]:
+        """
+        Retrieve a character by ID.
+
+        Args:
+            character_id (int): The ID of the character to retrieve.
+        Returns:
+            Optional[Character]: The Character instance if found, else None.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute(
+            "SELECT * FROM characters WHERE id = ?",
+            (character_id,),
+        )
+        row = cursor.fetchone()
+        return Character.from_dict(row) if row else None
+
     def import_default_data(self):
         """
         Import default data into the vault.
@@ -304,30 +362,17 @@ class Vault:
         logo_src = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Logo.png")
         logo_dest_folder = self.image_root
         logger.debug(f"logo_dest_folder in _import_default_data: {logo_dest_folder}")
-        if not logo_dest_folder:
-            # Fallback: use a default images directory next to the DB file
-            logo_dest_folder = os.path.join(os.path.dirname(self._db_path), "images")
-            logger.debug(f"Fallback logo_dest_folder: {logo_dest_folder}")
-        os.makedirs(logo_dest_folder, exist_ok=True)
-        logo_dest = os.path.join(logo_dest_folder, "Logo.png")
-        if not os.path.exists(logo_dest):
-            shutil.copy2(logo_src, logo_dest)
 
         character = Character(
             name="EsmeraldaVault", description="Built-in vault character"
         )
         self.characters.add(character)
 
-        picture = Picture(
-            character_id=character.id, description="Vault Logo", tags=["logo"]
-        )
-        # create_from_file returns (picture_id, PictureIteration)
-        _, iteration = PictureIteration.create_from_file(
-            picture_id=picture.id,
+        picture = Picture.create_from_file(
             image_root_path=logo_dest_folder,
-            source_file_path=logo_dest,
-            is_master=True,
+            source_file_path=logo_src,
+            character_id=character.id,
+            description="Vault Logo",
         )
-        # Import iteration (will create master picture row if missing)
-        self.pictures.import_pictures([picture])
-        self.iterations.import_iterations([iteration])
+        assert picture.file_path
+        self.insert_pictures([picture])
