@@ -13,6 +13,7 @@ import threading
 from pixelurgy_vault.logging import get_logger
 
 from pixelurgy_vault.picture import Picture
+from pixelurgy_vault.picture_quality import PictureQuality
 from pixelurgy_vault.picture_tagger import PictureTagger, MAX_CONCURRENT_IMAGES
 from pixelurgy_vault.picture_utils import PictureUtils
 
@@ -185,6 +186,7 @@ class Pictures:
                 break
 
             if calculate_face_bboxes:
+                logger.debug(f"Generating face bounding boxes for pictures needing them.")
                 pics_needing_face_bboxes = self._find_pics_needing_face_bbox(
                     thread_conn
                 )
@@ -213,29 +215,65 @@ class Pictures:
             try:
                 cursor = thread_conn.cursor()
                 cursor.execute(
-                    "SELECT id, file_path, quality, face_quality FROM picture_iterations WHERE quality IS NULL OR face_quality IS NULL"
+                    "SELECT * FROM pictures WHERE quality IS NULL OR face_quality IS NULL"
                 )
                 rows = cursor.fetchall()
                 logger.debug(
-                    f"Quality worker found {len(rows)} iterations needing quality or face quality calculation."
+                    f"Quality worker found {len(rows)} pictures needing quality or face quality calculation."
                 )
                 for row in rows:
                     logger.debug(f"Doing row {row}")
                     if self._quality_worker_stop.is_set():
                         break
-                    it_id, file_path, quality_val, face_quality_val = row
+                    pic = Picture.from_dict(row)
                     logger.debug("Checked stop event for iteration")
                     logger.debug(
-                        f"Opening file {file_path} for quality/face quality calculation"
+                        f"Opening file {pic.file_path} for quality/face quality calculation"
                     )
-                    image_np = self._load_image_for_quality(file_path)
-                    if image_np is not None:
-                        self._calculate_and_store_quality(
-                            thread_conn, it_id, image_np, quality_val, face_quality_val
-                        )
+                    self._calculate_and_store_quality(thread_conn, pic)
             except Exception as e:
                 logger.error(f"Quality worker error: {e}")
             self._quality_worker_stop.wait(interval)
+
+    def _calculate_and_store_quality(
+        self, thread_conn, pic
+    ):
+        try:
+            image_np = PictureUtils.load_image_or_video(pic.file_path)
+            # Only calculate and update quality if it is NULL
+            if pic.quality is None:
+                pic.quality = PictureQuality.calculate_metrics(image_np)
+                if pic.quality:
+                    try:
+                        quality_json = json.dumps(pic.quality.__dict__)
+                    except Exception as e:
+                        logger.error(f"Failed to serialize quality for {pic.id}: {e}")
+
+                    cursor = thread_conn.cursor()
+                    logger.debug(f"Updating quality for picture {pic.id} in DB")
+                    cursor.execute(
+                        "UPDATE pictures SET quality = ? WHERE id = ?",
+                        (quality_json, pic.id),
+                    )
+                    thread_conn.commit()
+                    logger.debug(f"Calculated and stored quality for picture {pic.id}")
+
+            # Always attempt to calculate and update face_quality if it is NULL
+            if pic.face_quality is None and pic.face_bbox is not None:
+                pic.face_quality = PictureQuality.calculate_face_quality(
+                    image_np, pic.face_bbox
+                )
+                face_quality_json = json.dumps(pic.face_quality.__dict__)
+                if face_quality_json is not None:
+                    cursor = thread_conn.cursor()
+                    logger.debug(f"Updating face_quality for picture {pic.id} in DB")
+                    cursor.execute(
+                        "UPDATE pictures SET face_quality = ? WHERE id = ?",
+                        (face_quality_json, pic.id),
+                    )
+                    thread_conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to calculate/store quality for {pic.id}: {e}")
 
     def _tag_pictures(self, thread_conn, picture_tagger, missing_tags):
         """Tag all pictures missing tags."""
@@ -253,7 +291,7 @@ class Pictures:
             logger.debug(f"Got tag results for {len(tag_results)} images.")
             for path, tags in tag_results.items():
                 pic = pic_by_path.get(path)
-                logger.debug(f"Processing tags for image at path: {path}")
+                logger.info(f"Processing tags for image at path: {path}: {tags}")
                 if pic is not None:
                     # Remove character tag from tags if present
                     char_tag = getattr(pic, "character_id", None)
@@ -261,6 +299,7 @@ class Pictures:
                         tags = [t for t in tags if t != char_tag]
                     pic.tags = tags
                     tags_json = json.dumps(tags)
+                    print(f"Updating tags for picture id {pic.id} to {tags_json}")
                     with thread_conn:
                         cursor = thread_conn.cursor()
                         cursor.execute(
@@ -316,8 +355,6 @@ class Pictures:
 
         for pic in pics:
             logger.info("Looking for faces in picture %s", pic.id)
-            if self._tag_worker_stop.is_set():
-                break
 
             # Skip it regardless of whether we succeed or fail
             self._skip_pictures.add(pic.id)
@@ -398,11 +435,11 @@ class Pictures:
                     )
             except Exception as e:
                 logger.error(
-                    f"Failed to extract/store face embedding for picture {pic.id}: {e}"
+                    f"Failed to extract/store face bbox for picture {pic.id}: {e}"
                 )
-        logger.info("Done extracting face embeddings for current batch.")
+        logger.info("Done extracting face bboxes for current batch.")
 
-        self._update_pictures(thread_conn, pics)
+        self._update_thumbnails_and_embeddings(thread_conn, pics)
 
         return True
 
@@ -443,7 +480,7 @@ class Pictures:
                 )
         return True
 
-    def _update_pictures(self, thread_conn, pictures):
+    def _update_thumbnails_and_embeddings(self, thread_conn, pictures):
         """Update a list of Picture instances in the database using executemany for efficiency."""
         with thread_conn:
             cursor = thread_conn.cursor()
@@ -452,19 +489,20 @@ class Pictures:
                 row = picture.to_dict()
                 values.append(
                     (
-                        getattr(row, "thumbnail", None),
-                        getattr(row, "embedding", None),
-                        getattr(row, "face_bbox", None),
+                        row["thumbnail"],
+                        row["embedding"],
+                        row["face_bbox"],
                         picture.id,
                     )
                 )
-        logger.debug("Updating pictures with face bbox and thumbnails: ", values)
-        cursor.executemany(
-            """
-            UPDATE pictures SET thumbnail=?, embedding=?, face_bbox=? WHERE id=?
-            """,
-            values,
-        )
+                #logger.info(f"Updating picture {picture.id} with face bbox and thumbnails: {row}")
+            cursor.executemany(
+                """
+                UPDATE pictures SET thumbnail=?, embedding=?, face_bbox=? WHERE id=?
+                """,
+                values,
+            )
+
         self._connection.commit()
 
     def contains(self, picture):

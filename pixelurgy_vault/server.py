@@ -346,8 +346,10 @@ class Server:
             Cropped region is resized to fit within 96x96, preserving aspect ratio.
             """
             logger.info(f"Generating face thumbnail for character_id: {character_id}")
-            its = self.vault.pictures.find(character_id=character_id)
-            logger.info(f"Found {len(its)} pictures for character_id: {character_id}")
+            pics = self.vault.pictures.find(character_id=character_id)
+            logger.info(f"Found {len(pics)} pictures for character_id: {character_id}")
+            if not pics:
+                raise HTTPException(status_code=404, detail="No pictures for character")
 
             # Sort by score descending, then by created_at
             def score_key(picture):
@@ -356,30 +358,24 @@ class Server:
                     picture.created_at,
                 )
 
-            its.sort(key=score_key, reverse=True)
-            it = its[0]
-            # Try to get face_bbox from the picture
-            pic = self.vault.pictures.find(id=it.picture_id)
+            pics.sort(key=score_key, reverse=True)
+            pic = pics[0]
 
-            face_bbox = None
-            if hasattr(it, "face_bbox") and it.face_bbox:
-                try:
-                    face_bbox = (
-                        json.loads(pic.face_bbox)
-                        if isinstance(pic.face_bbox, str)
-                        else pic.face_bbox
-                    )
-                except Exception:
-                    face_bbox = None
+            if pic.thumbnail is None:
+                logger.info(f"No thumbnail available for picture_id: {pic.id}")
             else:
+                logger.info(f"Thumbnail available for picture_id: {pic.id}")
+
+            face_bbox = pic.face_bbox
+            if not face_bbox:
                 logger.info(
                     f"No face_bbox attribute on picture for character_id: {character_id}"
                 )
             # Load thumbnail image
-            if not it.thumbnail:
+            if not pic.thumbnail:
                 raise HTTPException(status_code=404, detail="No thumbnail available")
             try:
-                thumb_img = Image.open(io.BytesIO(it.thumbnail))
+                thumb_img = Image.open(io.BytesIO(pic.thumbnail))
             except Exception:
                 raise HTTPException(status_code=400, detail="Invalid thumbnail image")
             # If face_bbox is available, crop to it
@@ -654,9 +650,11 @@ class Server:
             except KeyError:
                 logger.error(f"Picture not found for id={id}")
                 raise HTTPException(status_code=404, detail="Picture not found")
+            print("FETCHED PICTURE: ", pic.to_dict())
             if info:
                 # Return metadata only
                 result = pic.to_dict(exclude=["file_path", "thumbnail"])
+                print("RETURNING PICTURE INFO: ", result)
                 return result
             # Otherwise, deliver picture file as bytes
             if not pic.file_path or not os.path.isfile(pic.file_path):
@@ -769,6 +767,7 @@ class Server:
 
             dest_folder = self.vault.image_root
             logger.info("Importing pictures to folder: " + str(dest_folder))
+            print("Importing data ", file, character_id, file_path, recursive)
             os.makedirs(dest_folder, exist_ok=True)
             results = []
             files_to_import = []
@@ -881,6 +880,21 @@ class Server:
             else:
                 raise HTTPException(status_code=400, detail="No new pictures to import")
 
+        @self.api.post("/check_hashes")
+        async def check_hashes(hashes: list = Body(...)):
+            """
+            Check which of the provided pixel_sha hashes exist in the vault.
+            Body: [hash1, hash2, ...]
+            Returns: { "existing": [hash1, hash3, ...] }
+            """
+            existing = []
+            for h in hashes:
+                pics = self.vault.get_picture_info({"pixel_sha": h})
+                if pics:
+                    existing.append(h)
+
+            return {"existing": existing}
+
         @self.api.get("/pictures")
         async def list_pictures(
             request: Request,
@@ -942,11 +956,11 @@ class Server:
             """
 
             # 1. Check if picture exists
-            try:
-                self.vault.pictures[id]
-            except KeyError:
-                logger.error(f"Picture not found for id={id} (delete request)")
-                raise HTTPException(status_code=404, detail="Picture not found")
+            #try:
+            #    self.vault.pictures[id]
+            #except KeyError:
+            #    logger.error(f"Picture not found for id={id} (delete request)")
+            #    raise HTTPException(status_code=404, detail="Picture not found")
 
             self.vault.delete_pictures([id])
 

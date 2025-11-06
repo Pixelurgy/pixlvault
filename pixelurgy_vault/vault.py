@@ -145,6 +145,17 @@ class Vault:
             """
         )
 
+        cursor.execute(
+            """
+            CREATE TABLE picture_tags (
+                picture_id TEXT,
+                tag TEXT,
+                PRIMARY KEY (picture_id, tag),
+                FOREIGN KEY (picture_id) REFERENCES pictures(id) ON DELETE CASCADE
+            )
+            """
+        )
+
         # Pictures (master assets) table
         cursor.execute(
             """
@@ -153,7 +164,6 @@ class Vault:
                 character_id INTEGER,
                 file_path TEXT NOT NULL,
                 description TEXT,
-                tags TEXT,
                 format TEXT,
                 width INTEGER,
                 height INTEGER,
@@ -172,6 +182,7 @@ class Vault:
             )
             """
         )
+        
 
         self.connection.commit()
 
@@ -248,11 +259,6 @@ class Vault:
         # Delete the pictures themselves
         cursor.executemany(
             "DELETE FROM pictures WHERE id = ?",
-            [(pid,) for pid in picture_id],
-        )
-        # Disassociate pictures from any characters
-        cursor.executemany(
-            "UPDATE characters SET character_id = NULL WHERE id = ?",
             [(pid,) for pid in picture_id],
         )
 

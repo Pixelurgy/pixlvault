@@ -485,7 +485,7 @@ function handleGridDrop(e) {
     let completed = 0;
     const uploadFile = async (file) => {
       const formData = new FormData();
-      formData.append("image", file);
+      formData.append("file", file);
       if (
         selectedCharacter.value &&
         selectedCharacter.value !== ALL_PICTURES_ID &&

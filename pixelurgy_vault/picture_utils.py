@@ -13,7 +13,8 @@ logger = get_logger(__name__)
 
 
 class PictureUtils:
-    def load_image_or_video(self, file_path):
+    @staticmethod
+    def load_image_or_video(file_path):
         try:
             # Try to open as image first
             from PIL import Image

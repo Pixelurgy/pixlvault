@@ -1,4 +1,5 @@
 import base64
+import sqlite3
 import cv2
 import json
 import os
@@ -229,14 +230,16 @@ class Picture:
 
     @classmethod
     def from_dict(cls, row):
+        assert isinstance(row, dict) or isinstance(row, sqlite3.Row)
+        tags = row["tags"] if "tags" in row.keys() else None
+        if tags and isinstance(tags, str):
+            tags = json.loads(tags)
         return cls(
             id=row["id"],
             character_id=row["character_id"] if "character_id" in row.keys() else None,
             file_path=row["file_path"] if "file_path" in row.keys() else None,
             description=row["description"] if "description" in row.keys() else None,
-            tags=json.loads(row["tags"])
-            if "tags" in row.keys() and row["tags"]
-            else [],
+            tags=tags,
             format=row["format"] if "format" in row.keys() else None,
             width=row["width"] if "width" in row.keys() else None,
             height=row["height"] if "height" in row.keys() else None,
