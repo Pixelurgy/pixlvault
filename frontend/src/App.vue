@@ -1023,34 +1023,35 @@ async function fetchOpenAIModels() {
 
 async function fetchConfig() {
   try {
-    const res = await fetch(`${BACKEND_URL}/config`)
-      .then((response) => response.json())
-      .then((data) => {
-        config.image_roots = data.image_roots || [];
-        config.selected_image_root = data.selected_image_root || "";
-        // UI options
-        if (data.sort) selectedSort.value = data.sort_order;
-        if (data.thumbnail) thumbnailSize.value = data.thumbnail_size;
-        if (typeof data.show_stars === "boolean")
-          showStars.value = data.show_stars;
-        if (typeof data.show_only_reference === "boolean")
-          referenceFilterMode.value = data.show_only_reference;
-        // Also update config for PATCHing
-        config.sort_order = data.sort || selectedSort.value;
-        config.thumbnail_size = data.thumbnail || thumbnailSize.value;
-        config.show_stars =
-          typeof data.show_stars === "boolean"
-            ? data.show_stars
-            : showStars.value;
-        config.show_only_reference =
-          typeof data.show_only_reference === "boolean"
-            ? data.show_only_reference
-            : referenceFilterMode.value;
-        // OpenAI settings
-        config.openai_host = data.openai_host || "localhost";
-        config.openai_port = data.openai_port || 8000;
-        config.openai_model = data.openai_model || "";
-      });
+    const res = await fetch(`${BACKEND_URL}/config`);
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("Failed to fetch /config:", res.status, text);
+      return;
+    }
+    const data = await res.json();
+
+    config.image_roots = data.image_roots || [];
+    config.selected_image_root = data.selected_image_root || "";
+    // UI options
+    if (data.sort) selectedSort.value = data.sort_order;
+    if (data.thumbnail) thumbnailSize.value = data.thumbnail_size;
+    if (typeof data.show_stars === "boolean") showStars.value = data.show_stars;
+    if (typeof data.show_only_reference === "boolean")
+      referenceFilterMode.value = data.show_only_reference;
+    // Also update config for PATCHing
+    config.sort_order = data.sort || selectedSort.value;
+    config.thumbnail_size = data.thumbnail || thumbnailSize.value;
+    config.show_stars =
+      typeof data.show_stars === "boolean" ? data.show_stars : showStars.value;
+    config.show_only_reference =
+      typeof data.show_only_reference === "boolean"
+        ? data.show_only_reference
+        : referenceFilterMode.value;
+    // OpenAI settings
+    config.openai_host = data.openai_host || "localhost";
+    config.openai_port = data.openai_port || 8000;
+    config.openai_model = data.openai_model || "";
     if (!res.ok) {
       const text = await res.text();
       console.error("Failed to fetch /config:", res.status, text);
