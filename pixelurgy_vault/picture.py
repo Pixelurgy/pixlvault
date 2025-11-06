@@ -5,6 +5,7 @@ import json
 import os
 import uuid
 
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import BytesIO
 from PIL import Image
@@ -16,6 +17,49 @@ from .logging import get_logger
 
 # Configure logging for the module
 logger = get_logger(__name__)
+
+
+###################################
+# Data models for database tables #
+###################################
+@dataclass
+class PictureModel:
+    """
+    Database model for the pictures table.
+    """
+
+    __tablename__ = "pictures"
+    id: str = field(default=None, metadata={"primary_key": True})
+    character_id: str = field(default=None, metadata={"foreign_key": "characters(id)"})
+    file_path: str = field(default=None)
+    description: str = field(default=None)
+    format: str = field(default=None)
+    width: int = field(default=None)
+    height: int = field(default=None)
+    size_bytes: int = field(default=None)
+    created_at: str = field(default=None)
+    is_reference: int = field(default=0)
+    embedding: bytes = field(default=None)
+    face_bbox: str = field(default=None)
+    thumbnail: bytes = field(default=None)
+    quality: str = field(default=None)
+    face_quality: str = field(default=None)
+    score: int = field(default=None)
+    character_likeness: float = field(default=None)
+    pixel_sha: str = field(default=None)
+
+
+@dataclass
+class PictureTagModel:
+    """
+    Database model for the picture_tags table.
+    """
+
+    __tablename__ = "picture_tags"
+    picture_id: str = field(
+        default=None, metadata={"foreign_key": "pictures(id)", "composite_key": True}
+    )
+    tag: str = field(default=None, metadata={"composite_key": True})
 
 
 class Picture:

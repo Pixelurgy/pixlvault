@@ -1,4 +1,17 @@
+from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Self
+
+
+# Dataclass version for schema and CRUD
+@dataclass
+class CharacterModel:
+    __tablename__ = "characters"
+    id: int = field(default=None, metadata={"primary_key": True})
+    name: str = field(default=None)
+    original_seed: int = field(default=None)
+    original_prompt: str = field(default=None)
+    loras: list = field(default_factory=list)
+    description: str = field(default=None)
 
 
 class Character:

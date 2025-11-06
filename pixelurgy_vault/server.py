@@ -637,15 +637,13 @@ class Server:
             return [c.__dict__ for c in chars]
 
         @self.api.post("/characters")
-        async def create_character(
-            name: str = Body(...),
-            description: str = Body(None),
-        ):
-            from pixelurgy_vault.characters import Character
-
-            char = Character(id=None, name=name, description=description)
-            self.vault.characters.add(char)
-            return {"status": "success", "character": char.__dict__}
+        async def create_character(payload: dict = Body(...)):
+            try:
+                character = self.vault.characters.create_from_dict(payload)
+                return {"status": "success", "character": character.to_dict()}
+            except Exception as e:
+                logger.error(f"Error creating character: {e}")
+                raise HTTPException(status_code=400, detail="Invalid character data")
 
         @self.api.get("/characters/{id}")
         async def get_character_by_id(id: int):
