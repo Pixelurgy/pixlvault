@@ -316,10 +316,10 @@ function handleGridDragEnter(e) {
   )
     return;
   if (!e.dataTransfer || !e.dataTransfer.items) return;
-  // Only check the first 20 items for image type, break immediately if found
+  // Only check the first 5 items for image type, break immediately if found
   const items = Array.from(e.dataTransfer.items);
   let hasImageType = false;
-  for (let i = 0; i < Math.min(items.length, 20); i++) {
+  for (let i = 0; i < Math.min(items.length, 5); i++) {
     const item = items[i];
     if (item.kind === "file" && item.type.startsWith("image/")) {
       hasImageType = true;
