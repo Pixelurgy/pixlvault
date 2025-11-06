@@ -491,8 +491,7 @@ class Pictures:
                 """,
                 values,
             )
-
-        self._connection.commit()
+            thread_conn.commit()
 
     def contains(self, picture):
         """

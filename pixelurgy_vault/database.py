@@ -8,9 +8,7 @@ import sqlite3
 import threading
 from typing import Optional, List
 
-from .character import Character
 from .logging import get_logger
-from .picture import Picture
 from .vault_upgrade import VaultUpgrade
 
 logger = get_logger(__name__)
@@ -31,18 +29,29 @@ class VaultDatabase:
         self._lock = threading.Lock()
         self._conn: Optional[sqlite3.Connection] = None
 
-        self._ensure_connection()
-
         if not db_exists:
-            logger.debug("Creating tables and importing default data...")
+            logger.info("Creating tables and importing default data...")
             # Create tables from dataclasses
             self._ensure_connection()
+            # Always create metadata table first
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
+                """
+            )
             for model in [CharacterModel, PictureModel, PictureTagModel]:
                 sql = self.create_table_sql(model)
+                logger.info(
+                    f"CREATE TABLE SQL for {getattr(model, '__tablename__', model.__name__)}: {sql}"
+                )
                 self._conn.execute(sql)
             self._conn.commit()
         else:
             logger.debug("Using existing database, skipping default import.")
+            self._ensure_connection()
             upgrader = VaultUpgrade(self._conn)
             upgrader.upgrade_if_necessary()
 
@@ -195,28 +204,3 @@ class VaultDatabase:
             self._ensure_connection()
             curs = self._conn.execute(sql, params)
             return curs.fetchall()
-
-    def import_default_data(self):
-        """
-        Import default data into the vault.
-        Extend this method to add default pictures or metadata as needed.
-        """
-        # Add Logo.png to every vault
-
-        logo_src = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Logo.png")
-        logo_dest_folder = self.image_root
-        logger.debug(f"logo_dest_folder in _import_default_data: {logo_dest_folder}")
-
-        character = Character(
-            name="EsmeraldaVault", description="Built-in vault character"
-        )
-        self.characters.add(character)
-
-        picture = Picture.create_from_file(
-            image_root_path=logo_dest_folder,
-            source_file_path=logo_src,
-            character_id=character.id,
-            description="Vault Logo",
-        )
-        assert picture.file_path
-        self.insert_pictures([picture])

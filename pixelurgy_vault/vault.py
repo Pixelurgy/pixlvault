@@ -40,12 +40,16 @@ class Vault:
             description (Optional[str]): Description of the vault.
         """
         self.image_root = image_root
+        print("Image root: ", self.image_root)
         assert self.image_root is not None, "image_root cannot be None"
         logger.info(f"Using image_root: {self.image_root}")
         os.makedirs(self.image_root, exist_ok=True)
+        assert os.path.exists(self.image_root), (
+            f"Image root path does not exist: {self.image_root}"
+        )
 
-        db_path = os.path.join(self.image_root, "vault.db")
-        self.db = VaultDatabase(db_path, description=description)
+        self._db_path = os.path.join(self.image_root, "vault.db")
+        self.db = VaultDatabase(self._db_path, description=description)
 
         self.characters = Characters(self.db)
         self.pictures = Pictures(self.db)
@@ -99,29 +103,27 @@ class Vault:
     def get_description(self) -> Optional[str]:
         return self.db.get_description()
 
-    def get_pictures_from_ids(self, picture_ids: list[str]) -> list[Picture]:
-        return self.db.fetch_pictures_by_ids(picture_ids)
+    def import_default_data(self):
+        """
+        Import default data into the vault.
+        Extend this method to add default pictures or metadata as needed.
+        """
+        # Add Logo.png to every vault
 
-    def get_picture_info(self, filters: dict) -> list[Picture]:
-        return self.db.fetch_pictures(filters)
+        logo_src = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Logo.png")
+        logo_dest_folder = self.image_root
+        logger.debug(f"logo_dest_folder in _import_default_data: {logo_dest_folder}")
 
-    def delete_pictures(self, picture_ids: list[str]):
-        self.db.delete_pictures(picture_ids)
+        character = Character(
+            name="EsmeraldaVault", description="Built-in vault character"
+        )
+        self.characters.add(character)
 
-    def insert_pictures(self, pictures: list[Picture]):
-        self.db.insert_pictures(pictures)
-
-    def update_pictures(self, pictures: list[Picture]):
-        self.db.update_pictures(pictures)
-
-    def delete_character(self, character_id: int):
-        self.db.delete_character(character_id)
-
-    def update_character(self, character: Character):
-        self.db.update_character(character)
-
-    def get_character(self, character_id: int) -> Optional[Character]:
-        return self.db.fetch_character_by_id(character_id)
-
-    def get_pictures_matching_shas(self, shas: list[str]) -> list[Picture]:
-        return self.db.fetch_pictures_by_shas(shas)
+        picture = Picture.create_from_file(
+            image_root_path=logo_dest_folder,
+            source_file_path=logo_src,
+            character_id=character.id,
+        )
+        assert picture.file_path
+        self.pictures.insert([picture])
+        logger.info("Imported default data into the vault.")

@@ -7,6 +7,7 @@ import mimetypes
 import re
 import concurrent.futures
 
+from dataclasses import asdict
 from contextlib import asynccontextmanager
 from fastapi import Body, FastAPI, File, Form, Request, UploadFile, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +16,7 @@ from PIL import Image
 from rapidfuzz import fuzz
 from typing import List
 
-from pixelurgy_vault.logging import get_logger, setup_logging
+from pixelurgy_vault.logging import get_logger
 from pixelurgy_vault.picture import Picture
 from pixelurgy_vault.picture_utils import PictureUtils
 from pixelurgy_vault.pictures import get_sort_mechanisms
@@ -24,7 +25,7 @@ from pixelurgy_vault.vault import Vault
 DEFAULT_DESCRIPTION = "Pixelurgy Vault default configuration"
 
 # Logging will be set up after config is loaded
-logger = None
+logger = get_logger(__name__)
 
 
 class Server:
@@ -56,6 +57,7 @@ class Server:
             config_path (str): Path to the image roots config file.
             server_config_path (str): Path to the server-only config file.
         """
+        print(f"Initializing Pixelurgy Vault server with config: {config_path}")
         self._config_path = config_path
 
         self._config = self.init_config(config_path)
@@ -66,10 +68,6 @@ class Server:
         with open(server_config_path, "w") as f:
             json.dump(self._server_config, f, indent=2)
 
-        global logger
-        setup_logging(self._server_config.get("log_file"))
-        logger = get_logger(__name__)
-
         # SSL config
         if self._server_config.get("require_ssl", False):
             self._ensure_ssl_certificates()
@@ -79,6 +77,9 @@ class Server:
             + str(self._config["selected_image_root"])
         )
 
+        print(
+            f"Creating Vault instance with image root: {self._config['selected_image_root']}"
+        )
         self.vault = Vault(
             image_root=self._config["selected_image_root"],
             description=self._config.get("description"),
@@ -579,8 +580,8 @@ class Server:
             Get all reference pictures for a character (is_reference=1).
             """
             try:
-                reference_pics = self.vault.get_picture_info(
-                    {"is_reference": 1, "character_id": id}
+                reference_pics = self.vault.pictures.find(
+                    is_reference=1, character_id=id
                 )
                 logger.info(
                     f"Found {len(reference_pics)} reference pictures for character id={id}"
@@ -621,7 +622,7 @@ class Server:
         async def delete_character(id: int):
             # Delete the character
             try:
-                self.vault.delete_character(id)
+                self.vault.characters.delete(id)
                 return {"status": "success", "deleted_id": id}
             except KeyError:
                 raise HTTPException(status_code=404, detail="Character not found")
@@ -640,7 +641,7 @@ class Server:
         async def create_character(payload: dict = Body(...)):
             try:
                 character = self.vault.characters.create_from_dict(payload)
-                return {"status": "success", "character": character.to_dict()}
+                return {"status": "success", "character": asdict(character)}
             except Exception as e:
                 logger.error(f"Error creating character: {e}")
                 raise HTTPException(status_code=400, detail="Invalid character data")
@@ -724,12 +725,12 @@ class Server:
             except KeyError:
                 raise HTTPException(status_code=404, detail="Picture not found")
 
-            logger.debug("Updating picture id=", id, " with query params=", params)
+            logger.debug(f"Updating picture id={id}")
             # If JSON body is provided, use it
             if json_body and isinstance(json_body, dict):
                 params = json_body | params
 
-            logger.debug("Updating picture id=", id, " with full params=", params)
+            logger.debug(f"Updating picture id={id}")
             updated = False
             # Update fields
             for key, value in params.items():
@@ -747,12 +748,7 @@ class Server:
 
                 if hasattr(pic, key):
                     logger.debug(
-                        "Updating picture id=",
-                        id,
-                        " field=",
-                        key,
-                        " to value=",
-                        cast_val,
+                        f"Updating picture id={id} field={key} to value={cast_val}"
                     )
                     old_val = getattr(pic, key)
                     setattr(pic, key, cast_val)
@@ -761,7 +757,7 @@ class Server:
                         pic.embedding = None
                     updated = True
             if updated:
-                self.vault.update_pictures([pic])
+                self.vault.pictures.update([pic])
             return {"status": "success", "picture": pic.to_dict()}
 
         @self.api.get("/favicon.ico")
@@ -773,7 +769,6 @@ class Server:
         async def import_pictures(
             file: List[UploadFile] = File(None),
             character_id: str = Form(None),
-            recursive: bool = Form(False),
         ):
             """
             Import new pictures. Accepts:
@@ -784,7 +779,6 @@ class Server:
             dest_folder = self.vault.image_root
             logger.info("Importing pictures to folder: " + str(dest_folder))
             os.makedirs(dest_folder, exist_ok=True)
-            results = []
             uploaded_files = []
             # Collect files to import
             if file is not None:
@@ -815,46 +809,31 @@ class Server:
 
                     uploaded_files.append((img_bytes, ext))
             else:
+                logger.error("No files provided for import")
                 raise HTTPException(status_code=400, detail="No image provided")
 
             # Pause workers and schedule resume
             self.vault.stop_background_workers()
             self._schedule_worker_resume(delay=4)
 
-            new_pictures, existing_pictures = self.create_picture_imports(
+            import_results, new_pictures = self.create_picture_imports(
                 uploaded_files, dest_folder, character_id
             )
 
             logger.info(
-                "Got "
-                + str(len(new_pictures))
-                + " new pictures to import and "
-                + str(len(existing_pictures))
-                + " duplicates."
+                f"Importing {len(new_pictures)} new pictures out of {len(uploaded_files)} uploaded."
             )
-
-            for new_pic in new_pictures:
-                results.append(
-                    {
-                        "status": "success",
-                        "picture_id": new_pic.id,
-                        "file": new_pic.file_path,
-                    }
-                )
-            for existing_pic in existing_pictures:
-                results.append(
-                    {
-                        "status": "duplicate",
-                        "sha": existing_pic.pixel_sha,
-                        "file": existing_pic.file_path,
-                    }
-                )
 
             # Import all at once
             if new_pictures:
-                self.vault.insert_pictures(new_pictures)
-            full_results = {"results": results}
-            return full_results
+                self.vault.pictures.insert(new_pictures)
+
+            if not new_pictures:
+                raise HTTPException(
+                    status_code=400, detail="All pictures are duplicates"
+                )
+
+            return {"results": import_results}
 
         @self.api.get("/pictures")
         async def list_pictures(
@@ -915,16 +894,7 @@ class Server:
             """
             Delete a picture by id
             """
-
-            # 1. Check if picture exists
-            # try:
-            #    self.vault.pictures[id]
-            # except KeyError:
-            #    logger.error(f"Picture not found for id={id} (delete request)")
-            #    raise HTTPException(status_code=404, detail="Picture not found")
-
-            self.vault.delete_pictures([id])
-
+            self.vault.pictures.delete([id])
             return {
                 "status": "success",
             }
@@ -985,11 +955,7 @@ class Server:
                 executor.map(create_sha, (img_bytes for img_bytes, _ in uploaded_files))
             )
 
-        existing_pictures = self.vault.get_pictures_matching_shas(shas)
-
-        if len(existing_pictures) == len(uploaded_files):
-            # All duplicates
-            return [], existing_pictures
+        existing_pictures = self.vault.pictures.fetch_by_shas(shas)
 
         logger.info(
             "Got "
@@ -998,32 +964,51 @@ class Server:
                 len(uploaded_files) - len(existing_pictures)
             )
         )
+        existing_map = {pic.pixel_sha: pic for pic in existing_pictures}
 
-        existing_shas = set(pic.pixel_sha for pic in existing_pictures)
         importable = [
             (entry, sha)
             for (entry, sha) in zip(uploaded_files, shas)
-            if sha not in existing_shas
+            if sha not in existing_map
         ]
 
-        assert importable, "No new pictures to import after deduplication"
+        if importable:
 
-        def create_one_picture(args):
-            file_entry, sha = args
-            img_bytes, ext = file_entry
-            pic_id = str(uuid.uuid4()) + ext
-            logger.info(f"Importing picture from uploaded bytes as id={pic_id}")
-            return Picture.create_from_bytes(
-                image_root_path=dest_folder,
-                image_bytes=img_bytes,
-                picture_id=pic_id,
-                character_id=character_id,
-                pixel_sha=sha,
-            )
+            def create_one_picture(args):
+                file_entry, sha = args
+                img_bytes, ext = file_entry
+                pic_id = str(uuid.uuid4()) + ext
+                logger.info(f"Importing picture from uploaded bytes as id={pic_id}")
+                return Picture.create_from_bytes(
+                    image_root_path=dest_folder,
+                    image_bytes=img_bytes,
+                    picture_id=pic_id,
+                    character_id=character_id,
+                    pixel_sha=sha,
+                )
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            new_pictures = list(executor.map(create_one_picture, importable))
-        return new_pictures, existing_pictures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                new_pictures = list(executor.map(create_one_picture, importable))
+        else:
+            new_pictures = []
+
+        # Order new pictures according to original upload order
+        results = []
+        index = 0
+        for _, sha in zip(uploaded_files, shas):
+            if sha in existing_map:
+                pic = existing_map[sha]
+                results.append(
+                    {"status": "duplicate", "picture_id": pic.id, "file": pic.file_path}
+                )
+            else:
+                pic = new_pictures[index]
+                results.append(
+                    {"status": "success", "picture_id": pic.id, "file": pic.file_path}
+                )
+                index += 1
+
+        return results, new_pictures
 
     def get_version(self):
         try:
