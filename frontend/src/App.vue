@@ -702,7 +702,10 @@ function handleImageSelect(img, idx, event) {
   }
 }
 
-const isImageSelected = (id) => selectedImageIds.value.includes(id);
+// Only visually mark as selected if the image is both in selectedImageIds and visible in pagedImages
+const isImageSelected = (id) =>
+  selectedImageIds.value.includes(id) &&
+  pagedImages.value.some((img) => img.id === id);
 
 // Logic to determine if a selected image is on the outer edge of a selection group (use pagedImages)
 const getSelectionBorderClasses = (idx) => {
@@ -1166,7 +1169,7 @@ function handleOverlayKeydown(e) {
     e.target &&
     (e.target.isContentEditable || tag === "input" || tag === "textarea");
   if (isEditable && !(chatOpen.value && e.key === "Escape")) return;
-  // Ctrl+A: select all images in grid
+  // Ctrl+A: select all images in grid view (fetch all, not just paged)
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
     if (images.value.length) {
       selectedImageIds.value = images.value.map((img) => img.id);
@@ -2395,6 +2398,33 @@ async function sendChatMessageAndFocus() {
             :class="['main-content', selectedCharacter ? 'accent-border' : '']"
           >
             <template v-if="selectedCharacter">
+              <!-- Selection Info Bar -->
+              <div
+                v-if="selectedImageIds.length > 0"
+                class="selection-info-bar"
+                style="
+                  background: #fffbe7;
+                  color: #333;
+                  border-bottom: 1px solid #e0c97f;
+                  padding: 8px 16px;
+                  display: flex;
+                  align-items: center;
+                  gap: 16px;
+                  font-size: 1.08em;
+                "
+              >
+                <span>
+                  <strong>{{ selectedImageIds.length }}</strong>
+                  image{{ selectedImageIds.length === 1 ? "" : "s" }} selected
+                </span>
+                <v-btn
+                  small
+                  color="primary"
+                  @click="selectedImageIds = []"
+                  style="margin-left: 12px"
+                  >Clear selection</v-btn
+                >
+              </div>
               <div
                 class="image-grid"
                 :style="{ gridTemplateColumns: `repeat(${columns}, 1fr)` }"
