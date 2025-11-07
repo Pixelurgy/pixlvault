@@ -13,13 +13,7 @@
         ></div>
     </div>
     <div class="import-progress-label">
-        <template v-if="importPhase === 'hashing'">
-        Hashing {{ importProgress }} / {{ importTotal }}
-        </template>
-        <template v-else-if="importPhase === 'checking'">
-        Checking for duplicates...
-        </template>
-        <template v-else-if="importPhase === 'uploading'">
+        <template v-if="importPhase === 'uploading'">
         Uploading {{ importProgress }} / {{ importTotal }}
         </template>
         <template v-else-if="importPhase === 'done'">

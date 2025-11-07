@@ -877,9 +877,7 @@ class Server:
                 ]:
                     reverse = sort == SortMechanism.SCORE_DESC.value
                     pics.sort(
-                        key=lambda p: (
-                            p._score if p._score is not None else float("-inf")
-                        ),
+                        key=lambda p: p.score if p.score is not None else -1,
                         reverse=reverse,
                     )
                 elif sort in [

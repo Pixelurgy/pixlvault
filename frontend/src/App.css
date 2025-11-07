@@ -1,13 +1,4 @@
 /* Sidebar chat button styles */
-.sidebar-chat-btn-wrapper {
-  position: absolute;
-  left: 0;
-  bottom: 24px;
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  z-index: 2;
-}
 .sidebar-chat-btn {
   background: #29405a;
   color: #fff;
@@ -73,30 +64,6 @@
   color: #ff5252;
 }
 
-.chat-overlay-header .overlay-close {
-  position: absolute;
-  top: 0.7em;
-  right: 1.1em;
-  font-size: 2.1em;
-  color: #fff;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  z-index: 10;
-  line-height: 1;
-  padding: 0 8px;
-  transition: color 0.2s;
-}
-.chat-overlay-header .overlay-close:hover {
-  color: #ff5252;
-}
-
-.chat-overlay-body {
-  flex: 1;
-  background: #f7f7fa;
-  overflow-y: auto;
-  padding: 2em;
-}
 .app-viewport {
   position: fixed;
   inset: 0;
@@ -227,29 +194,7 @@ body {
   padding: 0;
   margin: 0;
 }
-.v-img {
-  display: block;
-  min-width: 400px;
-  max-width: 90vw;
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
-  padding: 32px 32px 20px 32px;
-  position: relative;
-  min-height: 2.5em;
-  font-size: 1rem;
-  text-align: center;
-  white-space: normal;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  word-break: break-word;
-  margin: 0 auto 2px auto;
-  padding: 2px 4px 0 4px;
-}
+
 /* Original simple file manager layout */
 .file-manager {
   display: flex;
@@ -368,9 +313,6 @@ body {
   border-radius: 6px;
   box-shadow: 0 0px 0px #bbb;
 }
-.sidebar-trophy-btn {
-  margin-left: 4px;
-}
 .main-area {
   flex: 1;
   display: flex;
@@ -410,24 +352,11 @@ body {
   margin-top: 32px;
   text-align: center;
 }
-.thumbnail-slider {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  width: 100%;
-  margin-bottom: 32px;
-  min-height: 48px;
-}
 .slider {
   flex: 1;
   margin: 0 8px;
   min-width: 100px;
   max-width: 220px;
-}
-.thumbnail-slider {
-  margin-bottom: 4px;
-  min-height: 32px;
 }
 .slider {
   margin: 0 2px;
@@ -628,13 +557,6 @@ body {
   display: block;
   position: relative;
   z-index: 1;
-}
-.add-character-btn {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 2;
 }
 .add-character-inline {
   color: #fff;
@@ -899,13 +821,6 @@ button:focus:not(:focus-visible) {
   transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
-/* Chat overlay chat UI */
-.overlay-chat-wrapper {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  width: 100%;
-}
 /* Modern chat overlay layout */
 .overlay-chat-main {
   width: 100%;
@@ -936,11 +851,6 @@ button:focus:not(:focus-visible) {
   display: flex;
   flex-direction: column;
   gap: 0.7em;
-}
-.chat-message {
-  display: flex;
-  flex-direction: row;
-  justify-content: flex-start;
 }
 .chat-bubble {
   max-width: 0%;

@@ -10,7 +10,6 @@ import {
   ref,
   watch,
 } from "vue";
-import { VTextField } from "vuetify/components";
 
 import SearchBar from "./components/SearchBar.vue";
 import unknownPerson from "./assets/unknown-person.png"; // Import for unknown character icon
@@ -136,42 +135,6 @@ function isSupportedVideoFile(input) {
 
 function isSupportedMediaFile(file) {
   return isSupportedImageFile(file) || isSupportedVideoFile(file);
-}
-
-async function hashFile(file) {
-  // SHA-256 sampled hash: whole file if <=128KB, else 8 evenly spaced 8192-byte
-  // blocks
-  const CHUNK_SIZE = 8192;
-  const N = 8;
-  const WHOLE_FILE_THRESHOLD = 128 * 1024; // 128KB
-  if (file.size <= WHOLE_FILE_THRESHOLD) {
-    const buf = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest("SHA-256", buf);
-    return Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  }
-  // For larger files, sample N evenly spaced blocks
-  const offsets = Array.from({ length: N }, (_, i) =>
-    Math.floor((i * (file.size - CHUNK_SIZE)) / (N - 1))
-  );
-  const chunks = [];
-  for (const offset of offsets) {
-    const blob = file.slice(offset, offset + CHUNK_SIZE);
-    const buf = await blob.arrayBuffer();
-    chunks.push(new Uint8Array(buf));
-  }
-  let totalLen = chunks.reduce((sum, arr) => sum + arr.length, 0);
-  let all = new Uint8Array(totalLen);
-  let pos = 0;
-  for (const arr of chunks) {
-    all.set(arr, pos);
-    pos += arr.length;
-  }
-  const hashBuffer = await crypto.subtle.digest("SHA-256", all);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 // Sorting and pagination state
@@ -330,7 +293,7 @@ const importInProgress = ref(false);
 const importProgress = ref(0);
 const importTotal = ref(0);
 const importError = ref(null);
-const importPhase = ref(""); // 'hashing', 'checking', 'uploading', 'done', 'error'
+const importPhase = ref(""); // 'uploading', 'done', 'error'
 const importPhaseMessage = computed(() => {
   switch (importPhase.value) {
     case "uploading":
@@ -349,8 +312,18 @@ const importPhaseMessage = computed(() => {
 });
 
 const cancelImport = ref(false);
+const currentImportController = ref(null);
 function handleCancelImport() {
   cancelImport.value = true;
+  if (currentImportController.value) {
+    try {
+      currentImportController.value.abort();
+    } catch (err) {
+      console.warn("Failed to abort current import", err);
+    } finally {
+      currentImportController.value = null;
+    }
+  }
 }
 
 function handleGridDrop(e) {
@@ -385,6 +358,13 @@ function handleGridDrop(e) {
     const MAX_RETRIES = 3;
     try {
       for (let i = 0; i < files.length; i += BATCH_SIZE) {
+        if (cancelImport.value) {
+          importPhase.value = "cancelled";
+          importInProgress.value = false;
+          importError.value = null;
+          currentImportController.value = null;
+          return;
+        }
         const batch = files.slice(i, i + BATCH_SIZE);
         const formData = new FormData();
         batch.forEach((file) => {
@@ -400,7 +380,15 @@ function handleGridDrop(e) {
         let res = null;
         let lastError = null;
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+          if (cancelImport.value) {
+            importPhase.value = "cancelled";
+            importInProgress.value = false;
+            importError.value = null;
+            currentImportController.value = null;
+            return;
+          }
           const controller = new AbortController();
+          currentImportController.value = controller;
           const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
           try {
             res = await fetch(`${BACKEND_URL}/pictures`, {
@@ -409,6 +397,9 @@ function handleGridDrop(e) {
               signal: controller.signal,
             });
             clearTimeout(timeout);
+            if (controller === currentImportController.value) {
+              currentImportController.value = null;
+            }
             if (res.ok) {
               break;
             } else {
@@ -416,7 +407,16 @@ function handleGridDrop(e) {
             }
           } catch (err) {
             clearTimeout(timeout);
+            if (controller === currentImportController.value) {
+              currentImportController.value = null;
+            }
             if (err.name === "AbortError") {
+              if (cancelImport.value) {
+                importPhase.value = "cancelled";
+                importInProgress.value = false;
+                importError.value = null;
+                return;
+              }
               lastError = new Error("Upload timed out");
               console.warn(
                 `[IMPORT] Batch ${
@@ -496,7 +496,7 @@ function onGridScroll(e) {
 }
 
 // Use backend-driven images, no local sorting
-const pagedImages = computed(() => images.value);
+const pagedImages = computed(() => filteredImages.value);
 
 // Remove a tag from the overlay image and PATCH the backend
 async function removeTagFromOverlayImage(tag) {
@@ -577,12 +577,6 @@ const sidebarVisible = ref(true);
 // Overlay state for full image view
 const overlayOpen = ref(false);
 const overlayImage = ref(null);
-
-// Trophy button color: dark blue when not selected, orange when selected
-const trophyButtonColor = (charId) =>
-  selectedCharacter.value === charId && selectedReferenceMode.value
-    ? "orange"
-    : "#29405a"; // darker blue than sidebar
 
 function openOverlay(img) {
   overlayImage.value = img;
@@ -745,16 +739,6 @@ const getSelectionBorderClasses = (idx) => {
   }
   return classes.join(" ");
 };
-
-// Handle drop on Reference Images child
-function onReferenceDrop(characterId, event) {
-  dragOverCharacter.value = null;
-  try {
-    const data = JSON.parse(event.dataTransfer.getData("application/json"));
-    if (!data.imageIds || !Array.isArray(data.imageIds)) return;
-    assignImagesAsReference(data.imageIds, characterId);
-  } catch (e) {}
-}
 
 const ALL_PICTURES_ID = "__all__";
 const UNASSIGNED_PICTURES_ID = "__unassigned__";
@@ -1127,21 +1111,6 @@ watch(referenceFilterMode, (val) => {
   patchConfigUIOptions({ show_only_reference: val });
 });
 
-// Watch OpenAI config fields and PATCH when changed
-// Helper: refresh models after patching host/port
-async function patchHostAndRefresh(val, key) {
-  await patchConfigUIOptions({ [key]: val });
-  fetchOpenAIModels();
-}
-
-// Patch and refresh models when host/port change (on blur or enter)
-function onHostBlurOrEnter(e) {
-  patchHostAndRefresh(config.openai_host, "openai_host");
-}
-function onPortBlurOrEnter(e) {
-  patchHostAndRefresh(config.openai_port, "openai_port");
-}
-
 // Still patch on change for persistence
 watch(
   () => config.openai_host,
@@ -1398,16 +1367,9 @@ function onImageDragStart(img, idx, event) {
   event.dataTransfer.effectAllowed = "move";
   dragSource.value = "grid";
 }
-function onCharacterDragOver(charId) {
-  dragOverCharacter.value = charId;
-}
-function onCharacterDragLeave(charId) {
-  if (dragOverCharacter.value === charId) dragOverCharacter.value = null;
-}
 
 // Handle drop on character in sidebar to set character_id for selected images
 async function onCharacterDrop(characterId, event) {
-  dragOverCharacter.value = null;
   let imageIds = [];
   // Always use drag event data for image IDs
   try {
@@ -1499,72 +1461,6 @@ async function assignImagesToCharacter(imageIds, characterId) {
     }
   } catch (e) {
     alert("Failed to assign character: " + (e.message || e));
-  }
-}
-
-// Assign images as reference images for a character (set is_reference=true and
-// character_id)
-async function assignImagesAsReference(imageIds, characterId) {
-  try {
-    await Promise.all(
-      imageIds.map(async (id) => {
-        // Fetch image to check if it already has the character
-        let needsChar = true;
-        try {
-          const res = await fetch(`${BACKEND_URL}/pictures/${id}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.character_id === characterId) needsChar = false;
-          }
-        } catch (e) {}
-        // Always set is_reference=true, and set character_id if needed
-        let url = `${BACKEND_URL}/pictures/${id}?is_reference=1`;
-        if (needsChar)
-          url += `&character_id=${encodeURIComponent(characterId)}`;
-        const res2 = await fetch(url, { method: "PATCH" });
-        if (!res2.ok)
-          throw new Error(`Failed to set reference for image ${id}`);
-      })
-    );
-    await fetchCharacters();
-    fetchSidebarCounts();
-    // Refresh images if needed
-    if (
-      selectedCharacter.value === characterId ||
-      selectedCharacter.value === ALL_PICTURES_ID ||
-      selectedCharacter.value === UNASSIGNED_PICTURES_ID
-    ) {
-      const id = selectedCharacter.value;
-      let url;
-      if (id === ALL_PICTURES_ID) {
-        url = `${BACKEND_URL}/pictures?info=true`;
-      } else if (id === UNASSIGNED_PICTURES_ID) {
-        url = `${BACKEND_URL}/pictures?character_id=&info=true`;
-      } else {
-        url = `${BACKEND_URL}/pictures?character_id=${encodeURIComponent(
-          id
-        )}&info=true`;
-      }
-      const res = await fetch(url);
-      if (res.ok) {
-        const baseImages = await res.json();
-        images.value = baseImages.map((img) => ({
-          ...img,
-          score: typeof img.score !== "undefined" ? img.score : null,
-          is_reference: Number(img.is_reference) || 0,
-          _thumbLoaded: false,
-        }));
-        // Remove any selected IDs not in the new images
-        const newIds = new Set(images.value.map((img) => img.id));
-        selectedImageIds.value = selectedImageIds.value.filter((id) =>
-          newIds.has(id)
-        );
-        lastSelectedIndex = null;
-        setTimeout(updateColumns, 0);
-      }
-    }
-  } catch (e) {
-    alert("Failed to set reference: " + (e.message || e));
   }
 }
 
