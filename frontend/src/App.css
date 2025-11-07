@@ -1,16 +1,3 @@
-/* Sidebar chat button styles */
-.sidebar-chat-btn {
-  background: #29405a;
-  color: #fff;
-  border-radius: 50%;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  transition: background 0.2s;
-}
-.sidebar-chat-btn:hover {
-  background: #ff9800;
-  color: #fff;
-}
-
 /* Chat overlay styles */
 .chat-overlay {
   position: fixed;
@@ -208,110 +195,6 @@ body {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-}
-.sidebar {
-  width: 280px;
-  background: #506168ff;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  min-height: 100vh;
-  box-sizing: border-box;
-}
-.sidebar-section-header {
-  position: relative;
-  font-size: 1.2rem;
-  font-weight: 800;
-  padding: 2px 2px 2px 2px;
-  margin-bottom: 2px;
-  margin-top: 0px;
-  border-radius: 0px;
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  user-select: none;
-  background: #7f95aa;
-  color: #fff;
-  transition: background 0.2s, color 0.2s;
-}
-/* Fade transition for collapsible sections */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-.sidebar-list-item,
-.sidebar-list-item.active {
-  display: flex;
-  align-items: center;
-  min-height: 56px;
-  padding: 8px 16px;
-  cursor: pointer;
-  border-radius: 0px;
-  margin-bottom: 0px;
-  font-size: 1em;
-  font-weight: 500;
-  background: transparent;
-  color: #fff;
-  transition: background 0.18s, color 0.18s;
-  width: 100%;
-}
-.sidebar-list-item.active {
-  background: #f0f0f055;
-  color: #fff;
-  border-right: 0;
-  position: relative;
-}
-
-.sidebar-list-item.active::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 20px;
-  height: 100%;
-  background: linear-gradient(
-    to right,
-    rgba(255, 165, 0, 0) 0%,
-    rgba(255, 165, 0, 1) 100%
-  );
-  pointer-events: none;
-  z-index: 2;
-}
-
-.sidebar-list-item:hover {
-  background: #6c7a8a;
-  color: #fff;
-}
-
-.sidebar-list-icon {
-  display: flex;
-  align-items: center;
-  margin-right: 12px;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-}
-.sidebar-list-label {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: left;
-}
-.sidebar-character-thumb {
-  max-width: 44px;
-  max-height: 44px;
-  object-fit: contain;
-  border-radius: 6px;
-  box-shadow: 0 0px 0px #bbb;
 }
 .main-area {
   flex: 1;
@@ -558,27 +441,6 @@ body {
   position: relative;
   z-index: 1;
 }
-.add-character-inline {
-  color: #fff;
-  font-size: 1.3em;
-  cursor: pointer;
-  vertical-align: middle;
-  background: none !important;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 0.9em 1.2em 0.9em 1.5em;
-  background: #29405a;
-  color: #fff;
-  font-size: 1.3em;
-  font-weight: 600;
-  position: relative;
-  min-height: 48px;
-}
-
 .chat-overlay-header span {
   flex: 1 1 auto;
   display: flex;
@@ -616,19 +478,6 @@ button[disabled] {
   margin-top: 2px;
   text-align: center;
   word-break: break-all;
-}
-.sidebar-list-count {
-  font-size: 0.92em;
-  color: #b0b8c9;
-  min-width: 2.5em;
-  text-align: right;
-  margin-left: 8px;
-  margin-right: 8px;
-  font-weight: 400;
-  opacity: 0.85;
-  letter-spacing: 0.01em;
-  align-self: center;
-  display: inline-block;
 }
 
 /* Import Progress Modal Styles */
@@ -797,29 +646,6 @@ button:focus:not(:focus-visible) {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.07);
   border: none;
   min-width: 90px;
-}
-.search-and-sort {
-  display: flex;
-  flex-direction: column;
-}
-.sidebar-sort-select {
-  background: rgba(200, 200, 200, 0.6);
-}
-
-.sidebar-searchbar-wrapper {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  position: relative;
-  width: 100%;
-  padding: 4px 4px 4px 4px;
-}
-.sidebar-searchbar {
-  width: 100%;
-  min-width: 0;
-  position: relative;
-  transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 /* Modern chat overlay layout */
 .overlay-chat-main {

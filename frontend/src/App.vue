@@ -11,8 +11,7 @@ import {
   watch,
 } from "vue";
 
-import SearchBar from "./components/SearchBar.vue";
-import unknownPerson from "./assets/unknown-person.png"; // Import for unknown character icon
+import SideBar from "./components/SideBar.vue";
 
 const BACKEND_URL = "http://localhost:9537";
 
@@ -816,6 +815,11 @@ const sidebarSections = ref({
   search: true,
 });
 
+function toggleSidebarSection(section) {
+  if (!section || !(section in sidebarSections.value)) return;
+  sidebarSections.value[section] = !sidebarSections.value[section];
+}
+
 const images = ref([]);
 const imagesLoading = ref(false);
 const imagesError = ref(null);
@@ -1354,6 +1358,31 @@ async function setImageScore(img, n) {
 
 // Drag and drop logic for assigning images to characters
 const dragOverCharacter = ref(null);
+
+function handleSelectCharacter(id) {
+  selectedCharacter.value = id;
+}
+
+function handleDragOverCharacter(id) {
+  dragOverCharacter.value = id;
+}
+
+function handleDragLeaveCharacter() {
+  dragOverCharacter.value = null;
+}
+
+function handleDropOnCharacter(payload) {
+  if (!payload || !payload.characterId) return;
+  onCharacterDrop(payload.characterId, payload.event);
+}
+
+function handleUpdateSearchQuery(value) {
+  searchQuery.value = value;
+}
+
+function handleUpdateSelectedSort(value) {
+  selectedSort.value = value;
+}
 function onImageDragStart(img, idx, event) {
   // Only allow dragging if this image is selected
   let ids =
@@ -1511,6 +1540,10 @@ function addNewCharacter() {
 // Inline edit state for character names
 const editingCharacterId = ref(null);
 const editingCharacterName = ref("");
+
+function updateEditingCharacterName(value) {
+  editingCharacterName.value = typeof value === "string" ? value : "";
+}
 
 function startEditingCharacter(char) {
   editingCharacterId.value = char.id;

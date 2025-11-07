@@ -317,246 +317,39 @@
     </div>
     </div>
     <div class="file-manager">
-    <aside v-if="sidebarVisible" class="sidebar">
-        <div
-        class="sidebar-section-header"
-        @click="sidebarSections.pictures = !sidebarSections.pictures"
-        >
-        <v-icon small style="margin-right: 8px">{{
-            sidebarSections.pictures
-            ? "mdi-chevron-down"
-            : "mdi-chevron-right"
-        }}</v-icon>
-        Pictures
-        </div>
-        <transition name="fade">
-        <div v-show="sidebarSections.pictures">
-            <div
-            :class="[
-                'sidebar-list-item',
-                { active: selectedCharacter === ALL_PICTURES_ID },
-            ]"
-            @click="selectedCharacter = ALL_PICTURES_ID"
-            >
-            <span class="sidebar-list-icon">
-                <v-icon size="44">mdi-image-multiple</v-icon>
-            </span>
-            <span class="sidebar-list-label">All Pictures</span>
-            <span class="sidebar-list-count">{{
-                categoryCounts[ALL_PICTURES_ID] ?? ""
-            }}</span>
-            </div>
-            <div
-            :class="[
-                'sidebar-list-item',
-                { active: selectedCharacter === UNASSIGNED_PICTURES_ID },
-            ]"
-            @click="selectedCharacter = UNASSIGNED_PICTURES_ID"
-            >
-            <span class="sidebar-list-icon">
-                <v-icon size="44">mdi-help-circle-outline</v-icon>
-            </span>
-            <span class="sidebar-list-label">Unassigned Pictures</span>
-            <span class="sidebar-list-count">{{
-                categoryCounts[UNASSIGNED_PICTURES_ID] ?? ""
-            }}</span>
-            </div>
-        </div>
-        </transition>
-        <div
-        class="sidebar-section-header"
-        @click="sidebarSections.people = !sidebarSections.people"
-        >
-        <v-icon small style="margin-right: 8px">{{
-            sidebarSections.people ? "mdi-chevron-down" : "mdi-chevron-right"
-        }}</v-icon>
-        People
-        <span style="flex: 1 1 auto"></span>
-        <span
-            style="
-            display: grid;
-            grid-template-columns: 32px 32px;
-            gap: 0px;
-            align-items: center;
-            min-width: 64px;
-            "
-        >
-            <v-icon
-            v-if="
-                selectedCharacter &&
-                selectedCharacter !== ALL_PICTURES_ID &&
-                selectedCharacter !== UNASSIGNED_PICTURES_ID
-            "
-            class="delete-character-inline"
-            color="white"
-            style="cursor: pointer; justify-self: end"
-            @click.stop="confirmDeleteCharacter"
-            title="Delete selected character"
-            >mdi-trash-can-outline
-            </v-icon>
-            <v-icon
-            class="add-character-inline"
-            @click.stop="addNewCharacter"
-            title="Add character"
-            style="justify-self: end"
-            >mdi-plus</v-icon
-            >
-        </span>
-        </div>
-        <transition name="fade">
-        <div v-show="sidebarSections.people">
-            <div v-if="error" class="sidebar-error">{{ error }}</div>
-            <div
-            v-if="sortedCharacters.length === 0"
-            class="sidebar-character-group"
-            >
-            <div class="sidebar-list-item">
-                No characters found. Click the + button to add one.
-            </div>
-            </div>
-            <div
-            v-if="sortedCharacters.length > 0"
-            v-for="char in sortedCharacters"
-            :key="char.id"
-            class="sidebar-character-group"
-            >
-            <div
-                :class="[
-                'sidebar-list-item',
-                {
-                    active: selectedCharacter === char.id,
-                    droppable: dragOverCharacter === char.id,
-                },
-                ]"
-                @click="selectedCharacter = char.id"
-                @dragover.prevent="dragOverCharacter = char.id"
-                @dragleave="dragOverCharacter = null"
-                @drop.prevent="onCharacterDrop(char.id, $event)"
-            >
-                <span class="sidebar-list-icon">
-                <img
-                    :src="
-                    characterThumbnails[char.id]
-                        ? characterThumbnails[char.id]
-                        : unknownPerson
-                    "
-                    alt=""
-                    class="sidebar-character-thumb"
-                />
-                </span>
-                <span class="sidebar-list-label">
-                <template v-if="editingCharacterId === char.id">
-                    <input
-                    v-model="editingCharacterName"
-                    class="edit-character-input"
-                    @keydown.enter="saveEditingCharacter(char)"
-                    @keydown.esc="cancelEditingCharacter"
-                    @blur="saveEditingCharacter(char)"
-                    ref="editInput"
-                    style="
-                        width: 90%;
-                        font-size: 1em;
-                        background: #fff;
-                        color: #222;
-                        border-radius: 4px;
-                        border: 1px solid #bbb;
-                        padding: 2px 6px;
-                        outline: none;
-                    "
-                    />
-                </template>
-                <template v-else>
-                    <span @dblclick.stop="startEditingCharacter(char)">
-                    {{
-                        char.name.charAt(0).toUpperCase() + char.name.slice(1)
-                    }}
-                    </span>
-                </template>
-                </span>
-                <span class="sidebar-list-count">{{
-                categoryCounts[char.id] ?? ""
-                }}</span>
-            </div>
-            </div>
-        </div>
-        </transition>
-
-        <div
-        class="sidebar-section-header"
-        @click="sidebarSections.search = !sidebarSections.search"
-        >
-        <v-icon small style="margin-right: 8px">{{
-            sidebarSections.search ? "mdi-chevron-down" : "mdi-chevron-right"
-        }}</v-icon>
-        Search & Sorting
-        <span style="flex: 1 1 auto"></span>
-        </div>
-        <transition name="fade">
-        <div class="search-and-sort" v-show="sidebarSections.search">
-            <div class="sidebar-searchbar-wrapper">
-            <SearchBar
-                v-model="searchQuery"
-                placeholder="Search images..."
-                class="sidebar-searchbar"
-                @search="searchImages"
-            />
-            </div>
-            <div class="sidebar-searchbar-wrapper">
-            <!-- Sorting dropdown -->
-            <v-select
-                v-model="selectedSort"
-                :items="sortOptions"
-                class="sidebar-sort-select"
-                item-title="label"
-                item-value="value"
-                label="Sort by"
-                dense
-                hide-details
-            />
-            </div>
-        </div>
-        </transition>
-
-        <!-- Chat and Settings buttons at the bottom left of the sidebar -->
-        <div
-        style="
-            position: absolute;
-            left: 0;
-            bottom: 0;
-            width: 100%;
-            padding: 16px 0 8px 0;
-            display: flex;
-            flex-direction: row;
-            gap: 8px;
-            justify-content: flex-start;
-            align-items: flex-end;
-            pointer-events: none;
-        "
-        >
-        <v-btn
-            icon
-            class="sidebar-chat-btn"
-            @click="openChatOverlay"
-            style="
-            margin-left: 12px;
-            pointer-events: auto;
-            background: #29405a;
-            color: #fff;
-            "
-            title="OpenAI Chat"
-        >
-            <v-icon>mdi-chat</v-icon>
-        </v-btn>
-        <v-btn
-            icon
-            @click="openSettingsDialog"
-            style="pointer-events: auto; background: #29405a; color: #fff"
-            title="Settings"
-        >
-            <v-icon>mdi-cog</v-icon>
-        </v-btn>
-        </div>
-    </aside>
+    <SideBar
+      v-if="sidebarVisible"
+      :sections="sidebarSections"
+      :selected-character="selectedCharacter"
+      :all-pictures-id="ALL_PICTURES_ID"
+      :unassigned-pictures-id="UNASSIGNED_PICTURES_ID"
+      :category-counts="categoryCounts"
+      :sorted-characters="sortedCharacters"
+      :error="error"
+      :drag-over-character="dragOverCharacter"
+      :character-thumbnails="characterThumbnails"
+      :editing-character-id="editingCharacterId"
+      :editing-character-name="editingCharacterName"
+      :search-query="searchQuery"
+      :sort-options="sortOptions"
+      :selected-sort="selectedSort"
+      @toggle-section="toggleSidebarSection"
+      @select-character="handleSelectCharacter"
+      @delete-character="confirmDeleteCharacter"
+      @create-character="addNewCharacter"
+      @start-editing-character="startEditingCharacter"
+      @save-editing-character="saveEditingCharacter"
+      @cancel-editing-character="cancelEditingCharacter"
+      @update:editing-character-name="updateEditingCharacterName"
+      @drag-over-character="handleDragOverCharacter"
+      @drag-leave-character="handleDragLeaveCharacter"
+      @drop-on-character="handleDropOnCharacter"
+      @open-chat="openChatOverlay"
+      @open-settings="openSettingsDialog"
+      @search-images="searchImages"
+      @update:selected-sort="handleUpdateSelectedSort"
+      @update:search-query="handleUpdateSearchQuery"
+    />
     <main class="main-area" :class="{ 'full-width': !sidebarVisible }">
         <div
         :class="['main-content', selectedCharacter ? 'accent-border' : '']"
