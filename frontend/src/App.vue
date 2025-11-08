@@ -13,6 +13,8 @@ import {
 import SideBar from "./components/SideBar.vue";
 import ChatWindow from "./components/ChatWindow.vue";
 import ImageImporter from "./components/ImageImporter.vue";
+import ImageOverlay from "./components/ImageOverlay.vue";
+import { useOverlayActions } from "./composables/useOverlayActions";
 
 // --- Backend Constants & Identifiers ---
 const BACKEND_URL = "http://localhost:9537";
@@ -133,8 +135,6 @@ let lastSelectedIndex = null;
 // --- Overlay & Tag State ---
 const overlayOpen = ref(false);
 const overlayImage = ref(null);
-const addingTagOverlay = ref(false);
-const newTagOverlay = ref("");
 
 // --- Chat Overlay State ---
 const chatOpen = ref(false);
@@ -714,64 +714,6 @@ function openOverlay(img) {
 
 function closeOverlay() {
   overlayOpen.value = false;
-}
-
-async function removeTagFromOverlayImage(tag) {
-  if (!overlayImage.value) return;
-  const img = overlayImage.value;
-  const newTags = img.tags.filter((t) => t !== tag);
-  try {
-    const res = await fetch(`${BACKEND_URL}/pictures/${img.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tags: newTags }),
-    });
-    if (!res.ok) throw new Error("Failed to remove tag");
-    img.tags = newTags;
-  } catch (e) {
-    alert("Failed to remove tag: " + (e.message || e));
-  }
-}
-
-function startAddTagOverlay() {
-  addingTagOverlay.value = true;
-  newTagOverlay.value = "";
-  nextTick(() => {
-    const input = document.querySelector(".tag-add-input");
-    if (input) input.focus();
-  });
-}
-
-function cancelAddTagOverlay() {
-  addingTagOverlay.value = false;
-  newTagOverlay.value = "";
-}
-
-async function confirmAddTagOverlay() {
-  if (!overlayImage.value) return;
-  const tag = newTagOverlay.value.trim();
-  if (!tag) {
-    cancelAddTagOverlay();
-    return;
-  }
-  if (overlayImage.value.tags.includes(tag)) {
-    cancelAddTagOverlay();
-    return;
-  }
-  const img = overlayImage.value;
-  const newTags = [...img.tags, tag];
-  try {
-    const res = await fetch(`${BACKEND_URL}/pictures/${img.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tags: newTags }),
-    });
-    if (!res.ok) throw new Error("Failed to add tag");
-    img.tags = newTags;
-  } catch (e) {
-    alert("Failed to add tag: " + (e.message || e));
-  }
-  cancelAddTagOverlay();
 }
 
 // --- Chat Overlay ---
@@ -1363,6 +1305,18 @@ async function toggleReference(img) {
   }
 }
 
+const {
+  removeTagFromOverlayImage,
+  addTagToOverlay,
+  handleOverlayToggleReference,
+  handleOverlaySetScore,
+} = useOverlayActions({
+  overlayImage,
+  backendUrl: BACKEND_URL,
+  toggleReference,
+  setImageScore,
+});
+
 // --- Watchers ---
 watch([selectedSort, selectedCharacter, selectedReferenceMode], () => {
   if (searchQuery.value && searchQuery.value.trim()) {
@@ -1371,10 +1325,6 @@ watch([selectedSort, selectedCharacter, selectedReferenceMode], () => {
   pageOffset.value = 0;
   hasMoreImages.value = true;
   lastSelectedIndex = null;
-  refreshImages();
-});
-
-watch([selectedCharacter, selectedReferenceMode], () => {
   refreshImages();
 });
 

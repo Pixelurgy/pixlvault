@@ -187,9 +187,7 @@ class VaultDatabase:
         for idx in indexes:
             fields_sql = ", ".join(idx["fields"])
             unique = "UNIQUE " if idx.get("unique") else ""
-            sql = (
-                f"CREATE {unique}INDEX IF NOT EXISTS {idx['name']} ON {table_name} ({fields_sql})"
-            )
+            sql = f"CREATE {unique}INDEX IF NOT EXISTS {idx['name']} ON {table_name} ({fields_sql})"
             if idx.get("where"):
                 sql += f" WHERE {idx['where']}"
             logger.debug(f"Ensuring index with SQL: {sql}")

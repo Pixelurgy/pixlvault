@@ -7,6 +7,19 @@
     :unassigned-pictures-id="UNASSIGNED_PICTURES_ID"
     @import-finished="handleImportFinished"
   />
+  <ImageOverlay
+    :open="overlayOpen"
+    :image="overlayImage"
+    :backend-url="BACKEND_URL"
+    :is-video="overlayImage ? isSupportedVideoFile(getOverlayFormat(overlayImage)) : false"
+    @close="closeOverlay"
+    @prev="showPrevImage"
+    @next="showNextImage"
+    @toggle-reference="handleOverlayToggleReference"
+    @set-score="handleOverlaySetScore"
+    @remove-tag="removeTagFromOverlayImage"
+    @add-tag="addTagToOverlay"
+  />
   <div class="app-viewport">
     <div class="top-toolbar">
       <v-btn
@@ -138,101 +151,82 @@
                     placeholder="Add new root"
                     style="
                       flex: 1;
-                      padding: 6px 10px;
+                      padding: 8px;
                       border-radius: 8px;
-                      border: 1px solid #bbb;
-                      font-size: 1em;
+                      border: 1px solid #ccc;
+                      min-width: 0;
                     "
                   />
-                  <button
-                    @click="addImageRoot"
-                    :disabled="!newImageRoot.trim()"
-                    style="
-                      padding: 6px 16px;
-                      border-radius: 8px;
-                      background: #1976d2;
-                      color: #fff;
-                      border: none;
-                      font-weight: 600;
-                      cursor: pointer;
-                    "
-                  >
-                    Add
-                  </button>
+                  <v-btn @click="addImageRoot" color="primary">Add</v-btn>
                 </div>
               </div>
-              <div class="settings-section" style="margin-top: 32px">
-                <strong>OpenAI Chat Service</strong>
+              <div class="settings-section" style="margin-top: 24px">
+                <strong>Thumbnail Size</strong>
                 <div
-                  style="
-                    display: flex;
-                    gap: 12px;
-                    align-items: center;
-                    margin-top: 8px;
-                  "
+                  style="margin-top: 8px; display: flex; align-items: center"
                 >
-                  <label style="min-width: 60px">Host:</label>
-                  <input
-                    v-model="config.openai_host"
-                    style="
-                      flex: 1;
-                      padding: 6px 10px;
-                      border-radius: 8px;
-                      border: 1px solid #bbb;
-                      font-size: 1em;
-                    "
-                    @change="patchConfigUIOptions()"
+                  <v-slider
+                    v-model="config.thumbnail"
+                    :min="128"
+                    :max="256"
+                    :step="32"
+                    class="slider"
+                    hide-details
+                    style="flex: 1; margin-right: 16px"
                   />
-                  <label style="min-width: 50px; margin-left: 12px"
-                    >Port:</label
-                  >
-                  <input
-                    v-model.number="config.openai_port"
-                    type="number"
-                    min="1"
-                    max="65535"
-                    style="
-                      width: 90px;
-                      padding: 6px 10px;
-                      border-radius: 8px;
-                      border: 1px solid #bbb;
-                      font-size: 1em;
-                    "
-                    @change="patchConfigUIOptions()"
-                  />
+                  <span>{{ config.thumbnail }}px</span>
                 </div>
-                <div
-                  style="
-                    display: flex;
-                    gap: 12px;
-                    align-items: center;
-                    margin-top: 12px;
-                  "
-                >
-                  <label style="min-width: 60px">Model:</label>
+                <div style="margin-top: 16px">
+                  <label style="display: flex; align-items: center; gap: 8px">
+                    <input type="checkbox" v-model="config.show_stars" />
+                    Show star ratings by default
+                  </label>
+                  <label
+                    style="
+                      display: flex;
+                      align-items: center;
+                      gap: 8px;
+                      margin-top: 8px;
+                    "
+                  >
+                    <input
+                      type="checkbox"
+                      v-model="config.show_only_reference"
+                    />
+                    Show only reference images by default
+                  </label>
+                </div>
+              </div>
+              <div class="settings-section" style="margin-top: 24px">
+                <strong>OpenAI Connection</strong>
+                <div class="settings-form-grid">
+                  <label>Host</label>
+                  <input v-model="config.openai_host" placeholder="Host" />
+                  <label>Port</label>
+                  <input v-model.number="config.openai_port" type="number" />
+                  <label>Model</label>
                   <select
                     v-model="config.openai_model"
+                    @focus="fetchOpenAIModels"
                     style="
-                      flex: 1;
-                      padding: 6px 10px;
+                      padding: 6px;
                       border-radius: 8px;
-                      border: 1px solid #bbb;
-                      font-size: 1em;
+                      border: 1px solid #ccc;
                     "
-                    @change="patchConfigUIOptions()"
                   >
+                    <option value="" disabled>Select a model</option>
                     <option v-if="openaiModelLoading" disabled>
-                      Loading models...
-                    </option>
-                    <option v-for="m in openaiModels" :key="m" :value="m">
-                      {{ m }}
+                      Loading...
                     </option>
                     <option
-                      v-if="
-                        !openaiModelLoading &&
-                        !openaiModels.length &&
-                        !openaiModelFetchError
-                    "
+                      v-for="model in openaiModels"
+                      :key="model.id"
+                      :value="model.id"
+                    >
+                      {{ model.id }}
+                    </option>
+                    <option
+                      v-if="!openaiModels.length && !openaiModelLoading"
                       disabled
                     >
                       No models found
@@ -267,6 +261,25 @@
             </v-card-text>
           </v-card>
         </v-dialog>
+      </div>
+      <div class="toolbar-buttons">
+        <v-btn
+          icon
+          @click="settingsDialog = true"
+          title="Open settings"
+          style="margin-right: 8px"
+        >
+          <v-icon>mdi-cog</v-icon>
+        </v-btn>
+        <v-btn
+          icon
+          :color="chatOpen ? 'primary' : 'grey'"
+          @click="openChatOverlay"
+          title="Open AI chat"
+          style="margin-left: 8px"
+        >
+          <v-icon>mdi-robot</v-icon>
+        </v-btn>
       </div>
     </div>
     <div class="file-manager">
@@ -513,233 +526,6 @@
                 :backend-url="BACKEND_URL"
                 @close="closeChatOverlay"
               />
-              <!-- Full image overlay -->
-              <div
-                v-if="overlayOpen"
-                class="image-overlay"
-                @click.self="closeOverlay"
-              >
-                <div class="overlay-content overlay-grid">
-                  <button
-                    class="overlay-close"
-                    @click="closeOverlay"
-                    aria-label="Close"
-                    style="
-                      position: absolute;
-                      top: 12px;
-                      right: 18px;
-                      z-index: 20;
-                    "
-                  >
-                    &times;
-                  </button>
-                  <div
-                    class="overlay-grid-main"
-                    style="
-                      display: grid;
-                      grid-template-columns: 64px 1fr 64px;
-                      align-items: center;
-                      width: 100%;
-                      height: 100%;
-                    "
-                  >
-                    <div
-                      style="
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        height: 100%;
-                      "
-                    >
-                      <button
-                        class="overlay-nav overlay-nav-left"
-                        @click.stop="showPrevImage"
-                        aria-label="Previous"
-                      >
-                        <v-icon>mdi-skip-previous</v-icon>
-                      </button>
-                    </div>
-                    <div class="overlay-img-wrapper">
-                      <div style="position: relative; display: inline-block">
-                        <template v-if="overlayImage">
-                          <video
-                            v-if="
-                            isSupportedVideoFile(
-                                getOverlayFormat(overlayImage)
-                            )
-                            "
-                            :src="`${BACKEND_URL}/pictures/${overlayImage.id}`"
-                            class="overlay-video"
-                            controls
-                            preload="auto"
-                            playsinline
-                            style="background: #111"
-                          ></video>
-                          <img
-                            v-else
-                            :src="`${BACKEND_URL}/pictures/${overlayImage.id}`"
-                            :alt="overlayImage.description || 'Full Image'"
-                            class="overlay-img"
-                          />
-                        </template>
-                        <div class="star-overlay" v-if="overlayImage">
-                          <v-icon
-                            v-for="n in 5"
-                            :key="n"
-                            large
-                            :color="
-                            n <= (overlayImage.score || 0)
-                                ? 'orange'
-                                : 'grey darken-2'
-                            "
-                            style="cursor: pointer"
-                            @click.stop="setImageScore(overlayImage, n)"
-                            >mdi-star</v-icon
-                          >
-                        </div>
-                        <v-btn
-                          icon
-                          size="small"
-                          class="reference-trophy-btn trophy-bg"
-                          @click.stop="toggleReference(overlayImage)"
-                          title="Toggle reference picture"
-                          style="
-                            position: absolute;
-                            top: 8px;
-                            left: 8px;
-                            z-index: 2;
-                          "
-                        >
-                          <v-icon
-                            :color="
-                            overlayImage.is_reference
-                                ? 'orange'
-                                : 'grey darken-2'
-                            "
-                            >mdi-trophy</v-icon
-                          >
-                        </v-btn>
-                      </div>
-                    </div>
-                    <div
-                      style="
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        height: 100%;
-                      "
-                    >
-                      <button
-                        class="overlay-nav overlay-nav-right"
-                        @click.stop="showNextImage"
-                        aria-label="Next"
-                      >
-                        <v-icon>mdi-skip-next</v-icon>
-                      </button>
-                    </div>
-                  </div>
-                  <div class="overlay-desc">
-                    {{ overlayImage?.description || "No description" }}
-                  </div>
-                  <div
-                    v-if="
-                    overlayImage &&
-                    overlayImage.tags &&
-                    overlayImage.tags.length
-                    "
-                    class="overlay-tags"
-                    style="
-                      margin-top: 8px;
-                      margin-bottom: 0;
-                      text-align: center;
-                    "
-                  >
-                    <span
-                      v-for="tag in overlayImage.tags"
-                      :key="tag"
-                      class="overlay-tag"
-                      style="
-                        display: inline-flex;
-                        align-items: center;
-                        background: #eee;
-                        color: #333;
-                        border-radius: 16px;
-                        padding: 4px 16px 4px 14px;
-                        margin: 2px 2px;
-                        font-size: 1.15em;
-                        position: relative;
-                        min-height: 32px;
-                      "
-                    >
-                      {{ tag }}
-                      <button
-                        class="tag-delete-btn"
-                        @click.stop="removeTagFromOverlayImage(tag)"
-                        title="Remove tag"
-                        style="
-                          background: none;
-                          border: none;
-                          color: #888;
-                          font-size: 1.25em;
-                          margin-left: 10px;
-                          cursor: pointer;
-                          display: flex;
-                          align-items: center;
-                          justify-content: center;
-                          height: 24px;
-                          width: 24px;
-                          padding: 0;
-                        "
-                      >
-                        ×
-                      </button>
-                    </span>
-                    <!-- Add + button at the end for adding tags -->
-                    <button
-                      class="tag-add-btn"
-                      @click.stop="startAddTagOverlay()"
-                      title="Add tag"
-                      style="
-                        display: inline-flex;
-                        align-items: center;
-                        justify-content: center;
-                        background: #e0e0e0;
-                        color: #333;
-                        border: none;
-                        border-radius: 16px;
-                        font-size: 1.3em;
-                        margin: 2px 2px;
-                        height: 32px;
-                        width: 32px;
-                        cursor: pointer;
-                        padding: 0;
-                        vertical-align: middle;
-                      "
-                    >
-                      +
-                    </button>
-                    <!-- Input for adding a tag, shown only when adding -->
-                    <input
-                      v-if="addingTagOverlay"
-                      v-model="newTagOverlay"
-                      @keydown.enter="confirmAddTagOverlay"
-                      @blur="cancelAddTagOverlay"
-                      class="tag-add-input"
-                      style="
-                        margin-left: 8px;
-                        font-size: 1.1em;
-                        border-radius: 8px;
-                        border: 1px solid #bbb;
-                        padding: 2px 8px;
-                        min-width: 80px;
-                        outline: none;
-                      "
-                      placeholder="New tag"
-                      autofocus
-                    />
-                  </div>
-                </div>
-              </div>
             </div>
           </template>
           <template v-else>

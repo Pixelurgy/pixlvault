@@ -26,9 +26,7 @@ class PictureTagModel:
     picture_id: str = field(
         default=None, metadata={"foreign_key": "pictures(id)", "composite_key": True}
     )
-    tag: str = field(
-        default=None, metadata={"composite_key": True, "index": True}
-    )
+    tag: str = field(default=None, metadata={"composite_key": True, "index": True})
 
 
 @dataclass
