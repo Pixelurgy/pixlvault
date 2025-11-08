@@ -269,6 +269,24 @@ class PictureTagger:
             # Remove any remaining special tokens like <s>
             caption = caption.replace("<s>", "").strip()
 
+            # Insert character name if provided
+            if character_name:
+                # Find first mention of person-related words and insert "named CHARACTER_NAME" after
+                # Pattern: words like "woman", "man", "person", "girl", "boy", etc.
+                person_pattern = r"\b(woman|man|person|girl|boy|lady|gentleman|individual|figure|character)\b"
+                match = re.search(person_pattern, caption, re.IGNORECASE)
+                if match:
+                    # Insert "named CHARACTER_NAME" right after the person mention
+                    insert_pos = match.end()
+                    caption = (
+                        caption[:insert_pos]
+                        + f" named {character_name}"
+                        + caption[insert_pos:]
+                    )
+                else:
+                    # Fallback: prepend character name if no person mention found
+                    caption = f"{character_name}: {caption}"
+
             logger.info(f"Florence-2 caption: {caption}")
             return caption
 

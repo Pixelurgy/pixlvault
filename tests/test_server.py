@@ -59,7 +59,7 @@ def get_project_version():
 
 
 def test_esmeralda_vault_character_and_logo():
-    """Test that EsmeraldaVault exists and her picture matches Logo.png exactly."""
+    """Test that Esmeralda Vault exists and her picture matches Logo.png exactly."""
 
     with tempfile.TemporaryDirectory() as temp_dir:
         config_path = os.path.join(temp_dir, "config.json")
@@ -70,23 +70,23 @@ def test_esmeralda_vault_character_and_logo():
             server.vault.import_default_data()
             client = TestClient(server.api)
 
-            # Find EsmeraldaVault character (by name)
+            # Find Esmeralda Vault character (by name)
             resp = client.get("/characters")
             assert resp.status_code == 200
             chars = resp.json()
             esmeralda = None
             for c in chars:
-                if c.get("name") == "EsmeraldaVault":
+                if c.get("name") == "Esmeralda Vault":
                     esmeralda = c
                     break
-            assert esmeralda is not None, "EsmeraldaVault character not found"
+            assert esmeralda is not None, "Esmeralda Vault character not found"
             char_id = esmeralda["id"]
 
-            # Find picture for EsmeraldaVault
+            # Find picture for Esmeralda Vault
             resp2 = client.get(f"/pictures?character_id={char_id}&info=true")
             assert resp2.status_code == 200
             pics = resp2.json()
-            assert pics, "No picture found for EsmeraldaVault"
+            assert pics, "No picture found for Esmeralda Vault"
             pic_id = pics[0]["id"] if isinstance(pics[0], dict) else pics[0]["ids"][0]
 
             # Fetch the  picture form id
@@ -96,9 +96,9 @@ def test_esmeralda_vault_character_and_logo():
             with open(logo_path, "rb") as f:
                 logo_bytes = f.read()
             # Compare the full file
-            assert (
-                img_resp.content == logo_bytes
-            ), "EsmeraldaVault's picture does not match Logo.png"
+            assert img_resp.content == logo_bytes, (
+                "Esmeralda Vault's picture does not match Logo.png"
+            )
     gc.collect()
 
 
@@ -417,9 +417,9 @@ def test_tagger_worker_adds_tags():
                 found_tags = pic_info.get("tags", [])
                 if found_tags:
                     break
-            assert (
-                found_tags
-            ), "Tagger worker did not add tags to TaggerTest.png after waiting."
+            assert found_tags, (
+                "Tagger worker did not add tags to TaggerTest.png after waiting."
+            )
     gc.collect()
 
 
@@ -442,13 +442,24 @@ def test_semantic_search_on_all_pictures():
             server.vault.import_default_data()
             client = TestClient(server.api)
 
+            # Get Esmeralda's character ID
+            resp = client.get("/characters")
+            assert resp.status_code == 200
+            chars = resp.json()
+            esmeralda_id = None
+            for c in chars:
+                if c.get("name") == "Esmeralda Vault":
+                    esmeralda_id = c["id"]
+                    break
+            assert esmeralda_id is not None, "Esmeralda Vault character not found"
+
             # Upload all images as new pictures
             picture_ids = []
             for fname in image_files:
                 with open(os.path.join(src_dir, fname), "rb") as f:
                     files = [("file", (fname, f.read(), "image/png"))]
                     data = {
-                        "character_id": "Esmeralda",
+                        "character_id": esmeralda_id,
                     }
                     r = client.post("/pictures", files=files, data=data)
                 assert r.status_code == 200
@@ -491,30 +502,32 @@ def test_semantic_search_on_all_pictures():
                 time.sleep(1)
 
             if picture_ids:
-                assert (
-                    False
-                ), f"Pictures {picture_ids} did not get valid embedding after waiting."
+                assert False, (
+                    f"Pictures {picture_ids} did not get valid embedding after waiting."
+                )
 
             # Perform semantic search
             search_texts = [
                 "It was a bright rainy day but Esmeralda needed to get out and get some fresh air, so she dressed for the weather, brought an umbrella and walked out into the countryside.",
                 "Esmeralda smiles as she sits across me in the cafe wearing her grey sweater. The sunlight filters through the window of the empty cafe",
-                "It was a bright winter morning, and Esmeralda decided to go for a walk in the snow-covered park, admiring the glistening trees and the crisp air. She was glad to have her scarf and her warm coat to keep her cozy.",
-                "Esmeralda spent hours in her garden wearing overalls tending to her grass and bushes. It made her smile.",
-                "Do I look like a man? Esmeralda asked, raising an eyebrow as she posed with her black business suit, complete with shirt, jacket and tie.",
-                "She sat down on the park bench and considered her predicament. A quiet sadness came over her.",
+                "It was a bright winter morning, and Esmeralda decided to go for a walk in the woods. The snow had fallen the night before, and she enjoyed the glistening trees and the crisp air. She was glad to have her scarf and her warm coat to keep her cozy.",
+                "Esmeralda spent hours in her garden tending to her grass and bushes wearing her dungarees. The greenery made her smile. Especially when the sky was blue",
+                "Do I look like a man? Esmeralda asked, raising an eyebrow as she posed with her grey business suit, complete with shirt, jacket and tie.",
+                "Esmeralda sat down on the park bench and considered her predicament. A quiet sadness came over her.",
             ]
 
             for search_text in search_texts:
                 search_resp = client.get(
-                    f"search?query={quote(search_text)}&threshold=0.35"
+                    f"search?query={quote(search_text)}&threshold=0.6"
                 )
                 assert search_resp.status_code == 200
                 results = search_resp.json()
-                print("Semantic search results:")
-                for pic in results:
-                    print(pic)
-                assert (
-                    1 <= len(results)
-                ), f"Expected at least one results, got {len(results)} for the text '{search_text}'"
+
+                assert 1 <= len(results), (
+                    f"Expected at least one results, got {len(results)} for the text '{search_text}'"
+                )
+                print("===== Semantic Search Result =====")
+                print(f"Search text:\n{search_text}\n\n")
+                print(f"Best match: {results[0]['description']}\n\n")
+                print(f"Similarity: {results[0]['likeness_score']:.4f}.\n")
     gc.collect()

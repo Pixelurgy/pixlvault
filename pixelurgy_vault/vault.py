@@ -115,7 +115,7 @@ class Vault:
         logger.debug(f"logo_dest_folder in _import_default_data: {logo_dest_folder}")
 
         character = Character(
-            name="EsmeraldaVault", description="Built-in vault character"
+            name="Esmeralda Vault", description="Built-in vault character"
         )
         self.characters.add(character)
 
