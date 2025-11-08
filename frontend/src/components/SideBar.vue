@@ -5,7 +5,7 @@ import unknownPerson from "../assets/unknown-person.png"; // Fallback avatar for
 
 const props = defineProps({
   sections: { type: Object, required: true },
-  selectedCharacter: { type: String, required: true },
+  selectedCharacter: { type: [String, Number], required: true },
   allPicturesId: { type: String, required: true },
   unassignedPicturesId: { type: String, required: true },
   categoryCounts: { type: Object, required: true },

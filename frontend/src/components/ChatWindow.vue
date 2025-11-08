@@ -177,36 +177,65 @@ async function sendChatMessageAndFocus() {
     if (props.backendUrl) {
       try {
         const searchRes = await fetch(
-          `${props.backendUrl}/search?query=${encodeURIComponent(searchQuery)}`
+          `${props.backendUrl}/search?query=${encodeURIComponent(searchQuery)}&top_n=10`
         );
         if (searchRes.ok) {
           const searchData = await searchRes.json();
           if (Array.isArray(searchData) && searchData.length > 0) {
-            const totalScore = searchData.reduce(
-              (sum, pic) => sum + (pic.likeness_score || 0),
-              0
-            );
-            let r = Math.random() * (totalScore || 1);
-            let chosen = searchData[0];
-            for (const pic of searchData) {
-              r -= pic.likeness_score || 0;
-              if (r <= 0) {
-                chosen = pic;
-                break;
+            // Always use the best result (highest likeness_score)
+            const bestResult = searchData[0];
+            
+            // Build debug info
+            let debugInfo = `**Search Debug Info:**\n`;
+            debugInfo += `Query: "${searchQuery}"\n`;
+            debugInfo += `Results found: ${searchData.length}\n\n`;
+            debugInfo += `**Top 3 matches:**\n`;
+            
+            for (let i = 0; i < Math.min(3, searchData.length); i++) {
+              const pic = searchData[i];
+              debugInfo += `${i + 1}. Score: ${(pic.likeness_score * 100).toFixed(1)}%\n`;
+              debugInfo += `   Tags: ${pic.tags?.slice(0, 5).join(', ') || 'none'}${pic.tags?.length > 5 ? '...' : ''}\n`;
+              if (pic.description) {
+                const shortDesc = pic.description.length > 80 
+                  ? pic.description.substring(0, 80) + '...' 
+                  : pic.description;
+                debugInfo += `   Description: ${shortDesc}\n`;
               }
+              debugInfo += `\n`;
             }
-            const imageUrl = `${props.backendUrl}/pictures/${chosen.id}`;
+            
+            debugInfo += `**Selected:** Best match (#1) with ${(bestResult.likeness_score * 100).toFixed(1)}% similarity\n`;
+            
+            // Add debug info as a system message
+            chatMessages.value.push({
+              role: "system",
+              content: debugInfo,
+              isDebug: true
+            });
+            
+            const imageUrl = `${props.backendUrl}/pictures/${bestResult.id}`;
             for (let i = chatMessages.value.length - 1; i >= 0; i--) {
               const msg = chatMessages.value[i];
-              if (msg.role === "assistant" && !msg.pictureUrl) {
+              if (msg.role === "assistant" && !msg.pictureUrl && !msg.isDebug) {
                 chatMessages.value[i] = { ...msg, pictureUrl: imageUrl };
                 break;
               }
             }
+          } else {
+            // No results found
+            chatMessages.value.push({
+              role: "system",
+              content: `**Search Debug Info:**\nQuery: "${searchQuery}"\nNo results found.`,
+              isDebug: true
+            });
           }
         }
       } catch (error) {
-        // Ignore search errors for now.
+        chatMessages.value.push({
+          role: "system",
+          content: `**Search Error:** ${error.message || error}`,
+          isDebug: true
+        });
       }
     }
   } catch (error) {
@@ -248,6 +277,15 @@ defineExpose({ focusInput, scrollToBottom });
               <div class="chat-bubble user">
                 <span class="chat-username">You</span>
                 <span class="chat-text">{{ msg.content }}</span>
+              </div>
+            </template>
+            <template v-else-if="msg.role === 'system' && msg.isDebug">
+              <div class="chat-debug-message">
+                <span class="chat-username">Debug</span>
+                <span
+                  class="chat-text"
+                  v-html="renderMarkdown(msg.content)"
+                ></span>
               </div>
             </template>
             <template v-else>
@@ -460,6 +498,36 @@ defineExpose({ focusInput, scrollToBottom });
   margin: 0 auto;
   border-radius: 8px;
   box-shadow: 0 2px 8px #0002;
+}
+
+.chat-debug-message {
+  width: 100%;
+  background: #fff3cd;
+  border-left: 4px solid #ffc107;
+  color: #856404;
+  border-radius: 8px;
+  padding: 0.7em 1.1em;
+  font-size: 0.95em;
+  font-family: monospace;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4em;
+  margin: 0.5em 0;
+}
+
+.chat-debug-message .chat-username {
+  font-size: 0.9em;
+  font-weight: 700;
+  color: #ff9800;
+  text-transform: uppercase;
+}
+
+.chat-debug-message .chat-text {
+  white-space: pre-line;
+  word-break: break-word;
+  font-size: 0.95em;
+  line-height: 1.5;
 }
 
 .chat-input-row {
