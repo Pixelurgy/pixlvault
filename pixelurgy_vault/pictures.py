@@ -34,6 +34,8 @@ class SortMechanism(str, Enum):
     NOISE_LEVEL_ASC = "noise_level_asc"
     HAS_DESCRIPTION = "has_description"
     NO_DESCRIPTION = "no_description"
+    FORMAT_ASC = "format_asc"
+    FORMAT_DESC = "format_desc"
 
 
 # List of available sorting mechanisms for API
@@ -55,6 +57,8 @@ def get_sort_mechanisms():
             (SortMechanism.NOISE_LEVEL_ASC, "Noise Level (lowest first)"),
             (SortMechanism.HAS_DESCRIPTION, "Has Description"),
             (SortMechanism.NO_DESCRIPTION, "No Description"),
+            (SortMechanism.FORMAT_ASC, "Format (A-Z)"),
+            (SortMechanism.FORMAT_DESC, "Format (Z-A)"),
         ]
     ]
 

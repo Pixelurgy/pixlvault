@@ -458,8 +458,14 @@ class Server:
             # Fuzzy search (tag/description/character name)
             all_pics = self.vault.pictures.find()
             fuzzy_scores = {}
+            character_match_bonus = {}  # Track character name matches for bonus
+            strong_tag_match_bonus = {}  # Track strong tag matches for bonus
+
             for pic in all_pics:
                 tag_scores = []
+                char_name_match = False
+                strong_tag_matches = 0
+
                 # Add character name to tags for fuzzy search
                 tags_and_name = list(pic.tags)
                 char_name = None
@@ -471,13 +477,30 @@ class Server:
                             char_name = char_obj.name
                     except Exception:
                         char_name = None
+
+                char_name_words = []
                 if char_name:
                     names = char_name.split(" ")
+                    char_name_words = [n.lower() for n in names]
                     for name in names:
                         tags_and_name.append(name)
+
                 for q_word in q_split:
                     max_score = 0
                     logger.debug(f"Query word: {q_word}")
+
+                    # Check character name match first
+                    for name_word in char_name_words:
+                        score = fuzz.ratio(q_word, name_word) / 100
+                        score *= min(len(q_word), len(name_word)) / max(
+                            len(q_word), len(name_word), 1
+                        )
+                        if score > max_score:
+                            max_score = score
+                            if score >= 0.8:  # Strong character name match
+                                char_name_match = True
+
+                    # Check tags
                     for tag in tags_and_name:
                         score = fuzz.ratio(q_word, str(tag).lower()) / 100
                         score *= min(len(q_word), len(tag)) / max(
@@ -485,20 +508,45 @@ class Server:
                         )
                         if score > max_score:
                             max_score = score
+
+                        # Count strong tag matches (>=0.8)
+                        if score >= 0.8:
+                            strong_tag_matches += 1
+
                     tag_scores.append(max_score)
                     desc_score = (
                         fuzz.ratio(q_word, (pic.description or "").lower()) / 100.0
                     )
+
                 logger.info(
                     f"PicID={pic.id} Desc='{pic.description}' Desc score={desc_score}, Tag scores={tag_scores}"
                 )
+
+                # Calculate fuzzy score with penalty for low match coverage
                 avg_score = sum(tag_scores) / len(tag_scores) if tag_scores else 0
                 max_score = max(tag_scores) if tag_scores else 0
-                total_score = max(0.4 * avg_score + 0.6 * max_score, desc_score)
+
+                # Count how many query words had decent matches (>0.5)
+                decent_matches = sum(1 for s in tag_scores if s > 0.5)
+                match_coverage = decent_matches / len(tag_scores) if tag_scores else 0
+
+                # Penalize if most words don't match well
+                # If <50% of words match, reduce the score significantly
+                coverage_penalty = 1.0 if match_coverage >= 0.5 else match_coverage * 2
+
+                total_score = (
+                    max(0.4 * avg_score + 0.6 * max_score, desc_score)
+                    * coverage_penalty
+                )
+
                 logger.info(
-                    f"PicID={pic.id} Desc='{pic.description}' Desc score={desc_score}, Tag scores={tag_scores}, total score={total_score}"
+                    f"PicID={pic.id} Desc='{pic.description}' Desc score={desc_score}, Tag scores={tag_scores}, coverage={match_coverage:.2f}, penalty={coverage_penalty:.2f}, total score={total_score:.2f}"
                 )
                 fuzzy_scores[pic.id] = total_score
+
+                # Store bonuses for later application
+                character_match_bonus[pic.id] = 0.15 if char_name_match else 0
+                strong_tag_match_bonus[pic.id] = min(0.20, strong_tag_matches * 0.05)
 
             # Embedding search
             # For 1-2 words, expand query for better semantic results
@@ -541,8 +589,24 @@ class Server:
                 fuzzy_score = fuzzy_scores.get(pic_id, 0)
                 sem_score = semantic_scores.get(pic_id, 0)
                 combined_score = fuzzy_w * fuzzy_score + sem_w * sem_score
+
+                # Apply bonuses ONLY if base score is reasonable (>=0.3)
+                # This prevents weak matches from getting artificially boosted
+                char_bonus = character_match_bonus.get(pic_id, 0)
+                tag_bonus = strong_tag_match_bonus.get(pic_id, 0)
+
+                if combined_score >= 0.3:
+                    # Good match: apply full bonuses
+                    combined_score = min(1.0, combined_score + char_bonus + tag_bonus)
+                elif combined_score >= 0.15:
+                    # Weak match: apply reduced bonuses (50%)
+                    combined_score = min(
+                        1.0, combined_score + (char_bonus + tag_bonus) * 0.5
+                    )
+                # else: very weak match (<0.15): no bonuses applied
+
                 logger.info(
-                    f"Got combined score of {combined_score} for PicID={pic_id} (Fuzzy={fuzzy_score}, Semantic={sem_score})"
+                    f"Got combined score of {combined_score} for PicID={pic_id} (Fuzzy={fuzzy_score}, Semantic={sem_score}, CharBonus={char_bonus}, TagBonus={tag_bonus})"
                 )
                 pic = next((p for p in all_pics if p.id == pic_id), None)
                 if pic:
@@ -882,6 +946,15 @@ class Server:
                 ]:
                     reverse = sort == SortMechanism.DATE_DESC.value
                     pics.sort(key=lambda p: p.created_at or "", reverse=reverse)
+                elif sort in [
+                    SortMechanism.FORMAT_ASC.value,
+                    SortMechanism.FORMAT_DESC.value,
+                ]:
+                    reverse = sort == SortMechanism.FORMAT_DESC.value
+                    pics.sort(
+                        key=lambda p: p.format.lower() if p.format else "zzz",
+                        reverse=reverse,
+                    )
 
             # Return only IDs - much faster than full to_dict()
             return [pic.id for pic in pics]
@@ -975,6 +1048,15 @@ class Server:
                 elif sort == SortMechanism.NO_DESCRIPTION.value:
                     # Pictures without descriptions first
                     pics.sort(key=lambda p: 1 if p.description else 0)
+                elif sort in [
+                    SortMechanism.FORMAT_ASC.value,
+                    SortMechanism.FORMAT_DESC.value,
+                ]:
+                    reverse = sort == SortMechanism.FORMAT_DESC.value
+                    pics.sort(
+                        key=lambda p: p.format.lower() if p.format else "zzz",
+                        reverse=reverse,
+                    )
                 # else: unsorted
                 if limit != sys.maxsize:
                     pics = pics[offset : offset + limit]
