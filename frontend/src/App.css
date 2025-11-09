@@ -58,37 +58,6 @@ body {
   border: 3px solid transparent;
 }
 
-.reference-trophy-btn {
-  position: absolute !important;
-  right: 8px;
-  bottom: 8px;
-  z-index: 12;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  background: transparent;
-  padding: 0;
-}
-.trophy-bg {
-  background: rgba(255, 255, 255, 0.8) !important;
-  border-radius: 50%;
-  width: 32px !important;
-  height: 32px !important;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: none !important;
-  outline: none !important;
-  border: 3px solid transparent;
-  transition: border 0.2s;
-}
-.trophy-bg:hover {
-  background: rgba(255, 255, 255, 1) !important;
-}
-.trophy-bg:focus,
-.trophy-bg:active {
-  border: 2px solid transparent !important;
-  outline: none !important;
-  box-shadow: none !important;
-}
 .image-card.selected {
   z-index: 2;
   position: relative;

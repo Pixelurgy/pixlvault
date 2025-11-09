@@ -324,64 +324,6 @@ def test_benchmark_add_images_by_binary_upload():
     gc.collect()
 
 
-def test_reference_picture_workflow():
-    """Test adding and retrieving reference images for a character."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        config_path = os.path.join(temp_dir, "config.json")
-        server_config_path = os.path.join(temp_dir, "server-config.json")
-        with Server(
-            config_path=config_path, server_config_path=server_config_path
-        ) as server:
-            client = TestClient(server.api)
-
-            # Create a character
-            resp = client.post(
-                "/characters",
-                json={
-                    "name": "Test Character",
-                    "description": "For reference image test",
-                },
-            )
-            assert resp.status_code == 200
-            char_id = resp.json()["character"]["id"]
-
-            # Create a dummy image
-            img = Image.new("RGB", (32, 32), color=(123, 222, 111))
-            buf = BytesIO()
-            img.save(buf, format="PNG")
-            buf.seek(0)
-            img_bytes = buf.read()
-
-            # Post image
-            resp2 = client.post(
-                "/pictures",
-                data={
-                    "primary_character_id": char_id,
-                },
-                files=[("file", ("ref.png", img_bytes, "image/png"))],
-            )
-            assert resp2.status_code == 200
-            data = resp2.json()
-
-            upload_result = data["results"][0]
-            assert "picture_id" in upload_result
-
-            # Update the picture to be a reference picture
-            pic_id = upload_result["picture_id"]
-            resp3 = client.patch(f"/pictures/{pic_id}", params={"is_reference": "true"})
-            assert resp3.status_code == 200
-            assert resp3.json()["status"] == "success"
-
-            # Retrieve reference pictures
-            resp4 = client.get(f"/characters/reference_pictures/{char_id}")
-            assert resp4.status_code == 200
-            ref_data = resp4.json()["reference_pictures"]
-            assert len(ref_data) == 1
-            ref_pic = ref_data[0]
-            assert ref_pic["id"] == upload_result["picture_id"]
-    gc.collect()
-
-
 def test_tagger_worker_adds_tags():
     """Test that uploading TaggerTest.png results in tags being added by the tag worker."""
     with tempfile.TemporaryDirectory() as temp_dir:

@@ -164,7 +164,6 @@ class Server:
                 "sort": "date_desc",
                 "thumbnail": "default",
                 "show_stars": True,
-                "show_only_reference": False,
                 "openai_host": "localhost",
                 "openai_port": 8000,
                 "openai_model": "gpt-3.5-turbo",
@@ -180,8 +179,6 @@ class Server:
                     config["thumbnail_size"] = "default"
                 if "show_stars" not in config:
                     config["show_stars"] = True
-                if "show_only_reference" not in config:
-                    config["show_only_reference"] = False
                 if "openai_host" not in config:
                     config["openai_host"] = "localhost"
                 if "openai_port" not in config:
@@ -306,12 +303,11 @@ class Server:
             image_root_changed = False
             for key, value in patch_data.items():
                 if key not in self._config:
-                    # Allow adding 'sort', 'thumbnail', 'show_stars', 'show_only_reference' keys if missing
+                    # Allow adding 'sort', 'thumbnail', 'show_stars' keys if missing
                     if key in (
                         "sort",
                         "thumbnail",
                         "show_stars",
-                        "show_only_reference",
                     ):
                         self._config[key] = value
                         updated = True
@@ -444,7 +440,6 @@ class Server:
                     "description": pic.description,
                     "tags": pic.tags,
                     "created_at": pic.created_at,
-                    "is_reference": getattr(pic, "is_reference", 0),
                 }
                 if likeness_score is not None:
                     d["likeness_score"] = likeness_score
@@ -643,26 +638,6 @@ class Server:
                 for pic, score, _, _ in combined[:top_n]
             ]
 
-        @self.api.get("/characters/reference_pictures/{id}")
-        async def get_reference_pictures(id: str):
-            """
-            Get all reference pictures for a character (is_reference=1).
-            """
-            try:
-                reference_pics = self.vault.pictures.find(
-                    is_reference=1, primary_character_id=id
-                )
-                logger.info(
-                    f"Found {len(reference_pics)} reference pictures for character id={id}"
-                )
-                return {
-                    "reference_pictures": [
-                        pic.to_dict(exclude=["file_path"]) for pic in reference_pics
-                    ]
-                }
-            except KeyError:
-                raise HTTPException(status_code=404, detail="Character not found")
-
         @self.api.patch("/characters/{id}")
         async def patch_character(id: int, request: Request):
             data = await request.json()
@@ -807,17 +782,10 @@ class Server:
             updated = False
             # Update fields
             for key, value in params.items():
-                if key == "is_reference":
-                    # Special case: convert to int
-                    try:
-                        cast_val = value.lower() in ("1", "true", "yes")
-                    except Exception:
-                        cast_val = False
-                else:
-                    try:
-                        cast_val = int(value)
-                    except Exception:
-                        cast_val = value
+                try:
+                    cast_val = int(value)
+                except Exception:
+                    cast_val = value
 
                 if hasattr(pic, key):
                     logger.debug(
@@ -914,7 +882,7 @@ class Server:
             """
             Get only picture IDs for the current view (no thumbnails, embeddings, or other heavy data).
             Much faster than /pictures endpoint for selecting all images.
-            Respects all filter parameters (primary_character_id, tags, is_reference, etc.) and search.
+            Respects all filter parameters (primary_character_id, tags, etc.) and search.
             """
             from pixelurgy_vault.pictures import SortMechanism
 
@@ -1103,7 +1071,6 @@ class Server:
 
             image_count = len(pics)
 
-            reference_image_count = sum(1 for p in pics if p.is_reference == 1)
             last_updated = max(
                 (p.created_at for p in pics if p.created_at), default=None
             )
@@ -1114,7 +1081,6 @@ class Server:
             summary = {
                 "primary_character_id": char_id,
                 "image_count": image_count,
-                "reference_image_count": reference_image_count,
                 "last_updated": last_updated,
                 "thumbnail_url": thumb_url,
             }

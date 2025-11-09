@@ -15,7 +15,6 @@
     @close="closeOverlay"
     @prev="showPrevImage"
     @next="showNextImage"
-    @toggle-reference="handleOverlayToggleReference"
     @set-score="handleOverlaySetScore"
     @remove-tag="removeTagFromOverlayImage"
     @add-tag="addTagToOverlay"
@@ -66,18 +65,6 @@
           "
           >mdi-image-size-select-large</v-icon
         >
-        <v-btn
-          icon
-          :color="referenceFilterMode ? 'orange darken-2' : 'grey'"
-          @click="referenceFilterMode = !referenceFilterMode"
-          title="Show only reference images"
-          style="margin-right: 2px"
-        >
-          <v-icon
-            >{{ referenceFilterMode ? "mdi-trophy" : "mdi-trophy-outline"
-            }}</v-icon
-          >
-        </v-btn>
         <v-btn
           icon
           :color="showStars ? 'orange' : 'grey'"
@@ -186,20 +173,6 @@
                   <label style="display: flex; align-items: center; gap: 8px">
                     <input type="checkbox" v-model="config.show_stars" />
                     Show star ratings by default
-                  </label>
-                  <label
-                    style="
-                      display: flex;
-                      align-items: center;
-                      gap: 8px;
-                      margin-top: 8px;
-                    "
-                  >
-                    <input
-                      type="checkbox"
-                      v-model="config.show_only_reference"
-                    />
-                    Show only reference images by default
                   </label>
                 </div>
               </div>
@@ -481,27 +454,7 @@
                         style="cursor: pointer"
                       />
                     </template>
-                    <!-- Trophy icon for reference toggle -->
-                    <v-btn
-                      v-if="thumbLoaded[img.id]"
-                      icon
-                      size="small"
-                      class="reference-trophy-btn trophy-bg"
-                      @click.stop="toggleReference(img)"
-                      title="Toggle reference picture"
-                      style="
-                        position: absolute;
-                        top: 8px;
-                        left: 8px;
-                        z-index: 2;
-                      "
-                    >
-                      <v-icon
-                        :color="img.is_reference ? 'orange' : 'grey darken-2'"
-                        size="24px"
-                        >mdi-trophy</v-icon
-                      >
-                    </v-btn>
+
                   </div>
                   <!-- Show date under thumbnail if sorting by date -->
                   <div

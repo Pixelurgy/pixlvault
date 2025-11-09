@@ -44,7 +44,6 @@ class PictureModel:
     height: int = field(default=None)
     size_bytes: int = field(default=None)
     created_at: str = field(default=None)
-    is_reference: int = field(default=0, metadata={"index": True})
     embedding: bytes = field(default=None)
     face_bbox: str = field(default=None)
     thumbnail: bytes = field(default=None)
@@ -79,7 +78,6 @@ class PictureModel:
             "height": self.height,
             "size_bytes": self.size_bytes,
             "created_at": self.created_at,
-            "is_reference": int(self.is_reference),
             "embedding": base64.b64encode(self.embedding).decode("ascii")
             if self.embedding is not None
             else None,
@@ -130,9 +128,6 @@ class PictureModel:
             height=row["height"] if "height" in row.keys() else None,
             size_bytes=row["size_bytes"] if "size_bytes" in row.keys() else None,
             created_at=row["created_at"] if "created_at" in row.keys() else None,
-            is_reference=row["is_reference"] == 1
-            if "is_reference" in row.keys()
-            else False,
             embedding=embedding,
             face_bbox=json.loads(row["face_bbox"])
             if "face_bbox" in row.keys() and row["face_bbox"]
