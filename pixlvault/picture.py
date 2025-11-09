@@ -58,6 +58,9 @@ class PictureModel:
     primary_character_id: int = field(
         default=None, metadata={"foreign_key": "characters(id)", "index": True}
     )
+    reference_picture_set_id: int = field(
+        default=None, metadata={"foreign_key": "picture_sets(id)", "index": True}
+    )
     tags: list[str] = field(
         default_factory=list, metadata={"db_ignore": True, "include_in_embedding": True}
     )
@@ -90,6 +93,7 @@ class PictureModel:
             "score": self.score,
             "character_likeness": self.character_likeness,
             "pixel_sha": self.pixel_sha,
+            "reference_picture_set_id": self.reference_picture_set_id,
         }
         if include:
             result = {k: v for k, v in result.items() if k in include}
@@ -140,4 +144,7 @@ class PictureModel:
             if "character_likeness" in row.keys()
             else None,
             pixel_sha=row["pixel_sha"] if "pixel_sha" in row.keys() else None,
+            reference_picture_set_id=row["reference_picture_set_id"]
+            if "reference_picture_set_id" in row.keys()
+            else None,
         )

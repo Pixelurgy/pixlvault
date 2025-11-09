@@ -1294,11 +1294,31 @@ class Server:
             thumb_url = None
             if char_id not in (None, "", "null"):
                 thumb_url = f"/face_thumbnail/{char_id}"
+
+            # Ensure reference set exists for this character
+            reference_set_id = None
+            if char_id not in (None, "", "null"):
+                ref_sets = self.vault.picture_sets.list_all()
+                # Try to find reference set
+                for s in ref_sets:
+                    if s.name == "reference_pictures" and str(s.description) == str(
+                        char_id
+                    ):
+                        reference_set_id = s.id
+                        break
+                # If not found, create it
+                if reference_set_id is None:
+                    reference_set = self.vault.picture_sets.create(
+                        name="reference_pictures", description=str(char_id)
+                    )
+                    reference_set_id = reference_set.id
+
             summary = {
                 "primary_character_id": char_id,
                 "image_count": image_count,
                 "last_updated": last_updated,
                 "thumbnail_url": thumb_url,
+                "reference_picture_set_id": reference_set_id,
             }
             return summary
 

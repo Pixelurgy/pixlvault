@@ -39,6 +39,33 @@ class VaultUpgrade:
             self.schema_version.set_version(2)
             self.logger.info("Database schema upgraded to version 2")
 
+        # Ensure every character has a reference picture set
+        self._ensure_reference_picture_sets()
+
+    def _ensure_reference_picture_sets(self):
+        self.logger.info("Ensuring reference picture sets for all characters...")
+        cursor = self.connection.cursor()
+        # Get all characters
+        cursor.execute("SELECT id FROM characters")
+        character_ids = [row["id"] for row in cursor.fetchall()]
+        for char_id in character_ids:
+            # Check if reference picture set exists for this character
+            cursor.execute(
+                "SELECT id FROM picture_sets WHERE name = ? AND description = ?",
+                ("reference_pictures", str(char_id)),
+            )
+            result = cursor.fetchone()
+            if not result:
+                # Create reference picture set for this character
+                cursor.execute(
+                    "INSERT INTO picture_sets (name, description) VALUES (?, ?)",
+                    ("reference_pictures", str(char_id)),
+                )
+                self.logger.info(
+                    f"Created reference picture set for character id={char_id}"
+                )
+        self.connection.commit()
+
     def _upgrade_to_v2(self):
         """Add picture_sets and picture_set_members tables."""
         self.logger.info("Creating picture_sets table...")
