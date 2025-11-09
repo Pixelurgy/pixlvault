@@ -97,6 +97,14 @@
         >
           <v-icon>mdi-robot</v-icon>
         </v-btn>
+        <v-btn
+          icon
+          @click="exportCurrentView"
+          title="Export current view as ZIP"
+          style="margin-left: 4px"
+        >
+          <v-icon>mdi-download</v-icon>
+        </v-btn>
 
         <!-- Settings Dialog -->
         <v-dialog v-model="settingsDialog" max-width="50vw">

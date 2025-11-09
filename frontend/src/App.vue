@@ -916,6 +916,45 @@ function closeChatOverlay() {
   chatOpen.value = false;
 }
 
+// --- Export ---
+async function exportCurrentView() {
+  try {
+    // Build query params based on current view
+    const params = new URLSearchParams();
+
+    // Add character filter
+    if (
+      selectedCharacter.value &&
+      selectedCharacter.value !== ALL_PICTURES_ID
+    ) {
+      if (selectedCharacter.value === "null") {
+        params.append("primary_character_id", "null");
+      } else {
+        params.append("primary_character_id", selectedCharacter.value);
+      }
+    }
+
+    // Add picture set filter (takes precedence over character)
+    if (selectedSet.value !== null) {
+      params.append("set_id", selectedSet.value);
+    }
+
+    // Add search query
+    if (searchQuery.value) {
+      params.append("query", searchQuery.value);
+    }
+
+    // Build the URL
+    const url = `${BACKEND_URL}/export/zip?${params.toString()}`;
+
+    // Trigger download by opening in new window
+    window.open(url, "_blank");
+  } catch (e) {
+    console.error("Export failed:", e);
+    alert("Failed to export: " + (e.message || e));
+  }
+}
+
 // --- Search ---
 async function searchImages(query) {
   const q = (typeof query === "string" ? query : searchQuery.value).trim();

@@ -1156,6 +1156,101 @@ class Server:
 
             return [pic.to_dict() for pic in pics]
 
+        @self.api.get("/export/zip")
+        async def export_pictures_zip(
+            request: Request,
+            query: str = Query(None),
+            set_id: int = Query(None),
+        ):
+            """
+            Export pictures matching the filters as a zip file.
+            Uses same filter logic as /pictures endpoint.
+            """
+            import zipfile
+            import io
+            from fastapi.responses import StreamingResponse
+
+            query_params = dict(request.query_params)
+            query_params.pop("query", None)
+            query_params.pop("set_id", None)
+
+            # Convert tags to list if present
+            if "tags" in query_params and isinstance(query_params["tags"], str):
+                try:
+                    query_params["tags"] = json.loads(query_params["tags"])
+                except Exception:
+                    query_params["tags"] = [query_params["tags"]]
+
+            # Handle picture set
+            if set_id is not None:
+                picture_ids = self.vault.picture_sets.get_pictures_in_set(set_id)
+                pics = []
+                for pid in picture_ids:
+                    try:
+                        pics.append(self.vault.pictures[pid])
+                    except KeyError:
+                        pass
+            # Handle semantic search
+            elif query:
+                pics = self.vault.pictures.find_by_text(query, top_n=sys.maxsize)
+            else:
+                pics = self.vault.pictures.find(**query_params)
+
+            # Create zip file in memory
+            zip_buffer = io.BytesIO()
+            # Group pictures by character name (or 'image' for unassigned)
+            from collections import defaultdict
+
+            char_groups = defaultdict(list)
+            for pic in pics:
+                if pic.primary_character_id:
+                    try:
+                        char = self.vault.characters[pic.primary_character_id]
+                        char_name = char.name.replace(" ", "_")
+                    except KeyError:
+                        char_name = "image"
+                else:
+                    char_name = "image"
+                char_groups[char_name].append(pic)
+
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                for char_name, group in char_groups.items():
+                    for idx, pic in enumerate(group, start=1):
+                        if os.path.exists(pic.file_path):
+                            ext = os.path.splitext(pic.file_path)[1]
+                            arcname = f"{char_name}_{idx:05d}{ext}"
+                            zip_file.write(pic.file_path, arcname=arcname)
+
+            zip_buffer.seek(0)
+
+            # Generate filename based on filters
+            filename_parts = []
+            if set_id is not None:
+                picture_set = self.vault.picture_sets.get(set_id)
+                if picture_set:
+                    filename_parts.append(picture_set.name.replace(" ", "_"))
+            if query:
+                filename_parts.append(f"search_{query[:20]}")
+            if "primary_character_id" in query_params:
+                char_id = query_params["primary_character_id"]
+                if char_id and char_id != "null":
+                    try:
+                        char = self.vault.characters[int(char_id)]
+                        filename_parts.append(char.name.replace(" ", "_"))
+                    except (KeyError, ValueError):
+                        pass
+            if "tags" in query_params:
+                filename_parts.append("tagged")
+
+            filename = "_".join(filename_parts) if filename_parts else "pictures"
+            filename = f"{filename}_{len(pics)}_images.zip"
+
+            return StreamingResponse(
+                io.BytesIO(zip_buffer.getvalue()),
+                media_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename={filename}"},
+            )
+
         @self.api.delete("/pictures/{id}")
         async def delete_picture(id: str):
             """
