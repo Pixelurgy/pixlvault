@@ -17,13 +17,13 @@ from PIL import Image
 from rapidfuzz import fuzz
 from typing import List
 
-from pixelurgy_vault.character import CharacterModel
-from pixelurgy_vault.logging import get_logger
-from pixelurgy_vault.picture_utils import PictureUtils
-from pixelurgy_vault.pictures import get_sort_mechanisms
-from pixelurgy_vault.vault import Vault
+from pixlvault.character import CharacterModel
+from pixlvault.logging import get_logger
+from pixlvault.picture_utils import PictureUtils
+from pixlvault.pictures import get_sort_mechanisms
+from pixlvault.vault import Vault
 
-DEFAULT_DESCRIPTION = "Pixelurgy Vault default configuration"
+DEFAULT_DESCRIPTION = "PixlVault default configuration"
 
 # Logging will be set up after config is loaded
 logger = get_logger(__name__)
@@ -39,7 +39,7 @@ class Server:
             self.vault.close()
 
     """
-    Main server class for the Pixelurgy Vault FastAPI application.
+    Main server class for the PixlVault FastAPI application.
 
     Attributes:
         config_path(str): Remote accessible configuration file.
@@ -58,7 +58,7 @@ class Server:
             config_path (str): Path to the image roots config file.
             server_config_path (str): Path to the server-only config file.
         """
-        print(f"Initializing Pixelurgy Vault server with config: {config_path}")
+        print(f"Initializing PixlVault server with config: {config_path}")
         self._config_path = config_path
 
         self._config = self.init_config(config_path)
@@ -673,6 +673,127 @@ class Server:
             except KeyError:
                 raise HTTPException(status_code=404, detail="Character not found")
 
+        # =====================
+        # Picture Sets Endpoints
+        # =====================
+
+        @self.api.get("/picture_sets")
+        async def get_picture_sets():
+            """List all picture sets."""
+            sets = self.vault.picture_sets.list_all()
+            result = []
+            for s in sets:
+                set_dict = s.to_dict()
+                set_dict["picture_count"] = self.vault.picture_sets.get_set_count(s.id)
+                result.append(set_dict)
+            return result
+
+        @self.api.post("/picture_sets")
+        async def create_picture_set(payload: dict = Body(...)):
+            """Create a new picture set."""
+            name = payload.get("name")
+            description = payload.get("description", "")
+
+            if not name:
+                raise HTTPException(status_code=400, detail="name is required")
+
+            picture_set = self.vault.picture_sets.create(
+                name=name, description=description
+            )
+            return {"status": "success", "picture_set": picture_set.to_dict()}
+
+        @self.api.get("/picture_sets/{id}")
+        async def get_picture_set(id: int, info: bool = Query(False)):
+            """Get a picture set by id. Use ?info=true to get metadata only."""
+            picture_set = self.vault.picture_sets.get(id)
+            if not picture_set:
+                raise HTTPException(status_code=404, detail="Picture set not found")
+
+            picture_ids = self.vault.picture_sets.get_pictures_in_set(id)
+
+            if info:
+                # Return metadata only
+                set_dict = picture_set.to_dict()
+                set_dict["picture_count"] = len(picture_ids)
+                return set_dict
+
+            # Return the full pictures data
+            pictures = []
+            for pic_id in picture_ids:
+                try:
+                    pic = self.vault.pictures[pic_id]
+                    pictures.append(pic.to_dict(exclude=["file_path", "thumbnail"]))
+                except KeyError:
+                    logger.warning(f"Picture {pic_id} in set {id} not found")
+                    continue
+
+            return {"pictures": pictures, "set": picture_set.to_dict()}
+
+        @self.api.patch("/picture_sets/{id}")
+        async def update_picture_set(id: int, payload: dict = Body(...)):
+            """Update a picture set's name and/or description."""
+            name = payload.get("name")
+            description = payload.get("description")
+
+            success = self.vault.picture_sets.update(
+                id, name=name, description=description
+            )
+            if not success:
+                raise HTTPException(status_code=404, detail="Picture set not found")
+
+            return {"status": "success"}
+
+        @self.api.delete("/picture_sets/{id}")
+        async def delete_picture_set(id: int):
+            """Delete a picture set and all its members."""
+            success = self.vault.picture_sets.delete(id)
+            if not success:
+                raise HTTPException(status_code=404, detail="Picture set not found")
+
+            return {"status": "success", "deleted_id": id}
+
+        @self.api.get("/picture_sets/{id}/pictures")
+        async def get_picture_set_pictures(id: int):
+            """Get all picture ids in a set."""
+            picture_set = self.vault.picture_sets.get(id)
+            if not picture_set:
+                raise HTTPException(status_code=404, detail="Picture set not found")
+
+            picture_ids = self.vault.picture_sets.get_pictures_in_set(id)
+            return {"picture_ids": picture_ids}
+
+        @self.api.post("/picture_sets/{id}/pictures/{picture_id}")
+        async def add_picture_to_set(id: int, picture_id: str):
+            """Add a picture to a set."""
+            success = self.vault.picture_sets.add_picture(id, picture_id)
+            if not success:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to add picture to set (set may not exist or picture already in set)",
+                )
+
+            return {"status": "success"}
+
+        @self.api.delete("/picture_sets/{id}/pictures/{picture_id}")
+        async def remove_picture_from_set(id: int, picture_id: str):
+            """Remove a picture from a set."""
+            success = self.vault.picture_sets.remove_picture(id, picture_id)
+            if not success:
+                raise HTTPException(status_code=404, detail="Picture not in set")
+
+            return {"status": "success"}
+
+        @self.api.put("/picture_sets/{id}/pictures")
+        async def set_picture_set_pictures(id: int, payload: dict = Body(...)):
+            """Replace all pictures in a set with the given list."""
+            picture_ids = payload.get("picture_ids", [])
+
+            success = self.vault.picture_sets.set_pictures(id, picture_ids)
+            if not success:
+                raise HTTPException(status_code=404, detail="Picture set not found")
+
+            return {"status": "success", "picture_count": len(set(picture_ids))}
+
         @self.api.get("/characters")
         async def get_characters(name: str = Query(None)):
             """List all characters or filter by name."""
@@ -705,7 +826,7 @@ class Server:
         @self.api.get("/")
         async def read_root():
             version = self.get_version()
-            return {"message": "Pixelurgy Vault REST API", "version": version}
+            return {"message": "PixlVault REST API", "version": version}
 
         @self.api.get("/pictures/{id}")
         async def get_picture(
@@ -884,7 +1005,7 @@ class Server:
             Much faster than /pictures endpoint for selecting all images.
             Respects all filter parameters (primary_character_id, tags, etc.) and search.
             """
-            from pixelurgy_vault.pictures import SortMechanism
+            from pixlvault.pictures import SortMechanism
 
             query_params = dict(request.query_params)
             query_params.pop("sort", None)
@@ -940,7 +1061,7 @@ class Server:
             limit: int = Query(sys.maxsize),
             query: str = Query(None),
         ):
-            from pixelurgy_vault.pictures import SortMechanism
+            from pixlvault.pictures import SortMechanism
 
             query_params = dict(request.query_params)
             query_params.pop("info", None)
@@ -1034,6 +1155,101 @@ class Server:
                     pics = pics[offset : offset + limit]
 
             return [pic.to_dict() for pic in pics]
+
+        @self.api.get("/export/zip")
+        async def export_pictures_zip(
+            request: Request,
+            query: str = Query(None),
+            set_id: int = Query(None),
+        ):
+            """
+            Export pictures matching the filters as a zip file.
+            Uses same filter logic as /pictures endpoint.
+            """
+            import zipfile
+            import io
+            from fastapi.responses import StreamingResponse
+
+            query_params = dict(request.query_params)
+            query_params.pop("query", None)
+            query_params.pop("set_id", None)
+
+            # Convert tags to list if present
+            if "tags" in query_params and isinstance(query_params["tags"], str):
+                try:
+                    query_params["tags"] = json.loads(query_params["tags"])
+                except Exception:
+                    query_params["tags"] = [query_params["tags"]]
+
+            # Handle picture set
+            if set_id is not None:
+                picture_ids = self.vault.picture_sets.get_pictures_in_set(set_id)
+                pics = []
+                for pid in picture_ids:
+                    try:
+                        pics.append(self.vault.pictures[pid])
+                    except KeyError:
+                        pass
+            # Handle semantic search
+            elif query:
+                pics = self.vault.pictures.find_by_text(query, top_n=sys.maxsize)
+            else:
+                pics = self.vault.pictures.find(**query_params)
+
+            # Create zip file in memory
+            zip_buffer = io.BytesIO()
+            # Group pictures by character name (or 'image' for unassigned)
+            from collections import defaultdict
+
+            char_groups = defaultdict(list)
+            for pic in pics:
+                if pic.primary_character_id:
+                    try:
+                        char = self.vault.characters[pic.primary_character_id]
+                        char_name = char.name.replace(" ", "_")
+                    except KeyError:
+                        char_name = "image"
+                else:
+                    char_name = "image"
+                char_groups[char_name].append(pic)
+
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                for char_name, group in char_groups.items():
+                    for idx, pic in enumerate(group, start=1):
+                        if os.path.exists(pic.file_path):
+                            ext = os.path.splitext(pic.file_path)[1]
+                            arcname = f"{char_name}_{idx:05d}{ext}"
+                            zip_file.write(pic.file_path, arcname=arcname)
+
+            zip_buffer.seek(0)
+
+            # Generate filename based on filters
+            filename_parts = []
+            if set_id is not None:
+                picture_set = self.vault.picture_sets.get(set_id)
+                if picture_set:
+                    filename_parts.append(picture_set.name.replace(" ", "_"))
+            if query:
+                filename_parts.append(f"search_{query[:20]}")
+            if "primary_character_id" in query_params:
+                char_id = query_params["primary_character_id"]
+                if char_id and char_id != "null":
+                    try:
+                        char = self.vault.characters[int(char_id)]
+                        filename_parts.append(char.name.replace(" ", "_"))
+                    except (KeyError, ValueError):
+                        pass
+            if "tags" in query_params:
+                filename_parts.append("tagged")
+
+            filename = "_".join(filename_parts) if filename_parts else "pictures"
+            filename = f"{filename}_{len(pics)}_images.zip"
+
+            return StreamingResponse(
+                io.BytesIO(zip_buffer.getvalue()),
+                media_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename={filename}"},
+            )
 
         @self.api.delete("/pictures/{id}")
         async def delete_picture(id: str):

@@ -4,7 +4,7 @@ import numpy as np
 import os
 import torch
 
-from pixelurgy_vault.logging import get_logger
+from pixlvault.logging import get_logger
 
 IMAGE_SIZE = 448
 

@@ -1,11 +1,11 @@
-# Pixelurgy Vault
+# PixlVault
 
-A REST API server for Pixelurgy Vault, running on localhost:8765.
+A REST API server for PixlVault, running on localhost:8765.
 
 ## Development
 
 - Install dependencies: `pip install -e .`
-- Run server: `python -m pixelurgy_vault.server`
+- Run server: `python -m pixlvault.server`
 
 ## Publishing
 

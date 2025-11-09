@@ -4,8 +4,8 @@ import logging
 
 from platformdirs import user_config_dir
 
-from pixelurgy_vault.logging import setup_logging
-from pixelurgy_vault.server import Server
+from pixlvault.logging import setup_logging
+from pixlvault.server import Server
 
 APP_NAME = "pixelurgy-vault"
 CONFIG_PATH = os.path.join(user_config_dir(APP_NAME), "config.json")

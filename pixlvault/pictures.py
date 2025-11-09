@@ -10,11 +10,11 @@ import threading
 from enum import Enum
 from typing import Union, List, Tuple
 
-from pixelurgy_vault.logging import get_logger
-from pixelurgy_vault.picture import PictureModel
-from pixelurgy_vault.picture_quality import PictureQuality
-from pixelurgy_vault.picture_tagger import PictureTagger, MAX_CONCURRENT_IMAGES
-from pixelurgy_vault.picture_utils import PictureUtils
+from pixlvault.logging import get_logger
+from pixlvault.picture import PictureModel
+from pixlvault.picture_quality import PictureQuality
+from pixlvault.picture_tagger import PictureTagger, MAX_CONCURRENT_IMAGES
+from pixlvault.picture_utils import PictureUtils
 
 logger = get_logger(__name__)
 

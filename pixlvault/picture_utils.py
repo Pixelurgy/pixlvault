@@ -9,8 +9,8 @@ from io import BytesIO
 from typing import Optional
 from PIL import Image
 
-from pixelurgy_vault.logging import get_logger
-from pixelurgy_vault.picture import PictureModel
+from pixlvault.logging import get_logger
+from pixlvault.picture import PictureModel
 
 logger = get_logger(__name__)
 
