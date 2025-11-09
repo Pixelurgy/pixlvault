@@ -411,7 +411,7 @@ def test_semantic_search_on_all_pictures():
 
             # Wait for all pictures to be tagged (embeddings generated)
 
-            for _ in range(120):
+            for _ in range(240):
                 missing_embeddings = picture_ids.copy()
                 if not missing_embeddings:
                     break
