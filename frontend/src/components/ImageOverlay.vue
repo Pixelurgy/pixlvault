@@ -65,19 +65,7 @@
                 >mdi-star</v-icon
               >
             </div>
-            <v-btn
-              v-if="image"
-              icon
-              size="small"
-              class="reference-trophy-btn trophy-bg"
-              @click.stop="emit('toggle-reference')"
-              title="Toggle reference picture"
-              style="position: absolute; top: 8px; left: 8px; z-index: 2"
-            >
-              <v-icon :color="image?.is_reference ? 'orange' : 'grey darken-2'"
-                >mdi-trophy</v-icon
-              >
-            </v-btn>
+
           </div>
         </div>
         <div
@@ -209,7 +197,6 @@ const emit = defineEmits([
   "close",
   "prev",
   "next",
-  "toggle-reference",
   "set-score",
   "remove-tag",
   "add-tag",

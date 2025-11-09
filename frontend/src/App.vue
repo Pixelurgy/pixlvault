@@ -104,7 +104,6 @@ const hasMoreImages = ref(true);
 
 // --- Character & Sidebar State ---
 const selectedCharacter = ref(ALL_PICTURES_ID);
-const selectedReferenceMode = ref(false);
 const characters = ref([]);
 const categoryCounts = ref({
   [ALL_PICTURES_ID]: 0,
@@ -147,7 +146,6 @@ const characterEditorCharacter = ref(null);
 // --- Search & Filtering State ---
 const searchQuery = ref("");
 const showStars = ref(true);
-const referenceFilterMode = ref(false);
 
 // --- Config Dialog State ---
 const settingsDialog = ref(false);
@@ -157,7 +155,6 @@ const config = reactive({
   sort: "",
   thumbnail: 256,
   show_stars: true,
-  show_only_reference: false,
   openai_host: "localhost",
   openai_port: 8000,
   openai_model: "",
@@ -173,9 +170,6 @@ const error = ref(null);
 
 // --- Computed Collections ---
 const filteredImages = computed(() => {
-  if (referenceFilterMode.value) {
-    return images.value.filter((img) => Number(img.is_reference) === 1);
-  }
   return images.value;
 });
 
@@ -361,7 +355,6 @@ async function refreshImages(append = false) {
   }
   imagesError.value = null;
   const id = selectedCharacter.value;
-  const refMode = selectedReferenceMode.value;
   if (!id) return;
   imagesLoading.value = true;
   try {
@@ -375,10 +368,6 @@ async function refreshImages(append = false) {
       url = `${BACKEND_URL}/pictures?${params.toString()}`;
     } else if (id === UNASSIGNED_PICTURES_ID) {
       url = `${BACKEND_URL}/pictures?primary_character_id=&${params.toString()}`;
-    } else if (refMode) {
-      url = `${BACKEND_URL}/characters/reference_pictures/${encodeURIComponent(
-        id
-      )}`;
     } else {
       url = `${BACKEND_URL}/pictures?primary_character_id=${encodeURIComponent(
         id
@@ -387,14 +376,9 @@ async function refreshImages(append = false) {
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to fetch images");
     let baseImages = await res.json();
-    if (refMode && baseImages.reference_pictures) {
-      baseImages = baseImages.reference_pictures;
-      baseImages = baseImages.map((img) => ({ ...img, id: img.picture_id }));
-    }
     const newImages = baseImages.map((img) => ({
       ...img,
       score: typeof img.score !== "undefined" ? img.score : null,
-      is_reference: Number(img.is_reference) || 0,
     }));
     images.value = append ? [...images.value, ...newImages] : newImages;
     hasMoreImages.value = newImages.length === pageSize.value;
@@ -529,16 +513,10 @@ async function fetchConfig() {
       updateColumns();
     }
     if (typeof data.show_stars === "boolean") showStars.value = data.show_stars;
-    if (typeof data.show_only_reference === "boolean")
-      referenceFilterMode.value = data.show_only_reference;
     config.sort_order = sortValue || selectedSort.value;
     config.thumbnail_size = thumbnailValue || thumbnailSize.value;
     config.show_stars =
       typeof data.show_stars === "boolean" ? data.show_stars : showStars.value;
-    config.show_only_reference =
-      typeof data.show_only_reference === "boolean"
-        ? data.show_only_reference
-        : referenceFilterMode.value;
     config.openai_host = data.openai_host || "localhost";
     config.openai_port = data.openai_port || 8000;
     config.openai_model = data.openai_model || "";
@@ -588,7 +566,6 @@ async function patchConfigUIOptions(opts = {}) {
     sort: selectedSort.value,
     thumbnail: thumbnailSize.value,
     show_stars: showStars.value,
-    show_only_reference: referenceFilterMode.value,
     openai_host: config.openai_host,
     openai_port: config.openai_port,
     openai_model: config.openai_model,
@@ -759,7 +736,6 @@ async function searchImages(query) {
     images.value = baseImages.map((img) => ({
       ...img,
       score: typeof img.score !== "undefined" ? img.score : null,
-      is_reference: Number(img.is_reference) || 0,
     }));
     setTimeout(updateColumns, 0);
   } catch (e) {
@@ -805,7 +781,6 @@ function handleImageSelect(img, idx, event) {
 async function selectAllInCurrentView() {
   try {
     const id = selectedCharacter.value;
-    const refMode = selectedReferenceMode.value;
     if (searchQuery.value && searchQuery.value.trim()) {
       const q = searchQuery.value.trim();
       const url = `${BACKEND_URL}/search?query=${encodeURIComponent(
@@ -824,15 +799,6 @@ async function selectAllInCurrentView() {
       url = `${BACKEND_URL}/picture_ids?${params.toString()}`;
     } else if (id === UNASSIGNED_PICTURES_ID) {
       url = `${BACKEND_URL}/picture_ids?primary_character_id=&${params.toString()}`;
-    } else if (refMode) {
-      params.set("is_reference", "1");
-      url = `${BACKEND_URL}/picture_ids?primary_character_id=${encodeURIComponent(
-        id
-      )}&${params.toString()}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch picture IDs");
-      selectedImageIds.value = await res.json();
-      return;
     } else {
       url = `${BACKEND_URL}/picture_ids?primary_character_id=${encodeURIComponent(
         id
@@ -841,17 +807,7 @@ async function selectAllInCurrentView() {
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to fetch picture IDs");
     const ids = await res.json();
-    if (referenceFilterMode.value) {
-      const fullUrl = `${BACKEND_URL}/pictures?${params.toString()}&is_reference=1${
-        id !== ALL_PICTURES_ID ? `&primary_character_id=${encodeURIComponent(id)}` : ""
-      }`;
-      const fullRes = await fetch(fullUrl);
-      if (!fullRes.ok) throw new Error("Failed to fetch pictures");
-      const pics = await fullRes.json();
-      selectedImageIds.value = pics.map((pic) => pic.id);
-    } else {
-      selectedImageIds.value = ids;
-    }
+    selectedImageIds.value = ids;
   } catch (e) {
     console.error("Failed to select all images:", e);
     alert("Failed to select all images: " + (e.message || e));
@@ -869,23 +825,6 @@ function handleOverlayKeydown(e) {
     e.preventDefault();
     selectAllInCurrentView();
     return;
-  }
-  if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    if (overlayOpen.value && overlayImage.value) {
-      toggleReference(overlayImage.value);
-      e.preventDefault();
-      return;
-    } else if (selectedImageIds.value.length) {
-      const lastImg = images.value.find(
-        (i) =>
-          i.id === selectedImageIds.value[selectedImageIds.value.length - 1]
-      );
-      if (lastImg) {
-        toggleReference(lastImg);
-        e.preventDefault();
-        return;
-      }
-    }
   }
   if (overlayOpen.value) {
     if (e.key === "ArrowLeft") {
@@ -1158,7 +1097,6 @@ async function assignImagesToCharacter(imageIds, characterId) {
         images.value = baseImages.map((img) => ({
           ...img,
           score: typeof img.score !== "undefined" ? img.score : null,
-          is_reference: Number(img.is_reference) || 0,
           _thumbLoaded: false,
         }));
         const newIds = new Set(images.value.map((img) => img.id));
@@ -1305,7 +1243,6 @@ function confirmDeleteCharacter() {
         if (!res.ok) throw new Error("Failed to delete character");
         characters.value = characters.value.filter((c) => c.id !== char.id);
         selectedCharacter.value = ALL_PICTURES_ID;
-        selectedReferenceMode.value = false;
         images.value = [];
         await fetchCharacters();
       })
@@ -1315,52 +1252,18 @@ function confirmDeleteCharacter() {
   }
 }
 
-// --- Reference Toggles ---
-async function toggleReference(img) {
-  const selectedIds = selectedImageIds.value;
-  const multi = selectedIds.length > 1 && selectedIds.includes(img.id);
-  const newVal = Number(img.is_reference) === 1 ? 0 : 1;
-  const targets = multi
-    ? images.value.filter((i) => selectedIds.includes(i.id))
-    : [img];
-  try {
-    await Promise.all(
-      targets.map(async (target) => {
-        const res = await fetch(
-          `${BACKEND_URL}/pictures/${target.id}?is_reference=${newVal}`,
-          { method: "PATCH" }
-        );
-        if (!res.ok)
-          throw new Error(
-            `Failed to update reference status for image ${target.id}`
-          );
-        target.is_reference = newVal;
-      })
-    );
-    if (selectedReferenceMode.value && newVal === 0) {
-      images.value = images.value.filter(
-        (i) => !targets.some((t) => t.id === i.id)
-      );
-    }
-  } catch (e) {
-    alert("Failed to update reference status: " + (e.message || e));
-  }
-}
-
 const {
   removeTagFromOverlayImage,
   addTagToOverlay,
-  handleOverlayToggleReference,
   handleOverlaySetScore,
 } = useOverlayActions({
   overlayImage,
   backendUrl: BACKEND_URL,
-  toggleReference,
   setImageScore,
 });
 
 // --- Watchers ---
-watch([selectedSort, selectedCharacter, selectedReferenceMode], () => {
+watch([selectedSort, selectedCharacter], () => {
   if (searchQuery.value && searchQuery.value.trim()) {
     return;
   }
@@ -1394,10 +1297,6 @@ watch(thumbnailSize, (val) => {
 
 watch(showStars, (val) => {
   patchConfigUIOptions({ show_stars: val });
-});
-
-watch(referenceFilterMode, (val) => {
-  patchConfigUIOptions({ show_only_reference: val });
 });
 
 watch(

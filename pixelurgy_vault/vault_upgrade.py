@@ -28,5 +28,5 @@ class VaultUpgrade:
 
     def upgrade_if_necessary(self):
         """
-        Perform schema upgrade if necessary. Adds is_reference to pictures if missing and bumps schema version.
+        Perform schema upgrade if necessary. Bumps schema version.
         """

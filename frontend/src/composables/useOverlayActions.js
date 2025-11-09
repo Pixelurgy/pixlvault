@@ -6,7 +6,6 @@ import {unref} from 'vue';
 export function useOverlayActions({
   overlayImage,
   backendUrl,
-  toggleReference,
   setImageScore,
 }) {
   async function removeTagFromOverlayImage(tag) {
@@ -51,11 +50,6 @@ export function useOverlayActions({
     }
   }
 
-  function handleOverlayToggleReference() {
-    const img = unref(overlayImage);
-    if (img) toggleReference?.(img);
-  }
-
   function handleOverlaySetScore(score) {
     const img = unref(overlayImage);
     if (img) setImageScore?.(img, score);
@@ -64,7 +58,6 @@ export function useOverlayActions({
   return {
     removeTagFromOverlayImage,
     addTagToOverlay,
-    handleOverlayToggleReference,
     handleOverlaySetScore,
   };
 }
