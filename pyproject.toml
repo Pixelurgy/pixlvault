@@ -1,9 +1,9 @@
 [project]
-name = "pixelurgy-vault"
+name = "pixlvault"
 version = "0.3.0"
-description = "Pixelurgy Vault Picture Database"
+description = "PixlVault Picture Database"
 authors = [
-    { name = "Pixelurgy" }
+    { name = "PixlVault" }
 ]
 requires-python = ">=3.10"
 dependencies = [
@@ -43,9 +43,9 @@ dev = [
 ]
 
 [project.scripts]
-install-pixelurgy-service = "pixelurgy_vault.scripts.install_systemd_service:main"
-pixelurgy-server = "pixelurgy_vault.server:main"
-pixelurgy-cli = "pixelurgy_vault.cli:main"
+install-pixlvault-service = "pixlvault.scripts.install_systemd_service:main"
+pixlvault-server = "pixlvault.server:main"
+pixlvault-cli = "pixlvault.cli:main"
 
 [build-system]
 requires = ["setuptools>=42", "wheel", "twine"]

@@ -1,4 +1,4 @@
-from pixelurgy_vault.schema_version import SchemaVersion
+from pixlvault.schema_version import SchemaVersion
 
 from .logging import get_logger
 

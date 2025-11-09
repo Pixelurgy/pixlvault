@@ -1,7 +1,7 @@
 from typing import Optional
 import numpy as np
 
-from pixelurgy_vault.logging import get_logger
+from pixlvault.logging import get_logger
 
 logger = get_logger(__name__)
 

@@ -139,6 +139,14 @@ function dropOnSetItem(setId, event) {
   dragOverSet.value = null;
   emit("drop-on-set", { setId, event });
 }
+
+function isTruncated(event, text) {
+  const element = event.target;
+  return (
+    element.scrollWidth > element.clientWidth ||
+    element.scrollHeight > element.clientHeight
+  );
+}
 </script>
 
 <template>
@@ -275,9 +283,14 @@ function dropOnSetItem(setId, event) {
                 />
               </template>
               <template v-else>
-                <span @dblclick.stop="startEditingCharacter(char)">
-                  {{ char.name.charAt(0).toUpperCase() + char.name.slice(1) }}
-                </span>
+                <v-tooltip location="top">
+                  <template #activator="{ props }">
+                    <span v-bind="props" @dblclick.stop="startEditingCharacter(char)" class="sidebar-list-label-text">
+                      {{ char.name.charAt(0).toUpperCase() + char.name.slice(1) }}
+                    </span>
+                  </template>
+                  <span>{{ char.name }}</span>
+                </v-tooltip>
               </template>
             </span>
             <button
@@ -347,7 +360,14 @@ function dropOnSetItem(setId, event) {
             <v-icon size="44">mdi-layers</v-icon>
           </span>
           <span class="sidebar-list-label">
-            {{ set.name }}
+            <v-tooltip location="top">
+              <template #activator="{ props }">
+                <span v-bind="props" class="sidebar-list-label-text">
+                  {{ set.name }}
+                </span>
+              </template>
+              <span>{{ set.name }}</span>
+            </v-tooltip>
           </span>
           <button
             class="character-edit-btn"
@@ -400,7 +420,7 @@ function dropOnSetItem(setId, event) {
 <style scoped>
 .sidebar {
   width: 280px;
-  background: #506168ff;
+  background: rgb(var(--v-theme-secondary));
   padding: 0;
   margin: 0;
   display: flex;
@@ -442,7 +462,7 @@ function dropOnSetItem(setId, event) {
   display: flex;
   align-items: center;
   min-height: 56px;
-  padding: 8px 16px;
+  padding: 2px 6px;
   cursor: pointer;
   border-radius: 0;
   margin-bottom: 0;
@@ -470,8 +490,8 @@ function dropOnSetItem(setId, event) {
   height: 100%;
   background: linear-gradient(
     to right,
-    rgba(255, 165, 0, 0) 0%,
-    rgba(255, 165, 0, 1) 100%
+    rgba(255, 165, 0, 0) 30%,
+    rgba(255, 165, 0, 1) 90%
   );
   pointer-events: none;
   z-index: 2;

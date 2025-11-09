@@ -15,8 +15,8 @@ from tqdm import tqdm
 
 
 from .logging import get_logger
-from pixelurgy_vault.tag_naturaliser import TagNaturaliser
-from pixelurgy_vault.image_loading_dataset_prepper import ImageLoadingDatasetPrepper
+from pixlvault.tag_naturaliser import TagNaturaliser
+from pixlvault.image_loading_dataset_prepper import ImageLoadingDatasetPrepper
 
 logger = get_logger(__name__)
 
@@ -35,6 +35,14 @@ CAPTION_SEPARATOR = ", "
 
 
 class PictureTagger:
+    """
+    Tags images using the WD14 tagger model and CLIP embeddings.
+    Can optionally use Florence-2 for natural language captioning.
+    """
+
+    FAST_CAPTIONS = False  # Class variable to control fast caption mode
+    FORCE_CPU = False  # Class variable to control CPU inference
+
     def __init__(
         self,
         model_location=os.path.join(
@@ -48,10 +56,13 @@ class PictureTagger:
         self._silent = silent
 
         # Store device for both CLIP and ONNX
-        if device is not None:
-            self._device = device
+        if PictureTagger.FORCE_CPU:
+            self._device = "cpu"
         else:
-            self._device = "cuda" if torch.cuda.is_available() else "cpu"
+            if device is not None:
+                self._device = device
+            else:
+                self._device = "cuda" if torch.cuda.is_available() else "cpu"
 
         logger.info(f"PictureTagger initialized with device: {self._device}")
 
@@ -77,9 +88,8 @@ class PictureTagger:
         self._use_florence = False
         self._florence_device = None
         self._florence_model_name = "microsoft/Florence-2-base"
-        self._florence_max_tokens = (
-            60  # Default, can be overridden for faster generation
-        )
+
+        self._florence_max_tokens = 40 if PictureTagger.FAST_CAPTIONS else 60
 
     def __enter__(self):
         logger.debug("PictureTagger.__enter__ called.")
@@ -117,9 +127,9 @@ class PictureTagger:
 
             # Check if device was explicitly set to CPU
             device_str = str(self._device)
-            force_cpu = device_str == "cpu"
+            use_cpu = PictureTagger.FORCE_CPU or device_str == "cpu"
 
-            if force_cpu:
+            if use_cpu:
                 # Device explicitly set to CPU - respect that
                 logger.info("Device set to CPU, loading Florence-2 on CPU with FP32...")
                 self._load_florence_model(torch.device("cpu"), torch.float32)
