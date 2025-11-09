@@ -7,30 +7,20 @@ Tests caption generation, performance, and error handling.
 import pytest
 import time
 from pathlib import Path
-from pixelurgy_vault.picture_tagger import PictureTagger
+from pixlvault.picture_tagger import PictureTagger
 
 
 @pytest.fixture(scope="module")
 def tagger(request):
     """Create a PictureTagger instance with Florence-2 enabled."""
-    force_cpu = request.config.getoption("--force-cpu")
-    fast_captions = request.config.getoption("--fast-captions")
 
-    if force_cpu:
-        # Force CPU by setting device before enabling Florence
-        tagger = PictureTagger(device="cpu")
-    else:
-        tagger = PictureTagger()
+    tagger = PictureTagger()
 
     tagger.enable_florence_captioning()
 
     # Verify Florence-2 actually loaded
     if not tagger._use_florence or tagger._florence_model is None:
         pytest.fail("Florence-2 failed to load. Cannot run tests.")
-
-    # Set fast caption mode if requested
-    if fast_captions:
-        tagger._florence_max_tokens = 40  # Minimal tokens for CI
 
     return tagger
 

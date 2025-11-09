@@ -17,13 +17,13 @@ from PIL import Image
 from rapidfuzz import fuzz
 from typing import List
 
-from pixelurgy_vault.character import CharacterModel
-from pixelurgy_vault.logging import get_logger
-from pixelurgy_vault.picture_utils import PictureUtils
-from pixelurgy_vault.pictures import get_sort_mechanisms
-from pixelurgy_vault.vault import Vault
+from pixlvault.character import CharacterModel
+from pixlvault.logging import get_logger
+from pixlvault.picture_utils import PictureUtils
+from pixlvault.pictures import get_sort_mechanisms
+from pixlvault.vault import Vault
 
-DEFAULT_DESCRIPTION = "Pixelurgy Vault default configuration"
+DEFAULT_DESCRIPTION = "PixlVault default configuration"
 
 # Logging will be set up after config is loaded
 logger = get_logger(__name__)
@@ -39,7 +39,7 @@ class Server:
             self.vault.close()
 
     """
-    Main server class for the Pixelurgy Vault FastAPI application.
+    Main server class for the PixlVault FastAPI application.
 
     Attributes:
         config_path(str): Remote accessible configuration file.
@@ -58,7 +58,7 @@ class Server:
             config_path (str): Path to the image roots config file.
             server_config_path (str): Path to the server-only config file.
         """
-        print(f"Initializing Pixelurgy Vault server with config: {config_path}")
+        print(f"Initializing PixlVault server with config: {config_path}")
         self._config_path = config_path
 
         self._config = self.init_config(config_path)
@@ -826,7 +826,7 @@ class Server:
         @self.api.get("/")
         async def read_root():
             version = self.get_version()
-            return {"message": "Pixelurgy Vault REST API", "version": version}
+            return {"message": "PixlVault REST API", "version": version}
 
         @self.api.get("/pictures/{id}")
         async def get_picture(
@@ -1005,7 +1005,7 @@ class Server:
             Much faster than /pictures endpoint for selecting all images.
             Respects all filter parameters (primary_character_id, tags, etc.) and search.
             """
-            from pixelurgy_vault.pictures import SortMechanism
+            from pixlvault.pictures import SortMechanism
 
             query_params = dict(request.query_params)
             query_params.pop("sort", None)
@@ -1061,7 +1061,7 @@ class Server:
             limit: int = Query(sys.maxsize),
             query: str = Query(None),
         ):
-            from pixelurgy_vault.pictures import SortMechanism
+            from pixlvault.pictures import SortMechanism
 
             query_params = dict(request.query_params)
             query_params.pop("info", None)

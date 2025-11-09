@@ -11,7 +11,7 @@ import gc
 
 from PIL import Image
 from fastapi.testclient import TestClient
-from pixelurgy_vault.server import Server
+from pixlvault.server import Server
 from io import BytesIO
 from urllib.parse import quote
 
@@ -274,7 +274,7 @@ def test_read_root():
             assert response.status_code == 200
             expected_version = get_project_version()
             assert response.json() == {
-                "message": "Pixelurgy Vault REST API",
+                "message": "PixlVault REST API",
                 "version": expected_version,
             }
     gc.collect()
@@ -378,8 +378,10 @@ def test_semantic_search_on_all_pictures():
             for f in os.listdir(src_dir)
             if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
         ]
+
         with Server(
-            config_path=config_path, server_config_path=server_config_path
+            config_path=config_path,
+            server_config_path=server_config_path,
         ) as server:
             server.vault.import_default_data()
             client = TestClient(server.api)

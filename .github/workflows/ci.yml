@@ -23,4 +23,4 @@ jobs:
           ruff check pixelurgy_vault
       - name: Run tests
         run: |
-          python -m pytest -s -vvv
+          python -m pytest -s -vvv --fast-captions --force-cpu

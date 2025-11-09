@@ -42,8 +42,16 @@
       >
         <v-icon>{{ sidebarVisible ? "mdi-menu-open" : "mdi-menu" }}</v-icon>
       </v-btn>
+      <img
+        src="/Logo.png"
+        alt="Logo"
+        style="height: 50px; vertical-align: middle; margin-right: 8px"
+      />
+      <span class="toolbar-title">PixlVault</span>
       <div class="toolbar-actions">
-        <v-icon style="display: flex; align-items: center; height: 100%"
+        <v-icon
+          class="toolbar-icon"
+          style="display: flex; align-items: center; height: 100%"
           >mdi-image-size-select-small</v-icon
         >
         <v-slider
@@ -51,18 +59,11 @@
           :min="128"
           :max="256"
           :step="32"
-          class="slider"
+          class="toolbar-slider"
           hide-details
-          style="
-            min-width: 100px;
-            vertical-align: middle;
-            margin-top: 4px;
-            margin-bottom: 4px;
-            margin-left: 8px;
-            margin-right: 16px;
-          "
         />
         <v-icon
+          class="toolbar-icon"
           style="
             display: flex;
             align-items: center;
@@ -486,7 +487,6 @@
                         style="cursor: pointer"
                       />
                     </template>
-
                   </div>
                   <!-- Show date under thumbnail if sorting by date -->
                   <div
