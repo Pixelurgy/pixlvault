@@ -15,6 +15,7 @@ import ChatWindow from "./components/ChatWindow.vue";
 import ImageImporter from "./components/ImageImporter.vue";
 import ImageOverlay from "./components/ImageOverlay.vue";
 import CharacterEditor from "./components/CharacterEditor.vue";
+import PictureSetEditor from "./components/PictureSetEditor.vue";
 import { useOverlayActions } from "./composables/useOverlayActions";
 
 // --- Backend Constants & Identifiers ---
@@ -147,6 +148,9 @@ const chatOpen = ref(false);
 // --- Character Editor State ---
 const characterEditorOpen = ref(false);
 const characterEditorCharacter = ref(null);
+
+const setEditorOpen = ref(false);
+const setEditorSet = ref(null);
 
 // --- Search & Filtering State ---
 const searchQuery = ref("");
@@ -509,22 +513,8 @@ async function handleSelectSet(setId) {
   }
 }
 
-async function handleCreateSet() {
-  const name = prompt("Enter set name:");
-  if (!name || !name.trim()) return;
-
-  try {
-    const res = await fetch(`${BACKEND_URL}/picture_sets`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name.trim(), description: "" }),
-    });
-
-    if (!res.ok) throw new Error("Failed to create set");
-    await fetchPictureSets();
-  } catch (e) {
-    alert("Failed to create set: " + (e.message || e));
-  }
+function handleCreateSet() {
+  openSetEditor(null);
 }
 
 async function handleDeleteSet() {
@@ -1412,6 +1402,29 @@ async function saveCharacterFromEditor(charData) {
       // New character - add to list
       await fetchCharacters();
       selectedCharacter.value = data.character.id;
+
+      // If pictures are selected, assign them to the new character
+      if (selectedImageIds.value.length > 0) {
+        const updatePromises = selectedImageIds.value.map((pictureId) =>
+          fetch(`${BACKEND_URL}/pictures/${pictureId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ primary_character_id: data.character.id }),
+          })
+        );
+        await Promise.all(updatePromises);
+
+        // Clear selection
+        selectedImageIds.value = [];
+
+        // Refresh the character thumbnail
+        await fetchCharacterThumbnail(data.character.id);
+        // Reload pictures by re-selecting the character
+        const tempChar = selectedCharacter.value;
+        selectedCharacter.value = null;
+        await nextTick();
+        selectedCharacter.value = tempChar;
+      }
     } else if (data.character) {
       // Updated character - refresh the character in the list
       const idx = characters.value.findIndex((c) => c.id === data.character.id);
@@ -1424,6 +1437,69 @@ async function saveCharacterFromEditor(charData) {
     closeCharacterEditor();
   } catch (e) {
     alert("Failed to save character: " + (e.message || e));
+  }
+}
+
+// --- Picture Set Editor ---
+function openSetEditor(set = null) {
+  setEditorSet.value = set;
+  setEditorOpen.value = true;
+}
+
+function closeSetEditor() {
+  setEditorOpen.value = false;
+  setEditorSet.value = null;
+}
+
+async function saveSetFromEditor(setData) {
+  try {
+    const isNew = !setData.id;
+    const method = isNew ? "POST" : "PATCH";
+    const url = isNew
+      ? `${BACKEND_URL}/picture_sets`
+      : `${BACKEND_URL}/picture_sets/${setData.id}`;
+
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(setData),
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(errorText || "Failed to save picture set");
+    }
+
+    const data = await res.json();
+
+    // Refresh picture sets list
+    await fetchPictureSets();
+
+    if (isNew && data.picture_set) {
+      const setId = data.picture_set.id;
+      // If pictures are selected, add them to the new set
+      if (selectedImageIds.value.length > 0) {
+        const addPromises = selectedImageIds.value.map((pictureId) =>
+          fetch(`${BACKEND_URL}/picture_sets/${setId}/pictures/${pictureId}`, {
+            method: "POST",
+          })
+        );
+        await Promise.all(addPromises);
+
+        // Clear selection
+        selectedImageIds.value = [];
+
+        // Refresh picture sets list to update counts
+        await fetchPictureSets();
+      }
+
+      // Select the set (this will load its pictures)
+      await handleSelectSet(setId);
+    }
+
+    closeSetEditor();
+  } catch (e) {
+    alert("Failed to save picture set: " + (e.message || e));
   }
 }
 

@@ -25,6 +25,12 @@
     @close="closeCharacterEditor"
     @save="saveCharacterFromEditor"
   />
+  <PictureSetEditor
+    :open="setEditorOpen"
+    :set="setEditorSet"
+    @close="closeSetEditor"
+    @save="saveSetFromEditor"
+  />
   <div class="app-viewport">
     <div class="top-toolbar">
       <v-btn
@@ -291,6 +297,7 @@
         @create-set="handleCreateSet"
         @delete-set="handleDeleteSet"
         @drop-on-set="handleDropOnSet"
+        @open-set-editor="openSetEditor"
         @open-chat="openChatOverlay"
         @open-settings="openSettingsDialog"
         @search-images="searchImages"

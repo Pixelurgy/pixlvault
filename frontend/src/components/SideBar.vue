@@ -44,6 +44,7 @@ const emit = defineEmits([
   "create-set",
   "delete-set",
   "drop-on-set",
+  "open-set-editor",
 ]);
 
 const editingNameModel = computed({
@@ -91,6 +92,10 @@ function cancelEditingCharacter() {
 
 function openCharacterEditor(char) {
   emit("open-character-editor", char);
+}
+
+function openSetEditor(set) {
+  emit("open-set-editor", set);
 }
 
 function dragOverCharacter(id) {
@@ -339,11 +344,18 @@ function dropOnSetItem(setId, event) {
           @drop.prevent="dropOnSetItem(set.id, $event)"
         >
           <span class="sidebar-list-icon">
-            <v-icon size="44">mdi-folder-multiple-image</v-icon>
+            <v-icon size="44">mdi-layers</v-icon>
           </span>
           <span class="sidebar-list-label">
             {{ set.name }}
           </span>
+          <button
+            class="character-edit-btn"
+            @click.stop="openSetEditor(set)"
+            title="Edit picture set details"
+          >
+            <v-icon size="small">mdi-pencil</v-icon>
+          </button>
           <span class="sidebar-list-count">
             {{ set.picture_count ?? 0 }}
           </span>
