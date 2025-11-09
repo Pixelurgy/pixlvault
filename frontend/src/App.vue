@@ -14,6 +14,7 @@ import SideBar from "./components/SideBar.vue";
 import ChatWindow from "./components/ChatWindow.vue";
 import ImageImporter from "./components/ImageImporter.vue";
 import ImageOverlay from "./components/ImageOverlay.vue";
+import CharacterEditor from "./components/CharacterEditor.vue";
 import { useOverlayActions } from "./composables/useOverlayActions";
 
 // --- Backend Constants & Identifiers ---
@@ -138,6 +139,10 @@ const overlayImage = ref(null);
 
 // --- Chat Overlay State ---
 const chatOpen = ref(false);
+
+// --- Character Editor State ---
+const characterEditorOpen = ref(false);
+const characterEditorCharacter = ref(null);
 
 // --- Search & Filtering State ---
 const searchQuery = ref("");
@@ -1171,6 +1176,7 @@ async function assignImagesToCharacter(imageIds, characterId) {
 
 // --- Character Management ---
 function addNewCharacter() {
+  // Open character editor with empty character to create new one
   let num = nextCharacterNumber.value;
   let name;
   const existingNames = new Set(characters.value.map((c) => c.name));
@@ -1179,31 +1185,16 @@ function addNewCharacter() {
     num++;
   } while (existingNames.has(name));
   nextCharacterNumber.value = num;
-  fetch(`${BACKEND_URL}/characters`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, description: "" }),
-  })
-    .then(async (res) => {
-      if (!res.ok) throw new Error("Failed to create character");
-      const data = await res.json();
-      if (data && data.character && data.character.id) {
-        characters.value.push(data.character);
-        editingCharacterId.value = data.character.id;
-        editingCharacterName.value = data.character.name;
-        nextTick(() => {
-          const input = document.querySelector(".edit-character-input");
-          if (input) {
-            input.focus();
-            input.select();
-          }
-        });
-        fetchCharacterThumbnail(data.character.id);
-      }
-    })
-    .catch((e) => {
-      alert("Failed to create character: " + (e.message || e));
-    });
+
+  // Open editor with default values
+  openCharacterEditor({
+    id: null,
+    name: name,
+    description: "",
+    original_prompt: "",
+    original_seed: null,
+    loras: [],
+  });
 }
 
 function updateEditingCharacterName(value) {
@@ -1248,6 +1239,57 @@ function saveEditingCharacter(char) {
 function cancelEditingCharacter() {
   editingCharacterId.value = null;
   editingCharacterName.value = "";
+}
+
+// --- Character Editor Dialog Functions ---
+function openCharacterEditor(char = null) {
+  characterEditorCharacter.value = char;
+  characterEditorOpen.value = true;
+}
+
+function closeCharacterEditor() {
+  characterEditorOpen.value = false;
+  characterEditorCharacter.value = null;
+}
+
+async function saveCharacterFromEditor(charData) {
+  try {
+    const isNew = !charData.id;
+    const method = isNew ? "POST" : "PATCH";
+    const url = isNew
+      ? `${BACKEND_URL}/characters`
+      : `${BACKEND_URL}/characters/${charData.id}`;
+
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(charData),
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(errorText || "Failed to save character");
+    }
+
+    const data = await res.json();
+
+    if (isNew && data.character) {
+      // New character - add to list
+      await fetchCharacters();
+      selectedCharacter.value = data.character.id;
+    } else if (data.character) {
+      // Updated character - refresh the character in the list
+      const idx = characters.value.findIndex((c) => c.id === data.character.id);
+      if (idx !== -1) {
+        characters.value[idx] = data.character;
+      }
+      await fetchCharacters();
+    }
+
+    closeCharacterEditor();
+  } catch (e) {
+    alert("Failed to save character: " + (e.message || e));
+  }
 }
 
 function confirmDeleteCharacter() {

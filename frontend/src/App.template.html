@@ -20,6 +20,12 @@
     @remove-tag="removeTagFromOverlayImage"
     @add-tag="addTagToOverlay"
   />
+  <CharacterEditor
+    :open="characterEditorOpen"
+    :character="characterEditorCharacter"
+    @close="closeCharacterEditor"
+    @save="saveCharacterFromEditor"
+  />
   <div class="app-viewport">
     <div class="top-toolbar">
       <v-btn
@@ -307,6 +313,7 @@
         @save-editing-character="saveEditingCharacter"
         @cancel-editing-character="cancelEditingCharacter"
         @update:editing-character-name="updateEditingCharacterName"
+        @open-character-editor="openCharacterEditor"
         @drag-over-character="handleDragOverCharacter"
         @drag-leave-character="handleDragLeaveCharacter"
         @drop-on-character="handleDropOnCharacter"

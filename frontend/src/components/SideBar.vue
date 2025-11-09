@@ -29,6 +29,7 @@ const emit = defineEmits([
   "save-editing-character",
   "cancel-editing-character",
   "update:editing-character-name",
+  "open-character-editor",
   "drag-over-character",
   "drag-leave-character",
   "drop-on-character",
@@ -80,6 +81,10 @@ function saveEditingCharacter(char) {
 
 function cancelEditingCharacter() {
   emit("cancel-editing-character");
+}
+
+function openCharacterEditor(char) {
+  emit("open-character-editor", char);
 }
 
 function dragOverCharacter(id) {
@@ -246,6 +251,13 @@ function searchImages(query) {
                 </span>
               </template>
             </span>
+            <button
+              class="character-edit-btn"
+              @click.stop="openCharacterEditor(char)"
+              title="Edit character details"
+            >
+              <v-icon size="small">mdi-pencil</v-icon>
+            </button>
             <span class="sidebar-list-count">
               {{ categoryCounts[char.id] ?? "" }}
             </span>
@@ -563,5 +575,25 @@ function searchImages(query) {
   position: relative;
   transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.character-edit-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  padding: 4px;
+  margin-left: auto;
+  margin-right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: color 0.2s, background-color 0.2s;
+}
+
+.character-edit-btn:hover {
+  color: rgba(255, 255, 255, 1);
+  background-color: rgba(255, 255, 255, 0.1);
 }
 </style>

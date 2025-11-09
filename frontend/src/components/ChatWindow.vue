@@ -97,7 +97,7 @@ async function sendChatMessageAndFocus() {
 
   const character = props.selectedCharacter;
   let systemMessage =
-    "You should always respond as the character you are playing. Stay in character and don't break it. Let me speak for myself. Do not repeat yourself.";
+    "You should always respond as the character you are playing. Stay in character and don't break it. Let me speak for myself. Do not repeat yourself.\n\nIMPORTANT: Your response must have TWO parts:\n1. First, your normal character dialogue/response\n2. Then on a new line at the END, add: [SEARCH: character at location in outfit, mood, action]\n\nExample format:\n*giggles and points at the ocean* Look at that!\n[SEARCH: Clementine at beach in white bikini, smiling, pointing at ocean]\n\nThe search line should be concise (under 50 words) with visual details: character name, location, clothing, mood, and current action.";
 
   if (chatMessages.value.length === 0) {
     if (character && typeof character.name === "string" && character.name) {
@@ -132,15 +132,32 @@ async function sendChatMessageAndFocus() {
     const model = props.config?.openai_model ?? "gpt-3.5-turbo";
     const url = `http://${host}:${port}/v1/chat/completions`;
 
+    // Prepare messages, adding search reminder every 3 exchanges
+    const messagesToSend = chatMessages.value.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    // Count user messages (exchanges)
+    const userMsgCount = chatMessages.value.filter(
+      (m) => m.role === "user"
+    ).length;
+
+    // Add search reminder every 3 exchanges
+    if (userMsgCount > 0 && userMsgCount % 3 === 0) {
+      messagesToSend.push({
+        role: "system",
+        content:
+          "Remember: End your response with [SEARCH: character at location in outfit, mood, action]",
+      });
+    }
+
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
-        messages: chatMessages.value.map((m) => ({
-          role: m.role,
-          content: m.content,
-        })),
+        messages: messagesToSend,
         stream: false,
       }),
     });
@@ -149,60 +166,85 @@ async function sendChatMessageAndFocus() {
     const data = await res.json();
     const reply = data.choices?.[0]?.message?.content || "(No response)";
 
+    console.log("Full AI response:", reply);
+
+    // Extract search query if present in format [SEARCH: ...]
+    let searchQuery = "";
+    const searchMatch = reply.match(/\[SEARCH:\s*(.+?)\]/i);
+    if (searchMatch) {
+      searchQuery = searchMatch[1].trim();
+      console.log("AI-generated search query:", searchQuery);
+    } else {
+      console.log("No [SEARCH: ...] tag found in response");
+    }
+
     chatMessages.value.push({ role: "assistant", content: reply });
     await nextTick();
     scrollToBottom();
 
-    let lastUser = null;
-    for (let i = chatMessages.value.length - 2; i >= 0; i--) {
-      if (chatMessages.value[i].role === "user") {
-        lastUser = chatMessages.value[i].content;
-        break;
+    // Fallback: if no search query was extracted, use the reply text
+    if (!searchQuery) {
+      const keywordFn =
+        typeof props.extractKeywords === "function"
+          ? props.extractKeywords
+          : (text) => text;
+      searchQuery = keywordFn(reply);
+
+      // Add character name for better matching
+      if (character && character.name) {
+        searchQuery = `${character.name} ${searchQuery}`;
       }
-    }
-
-    const keywordFn =
-      typeof props.extractKeywords === "function"
-        ? props.extractKeywords
-        : (text) => text;
-
-    let searchQuery = keywordFn(reply);
-    if (lastUser) {
-      searchQuery = `${lastUser} ${searchQuery}`;
-    }
-    if (character && character.name) {
-      searchQuery = `${character.name} ${searchQuery}`;
     }
 
     if (props.backendUrl) {
       try {
         const searchRes = await fetch(
-          `${props.backendUrl}/search?query=${encodeURIComponent(searchQuery)}&top_n=10`
+          `${props.backendUrl}/search?query=${encodeURIComponent(
+            searchQuery
+          )}&top_n=10`
         );
         if (searchRes.ok) {
           const searchData = await searchRes.json();
+          console.log("Search query:", searchQuery);
           if (Array.isArray(searchData) && searchData.length > 0) {
             // Always use the best result (highest likeness_score)
             const bestResult = searchData[0];
-            
+
+            // Get top 3 results for display
+            const top3Results = searchData.slice(0, 3);
+            console.log(
+              "Search results (top 3):",
+              top3Results.map((r) => ({
+                id: r.id,
+                score: r.likeness_score,
+                description: r.description,
+              }))
+            );
+
             // Build compact debug info with descriptions
             let debugInfo = `🔍 ${searchData.length} results | Selected: #1\n\n`;
-            for (let i = 0; i < Math.min(3, searchData.length); i++) {
-              const pic = searchData[i];
+            for (let i = 0; i < top3Results.length; i++) {
+              const pic = top3Results[i];
               const score = (pic.likeness_score * 100).toFixed(0);
-              const desc = pic.description 
-                ? (pic.description.length > 60 ? pic.description.substring(0, 60) + '...' : pic.description)
-                : 'No description';
+              const desc = pic.description
+                ? pic.description.length > 250
+                  ? pic.description.substring(0, 250) + "..."
+                  : pic.description
+                : "No description";
               debugInfo += `${i + 1}. ${score}% - ${desc}\n`;
             }
-            
-            // Add debug info as a system message
+
+            // Add debug info as a system message with top 3 picture IDs
             chatMessages.value.push({
               role: "system",
               content: debugInfo,
-              isDebug: true
+              isDebug: true,
+              searchResults: top3Results.map((r) => ({
+                id: r.id,
+                score: r.likeness_score,
+              })),
             });
-            
+
             const imageUrl = `${props.backendUrl}/pictures/${bestResult.id}`;
             for (let i = chatMessages.value.length - 1; i >= 0; i--) {
               const msg = chatMessages.value[i];
@@ -211,7 +253,7 @@ async function sendChatMessageAndFocus() {
                 break;
               }
             }
-            
+
             // Scroll after adding debug and image
             await nextTick();
             scrollToBottom();
@@ -220,7 +262,7 @@ async function sendChatMessageAndFocus() {
             chatMessages.value.push({
               role: "system",
               content: `🔍 No results found`,
-              isDebug: true
+              isDebug: true,
             });
             await nextTick();
             scrollToBottom();
@@ -230,7 +272,7 @@ async function sendChatMessageAndFocus() {
         chatMessages.value.push({
           role: "system",
           content: `⚠️ Search error: ${error.message || error}`,
-          isDebug: true
+          isDebug: true,
         });
         await nextTick();
         scrollToBottom();
@@ -280,10 +322,30 @@ defineExpose({ focusInput, scrollToBottom });
             <template v-else-if="msg.role === 'system' && msg.isDebug">
               <div class="chat-debug-message">
                 <span class="chat-username">Debug</span>
-                <span
-                  class="chat-text"
-                  v-html="renderMarkdown(msg.content)"
-                ></span>
+                <div class="debug-content">
+                  <div
+                    v-if="msg.searchResults && msg.searchResults.length > 0"
+                    class="debug-thumbnails"
+                  >
+                    <div
+                      v-for="(result, idx) in msg.searchResults"
+                      :key="`${i}-${result.id}`"
+                      class="debug-thumbnail"
+                    >
+                      <img
+                        :src="`${backendUrl}/pictures/${result.id}?thumbnail=true`"
+                        :alt="`Result ${idx + 1}`"
+                      />
+                      <span class="thumbnail-score"
+                        >{{ (result.score * 100).toFixed(0) }}%</span
+                      >
+                    </div>
+                  </div>
+                  <span
+                    class="chat-text"
+                    v-html="renderMarkdown(msg.content)"
+                  ></span>
+                </div>
               </div>
             </template>
             <template v-else>
@@ -513,6 +575,46 @@ defineExpose({ focusInput, scrollToBottom });
 
 .chat-debug-message .chat-username {
   display: none; /* Hide "Debug" label to save space */
+}
+
+.chat-debug-message .debug-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  width: 100%;
+}
+
+.debug-thumbnails {
+  display: flex;
+  gap: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.debug-thumbnail {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 2px solid #ddd;
+}
+
+.debug-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumbnail-score {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 2px 4px;
+  font-size: 0.75em;
+  border-radius: 2px;
+  font-weight: bold;
 }
 
 .chat-debug-message .chat-text {
