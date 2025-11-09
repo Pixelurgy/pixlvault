@@ -20,7 +20,7 @@ jobs:
           pip install .[test,dev]
       - name: Check formatting with ruff
         run: |
-          ruff check pixelurgy_vault
+          ruff check pixlvault
       - name: Run tests
         run: |
           python -m pytest -s -vvv --fast-captions --force-cpu
