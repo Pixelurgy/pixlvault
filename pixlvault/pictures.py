@@ -90,7 +90,7 @@ class Pictures:
         )
         return [row["tag"] if isinstance(row, dict) else row[0] for row in rows]
 
-    def _set_tags_for_picture(self, picture_id, tags):
+    def _set_tags_for_pictures(self, picture_id, tags):
         self._db.execute(
             "DELETE FROM picture_tags WHERE picture_id = ?", (picture_id,), commit=True
         )
@@ -124,7 +124,7 @@ class Pictures:
         for row in rows:
             yield PictureModel.from_dict(row)
 
-    def update_picture_tags(self, picture_id, tags):
+    def _update_picture_tags(self, picture_id, tags):
         """
         Update the tags for a picture in the database using the picture_tags table.
         """
@@ -191,12 +191,16 @@ class Pictures:
                 with self._db.threaded_connection as thread_conn:
                     missing_facial_features = self._fetch_missing_facial_features(thread_conn)
                 if missing_facial_features:
-                    logger.info(
+                    logger.debug(
                         f"Generating facial features for {len(missing_facial_features)} pictures."
                     )
                     features_updated = self._generate_facial_features(
                         self._picture_tagger, missing_facial_features
                     )
+                    with self._db.threaded_connection as thread_conn:
+                        self._update_attributes(
+                            thread_conn, missing_facial_features, ["facial_features"]
+                        )
                     data_updated |= features_updated
 
                 if not data_updated:
@@ -218,7 +222,7 @@ class Pictures:
                 # 1. Fetch missing descriptions
                 missing_tags = []
                 missing_descriptions = []
-                logger.info("Searching for pictures missing descriptions.")
+                logger.debug("Searching for pictures missing descriptions.")
                 with self._db.threaded_connection as thread_conn:
                     missing_descriptions = self._fetch_missing_descriptions(thread_conn)
 
@@ -228,7 +232,7 @@ class Pictures:
                 # 2. Generate descriptions
                 descriptions_generated = []
                 if missing_descriptions:
-                    logger.info(
+                    logger.debug(
                         f"Generating descriptions for {len(missing_descriptions)} pictures."
                     )
                     descriptions_generated = self._generate_descriptions(
@@ -241,8 +245,8 @@ class Pictures:
                 # 3. Store descriptions
                 if descriptions_generated:
                     with self._db.threaded_connection as thread_conn:
-                        self._update_descriptions(
-                            thread_conn, descriptions_generated
+                        self._update_attributes(
+                            thread_conn, descriptions_generated, ["description"]
                         )
                     data_updated = True
 
@@ -254,7 +258,7 @@ class Pictures:
                 # 5. Generate missing tags
                 tagged_pictures = []
                 if missing_tags:
-                    logger.info(f"Generating tags for {len(missing_tags)} pictures.")
+                    logger.debug(f"Generating tags for {len(missing_tags)} pictures.")
                     tagged_pictures = self._tag_pictures(
                         self._picture_tagger, missing_tags
                     )
@@ -283,8 +287,8 @@ class Pictures:
                 # 9. Store generated embeddings
                 if embeddings_generated:
                     with self._db.threaded_connection as thread_conn:
-                        self._update_text_embeddings(
-                            thread_conn, embeddings_generated
+                        self._update_attributes(
+                            thread_conn, embeddings_generated, ["text_embedding"]
                         )
                     data_updated = True
 
@@ -301,7 +305,7 @@ class Pictures:
     def _fetch_missing_tags(self, thread_conn):
         """Return PictureModels needing tags using the provided connection."""
 
-        logger.info("Starting the database fetch for missing tags.")
+        logger.debug("Starting the database fetch for missing tags.")
         cursor = thread_conn.cursor()
 
         cursor.execute(
@@ -321,17 +325,16 @@ class Pictures:
                 """, (picture_id,))
             tag_count_row = cursor.fetchone()
             tag_count = tag_count_row[0] if tag_count_row else 0
-            logger.info("Picture id %s has %s tags.", picture_id, tag_count)
             if tag_count == 0:
                 missing_tags.append(picture_row)
 
-        logger.info(f"Found {len(missing_tags)} pictures missing tags.")
+        logger.debug(f"Found {len(missing_tags)} pictures missing tags.")
         return self.from_batch_of_db_dicts(missing_tags)
 
     def _fetch_missing_text_embeddings(self, thread_conn):
         """Return PictureModels needing text embeddings using the provided connection."""
 
-        logger.info("Starting the database fetch for missing text embeddings.")
+        logger.debug("Starting the database fetch for missing text embeddings.")
         cursor = thread_conn.cursor()
 
         cursor.execute(
@@ -345,7 +348,7 @@ class Pictures:
 
 
     def _fetch_missing_descriptions(self, thread_conn):
-        logger.info("Starting the database fetch for missing descriptions")
+        logger.debug("Starting the database fetch for missing descriptions")
 
         cursor = thread_conn.cursor()
 
@@ -381,7 +384,7 @@ class Pictures:
     def _fetch_missing_facial_features(self, thread_conn):
         """Return PictureModels needing facial features using the provided connection."""
 
-        logger.info("Starting the database fetch for missing facial features.")
+        logger.debug("Starting the database fetch for missing facial features.")
         cursor = thread_conn.cursor()
 
         # Find pictures missing facial features (for those with a valid face_bbox)
@@ -416,14 +419,12 @@ class Pictures:
                     )
                     pics = self.from_batch_of_db_dicts(rows)
 
+                logger.debug(f"Calculating quality for {len(pics)} pictures.")
                 for pic in pics:
-                    logger.debug(f"Doing picture {pic.id}")
+                    logger.debug(f"Calculating quality for picture {pic.id}")
                     if self._quality_worker_stop.is_set():
                         break
                     logger.debug("Checked stop event for iteration")
-                    logger.debug(
-                        f"Opening file {pic.file_path} for quality/face quality calculation"
-                    )
                     self._calculate_quality(pic)
                     quality_updates += 1
                 if pics:
@@ -446,7 +447,7 @@ class Pictures:
             image_np = PictureUtils.load_image_or_video(pic.file_path)
             # Only calculate and update quality if it is NULL
             if pic.quality is None:
-                pic.quality = PictureQuality.calculate_metrics(image_np)
+                pic.quality = PictureQuality.calculate_quality(image_np)
 
             # Always attempt to calculate and update face_quality if it is NULL
             if pic.face_quality is None and pic.face_bbox is not None:
@@ -459,7 +460,8 @@ class Pictures:
     def _update_quality(self, thread_conn, pics):
         cursor = thread_conn.cursor()
         values = []
-        for pic in pics:        
+        for pic in pics:
+            logger.debug("Picture id %s quality: %s and face_quality %s", pic.id, pic.quality, pic.face_quality)
             quality_json = json.dumps(pic.quality.to_dict()) if pic.quality is not None else None
             face_quality_json = (
                 json.dumps(pic.face_quality.to_dict()) if pic.face_quality is not None else None
@@ -484,12 +486,12 @@ class Pictures:
 
         tagged_pictures = 0
         if image_paths:
-            logger.info(f"Tagging {len(image_paths)} images: {image_paths}")
+            logger.debug(f"Tagging {len(image_paths)} images: {image_paths}")
             tag_results = picture_tagger.tag_images(image_paths)
-            logger.info(f"Got tag results for {len(tag_results)} images.")
+            logger.debug(f"Got tag results for {len(tag_results)} images.")
             for path, tags in tag_results.items():
                 pic = pic_by_path.get(path)
-                logger.info(f"Processing tags for image at path: {path}: {tags}")
+                logger.debug(f"Processing tags for image at path: {path}: {tags}")
                 if pic is not None:
                     # Remove character tag from tags if present
                     char_tag = getattr(pic, "primary_character_id", None)
@@ -552,7 +554,7 @@ class Pictures:
                     self._last_time_insightface_was_needed = None
             return True, bboxes_updated  # Keep going even if if there's nothing to do
 
-        logger.info(f"Have {len(pics)} pictures needing facial featuress.")
+        logger.debug(f"Have {len(pics)} pictures needing facial featuress.")
         try:
             from insightface.app import FaceAnalysis
         except ImportError:
@@ -570,7 +572,7 @@ class Pictures:
         self._last_time_insightface_was_needed = time.time()
 
         for pic in pics:
-            logger.info("Looking for faces in picture %s", pic.id)
+            logger.debug("Looking for faces in picture %s", pic.id)
 
             # Skip it regardless of whether we succeed or fail
             self._skip_pictures.add(pic.id)
@@ -654,10 +656,10 @@ class Pictures:
                 logger.error(
                     f"Failed to extract/store face bbox for picture {pic.id}: {e}"
                 )
-        logger.info("Done extracting face bboxes for current batch.")
+        logger.debug("Done extracting face bboxes for current batch.")
 
         with self._db.threaded_connection as thread_conn:
-            self._update_thumbnails_and_face_bboxes(thread_conn, pics)
+            self._update_attributes(thread_conn, pics, ["face_bbox", "thumbnail"])
 
         return True, bboxes_updated
 
@@ -683,7 +685,7 @@ class Pictures:
                             f"Failed to fetch character {char_id}: {e}", exc_info=True
                         )
                         character_obj = None
-                logger.info(
+                logger.debug(
                     f"Generating embedding for picture {pic.id} with character {char_id} and character name {getattr(character_obj, 'name', None)}"
                 )
                 pic.description = picture_tagger.generate_description(picture=pic, character=character_obj)
@@ -695,70 +697,21 @@ class Pictures:
                 )
         return descriptions_generated
 
-    def _update_descriptions(self, thread_conn, pictures):
-        """Update a list of Picture instances in the database using executemany for efficiency."""
+    def _update_attributes(self, thread_conn, pictures, attributes):
+        """Update specified attributes for a list of Picture instances in the database using executemany for efficiency."""
         with thread_conn:
             cursor = thread_conn.cursor()
             values = []
             for picture in pictures:
                 row = picture.to_dict()
-                values.append(
-                    (
-                        row["description"],
-                        picture.id,
-                    )
-                )
-                # logger.info(f"Updating picture {picture.id} with description: {row}")
+                attr_values = [row[attr] for attr in attributes]
+                attr_values.append(picture.id)
+                values.append(tuple(attr_values))
+                # logger.info(f"Updating picture {picture.id} with attributes: {row}")
+            set_clause = ", ".join([f"{attr}=?" for attr in attributes])
+            query = f"UPDATE pictures SET {set_clause} WHERE id=?"
             cursor.executemany(
-                """
-                UPDATE pictures SET description=? WHERE id=?
-                """,
-                values,
-            )
-            thread_conn.commit()
-
-    def _update_text_embeddings(self, thread_conn, pictures):
-        """Update a list of Picture instances in the database using executemany for efficiency."""
-        with thread_conn:
-            cursor = thread_conn.cursor()
-            values = []
-            for picture in pictures:
-                row = picture.to_dict()
-                values.append(
-                    (
-                        row["text_embedding"],
-                        picture.id,
-                    )
-                )
-                # logger.info(f"Updating picture {picture.id} with description: {row}")
-            cursor.executemany(
-                """
-                UPDATE pictures SET text_embedding=? WHERE id=?
-                """,
-                values,
-            )
-            thread_conn.commit()
-
-
-    def _update_thumbnails_and_face_bboxes(self, thread_conn, pictures):
-        """Update a list of Picture instances in the database using executemany for efficiency."""
-        with thread_conn:
-            cursor = thread_conn.cursor()
-            values = []
-            for picture in pictures:
-                row = picture.to_dict()
-                values.append(
-                    (
-                        row["thumbnail"],
-                        row["face_bbox"],
-                        picture.id,
-                    )
-                )
-                # logger.info(f"Updating picture {picture.id} with face bbox and thumbnails: {row}")
-            cursor.executemany(
-                """
-                UPDATE pictures SET thumbnail=?, face_bbox=? WHERE id=?
-                """,
+                query,
                 values,
             )
             thread_conn.commit()
@@ -809,7 +762,7 @@ class Pictures:
             )
             return []
         # Generate query embedding
-        query_emb, _, _ = self._picture_tagger.generate_embedding(
+        query_emb, _, _ = self._picture_tagger.generate_text_embedding(
             picture={"description": text}
         )
         logger.debug(

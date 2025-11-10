@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Self, Union
 
+from .picture_quality import PictureQuality
 from .logging import get_logger
 
 # Configure logging for the module
@@ -47,8 +48,8 @@ class PictureModel:
     text_embedding: bytes = field(default=None)
     face_bbox: str = field(default=None)
     thumbnail: bytes = field(default=None)
-    quality: str = field(default=None)
-    face_quality: str = field(default=None)
+    quality: PictureQuality = field(default=None)
+    face_quality: PictureQuality = field(default=None)
     score: int = field(default=None)
     character_likeness: float = field(default=None)
     facial_features: bytes = field(default=None)
@@ -126,6 +127,19 @@ class PictureModel:
         if "thumbnail" in row.keys() and row["thumbnail"] is not None:
             thumbnail = base64.b64decode(row["thumbnail"])
 
+        quality = PictureQuality.from_db_value(row["quality"] if "quality" in row.keys() else None)
+
+        face_quality = None
+        if "face_quality" in row.keys() and row["face_quality"] is not None:
+            value = row["face_quality"]
+            if isinstance(value, tuple):
+                value = value[0]
+            if isinstance(value, str):
+                face_quality_dict = json.loads(value)
+            else:
+                face_quality_dict = value
+            face_quality = PictureQuality.from_db_value(row["face_quality"] if "face_quality" in row.keys() else None)
+
         return cls(
             id=row["id"],
             file_path=row["file_path"] if "file_path" in row.keys() else None,
@@ -146,8 +160,8 @@ class PictureModel:
             if "face_bbox" in row.keys() and row["face_bbox"]
             else None,
             thumbnail=thumbnail,
-            quality=row["quality"] if "quality" in row.keys() else None,
-            face_quality=row["face_quality"] if "face_quality" in row.keys() else None,
+            quality=quality,
+            face_quality=face_quality,
             score=row["score"] if "score" in row.keys() else None,
             character_likeness=row["character_likeness"]
             if "character_likeness" in row.keys()

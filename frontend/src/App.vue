@@ -894,8 +894,23 @@ function onGridScroll(e) {
   }
 }
 
+async function fetchImageInfo(imageId) {
+  try {
+    const res = await fetch(`${BACKEND_URL}/pictures/${imageId}?info=true`);
+    if (!res.ok) throw new Error("Failed to fetch tags");
+    return await res.json();
+  } catch (e) {
+    console.error("Tag fetch failed:", e);
+    return [];
+  }
+}
+
 // --- Overlay & Tag Editing ---
-function openOverlay(img) {
+async function openOverlay(img) {
+  if (img && img.id) {
+    const latestInfo = await fetchImageInfo(img.id);
+    img.tags = latestInfo.tags;
+  }
   overlayImage.value = img;
   overlayOpen.value = true;
 }

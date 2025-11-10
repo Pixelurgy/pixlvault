@@ -716,9 +716,28 @@ class PictureTagger:
                     img_input = self._clip_preprocess(face_crop).unsqueeze(0).to(self._clip_device)
                     with torch.no_grad():
                         facial_features = self._clip_model.encode_image(img_input).cpu().numpy()[0]
-            except Exception as e:
-                logger.error(f"Failed to generate facial features for {getattr(picture, 'file_path', None)}: {e}")
-                facial_features = None
+            except RuntimeError as e:
+                if (
+                    ("CUDA out of memory" in str(e))
+                    or ("not compatible" in str(e))
+                    or ("CUDA error" in str(e))
+                ):
+                    logger.warning(
+                        f"Facial feature extraction failed on CUDA: {e}. Falling back to CPU."
+                    )
+                    self._clip_device = "cpu"
+                    self._clip_model = self._clip_model.to(self._clip_device)
+                    try:
+                        if face_crop is not None:
+                            img_input = self._clip_preprocess(face_crop).unsqueeze(0).to(self._clip_device)
+                            with torch.no_grad():
+                                facial_features = self._clip_model.encode_image(img_input).cpu().numpy()[0]
+                    except Exception as e2:
+                        logger.error(f"Failed to generate facial features on CPU for {getattr(picture, 'file_path', None)}: {e2}")
+                        facial_features = None
+                else:
+                    logger.error(f"Failed to generate facial features for {getattr(picture, 'file_path', None)}: {e}")
+                    facial_features = None
 
         return facial_features
     

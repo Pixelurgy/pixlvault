@@ -1,4 +1,5 @@
 from typing import Optional
+import json
 import numpy as np
 
 from pixlvault.logging import get_logger
@@ -35,6 +36,25 @@ class PictureQuality:
             "brightness": self.brightness,
             "noise_level": self.noise_level,
         }
+    
+    @staticmethod
+    def from_db_value(value):
+        """
+        Accepts a value from the DB (str, dict, or tuple containing a str/dict) and returns a PictureQuality instance.
+        """
+        if value is None:
+            return None
+        if isinstance(value, tuple):
+            value = value[0]
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except Exception:
+                pass
+        if isinstance(value, dict):
+            return PictureQuality.from_dict(value)
+        return None
+
     @staticmethod
     def from_dict(data: dict) -> "PictureQuality":
         """Create PictureQuality instance from dictionary."""
@@ -47,7 +67,7 @@ class PictureQuality:
         )
 
     @staticmethod
-    def calculate_metrics(
+    def calculate_quality(
         image: np.ndarray, face_crop: Optional[np.ndarray] = None
     ) -> "PictureQuality":
         """
@@ -106,7 +126,7 @@ class PictureQuality:
                 )
                 return None
             else:
-                return PictureQuality.calculate_metrics(face_crop)
+                return PictureQuality.calculate_quality(face_crop)
 
         logger.error(
             f"Invalid bbox after clamping: {face_bbox}, clamped: {(x1_clamped, y1_clamped, x2_clamped, y2_clamped)}"
