@@ -16,7 +16,7 @@ def tagger(request):
 
     tagger = PictureTagger()
 
-    tagger.enable_florence_captioning()
+    tagger._init_florence_captioning()
 
     # Verify Florence-2 actually loaded
     if not tagger._use_florence or tagger._florence_model is None:

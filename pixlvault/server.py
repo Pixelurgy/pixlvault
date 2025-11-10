@@ -445,6 +445,7 @@ class Server:
                     d["likeness_score"] = likeness_score
                 return d
 
+
             q = query.strip().lower()
             if not q:
                 return []
@@ -457,15 +458,14 @@ class Server:
             # Fuzzy search (tag/description/character name)
             all_pics = self.vault.pictures.find()
             fuzzy_scores = {}
-            character_match_bonus = {}  # Track character name matches for bonus
-            strong_tag_match_bonus = {}  # Track strong tag matches for bonus
+            character_match_bonus = {}
+            strong_tag_match_bonus = {}
 
             for pic in all_pics:
                 tag_scores = []
                 char_name_match = False
                 strong_tag_matches = 0
 
-                # Add character name to tags for fuzzy search
                 tags_and_name = list(pic.tags)
                 char_name = None
                 char_id = getattr(pic, "primary_character_id", None)
@@ -484,66 +484,65 @@ class Server:
                     for name in names:
                         tags_and_name.append(name)
 
+                # --- Multi-word tag matching ---
+                # First, try to match the full query against tags
+                full_tag_scores = []
+                for tag in tags_and_name:
+                    tag_lower = str(tag).lower()
+                    score = fuzz.ratio(q, tag_lower) / 100
+                    score *= min(len(q), len(tag_lower)) / max(len(q), len(tag_lower), 1)
+                    full_tag_scores.append(score)
+                    if score >= 0.8:
+                        strong_tag_matches += 1
+
+                # Also match full query against character name
+                for name_word in char_name_words:
+                    score = fuzz.ratio(q, name_word) / 100
+                    score *= min(len(q), len(name_word)) / max(len(q), len(name_word), 1)
+                    if score >= 0.8:
+                        char_name_match = True
+
+                # Now, match each query word against tags and character name as before
                 for q_word in q_split:
                     max_score = 0
-                    logger.debug(f"Query word: {q_word}")
-
-                    # Check character name match first
+                    # Character name
                     for name_word in char_name_words:
                         score = fuzz.ratio(q_word, name_word) / 100
-                        score *= min(len(q_word), len(name_word)) / max(
-                            len(q_word), len(name_word), 1
-                        )
+                        score *= min(len(q_word), len(name_word)) / max(len(q_word), len(name_word), 1)
                         if score > max_score:
                             max_score = score
-                            if score >= 0.8:  # Strong character name match
-                                char_name_match = True
-
-                    # Check tags
+                        if score >= 0.8:
+                            char_name_match = True
+                    # Tags
                     for tag in tags_and_name:
-                        score = fuzz.ratio(q_word, str(tag).lower()) / 100
-                        score *= min(len(q_word), len(tag)) / max(
-                            len(q_word), len(tag), 1
-                        )
+                        tag_lower = str(tag).lower()
+                        score = fuzz.ratio(q_word, tag_lower) / 100
+                        score *= min(len(q_word), len(tag_lower)) / max(len(q_word), len(tag_lower), 1)
                         if score > max_score:
                             max_score = score
-
-                        # Count strong tag matches (>=0.8)
                         if score >= 0.8:
                             strong_tag_matches += 1
-
                     tag_scores.append(max_score)
-                    desc_score = (
-                        fuzz.ratio(q_word, (pic.description or "").lower()) / 100.0
-                    )
+                # Description
+                desc_score = fuzz.ratio(q, (pic.description or "").lower()) / 100.0
 
-                logger.info(
-                    f"PicID={pic.id} Desc='{pic.description}' Desc score={desc_score}, Tag scores={tag_scores}"
-                )
+                # Combine scores: prioritize full tag matches if multi-word query
+                if n_words > 1:
+                    # Use max of full tag match and average word match
+                    avg_score = sum(tag_scores) / len(tag_scores) if tag_scores else 0
+                    max_full_tag_score = max(full_tag_scores) if full_tag_scores else 0
+                    max_score = max(max_full_tag_score, avg_score)
+                else:
+                    max_score = max(tag_scores) if tag_scores else 0
 
-                # Calculate fuzzy score with penalty for low match coverage
-                avg_score = sum(tag_scores) / len(tag_scores) if tag_scores else 0
-                max_score = max(tag_scores) if tag_scores else 0
-
-                # Count how many query words had decent matches (>0.5)
+                # Coverage penalty as before
                 decent_matches = sum(1 for s in tag_scores if s > 0.5)
                 match_coverage = decent_matches / len(tag_scores) if tag_scores else 0
-
-                # Penalize if most words don't match well
-                # If <50% of words match, reduce the score significantly
                 coverage_penalty = 1.0 if match_coverage >= 0.5 else match_coverage * 2
 
-                total_score = (
-                    max(0.4 * avg_score + 0.6 * max_score, desc_score)
-                    * coverage_penalty
-                )
+                total_score = max(0.4 * max_score + 0.6 * max_score, desc_score) * coverage_penalty
 
-                logger.info(
-                    f"PicID={pic.id} Desc='{pic.description}' Desc score={desc_score}, Tag scores={tag_scores}, coverage={match_coverage:.2f}, penalty={coverage_penalty:.2f}, total score={total_score:.2f}"
-                )
                 fuzzy_scores[pic.id] = total_score
-
-                # Store bonuses for later application
                 character_match_bonus[pic.id] = 0.15 if char_name_match else 0
                 strong_tag_match_bonus[pic.id] = min(0.20, strong_tag_matches * 0.05)
 

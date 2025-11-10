@@ -108,7 +108,7 @@
         </v-btn>
 
         <!-- Settings Dialog -->
-        <v-dialog v-model="settingsDialog" max-width="50vw">
+        <v-dialog v-model="settingsDialog" max-width="70vw">
           <v-card class="settings-dialog-card">
             <div class="settings-dialog-titlebar">
               <div class="settings-dialog-title">Settings</div>
@@ -231,10 +231,10 @@
                     </option>
                     <option
                       v-for="model in openaiModels"
-                      :key="model.id"
-                      :value="model.id"
+                      :key="model"
+                      :value="model"
                     >
-                      {{ model.id }}
+                      {{ model }}
                     </option>
                     <option
                       v-if="!openaiModels.length && !openaiModelLoading"

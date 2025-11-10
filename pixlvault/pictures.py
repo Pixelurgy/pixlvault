@@ -74,14 +74,11 @@ class Pictures:
         # Let PictureTagger auto-detect device (will use GPU if available, CPU otherwise)
         self._picture_tagger = PictureTagger()
 
-        # Enable Florence-2 for natural language descriptions
-        logger.info(
-            "Enabling Florence-2 captioning for natural language descriptions..."
-        )
-        self._picture_tagger.enable_florence_captioning()
+        self._facial_features_worker = None
+        self._facial_features_worker_stop = None
 
-        self._tag_worker = None
-        self._tag_worker_stop = None
+        self._text_embedding_worker = None
+        self._text_embedding_worker_stop = None
 
         self._quality_worker = None
         self._quality_worker_stop = None
@@ -132,78 +129,76 @@ class Pictures:
         """
         self._set_tags_for_picture(picture_id, tags)
 
-    def start_embeddings_worker(self, interval=1):
+    def start_facial_features_worker(self, interval=1):
         import threading
 
-        if self._tag_worker and self._tag_worker.is_alive():
+        if self._facial_features_worker and self._facial_features_worker.is_alive():
             return
-        self._tag_worker_stop = threading.Event()
-        self._tag_worker = threading.Thread(
-            target=self._tag_embeddings_loop, args=(interval,), daemon=True
+        self._facial_features_worker_stop = threading.Event()
+        self._facial_features_worker = threading.Thread(
+            target=self._facial_features_loop, args=(interval,), daemon=True
         )
-        self._tag_worker.start()
+        self._facial_features_worker.start()
 
     def stop_embeddings_worker(self):
-        if self._tag_worker_stop:
-            self._tag_worker_stop.set()
-        if self._tag_worker:
-            self._tag_worker.join(timeout=10)
+        if self._facial_features_worker_stop:
+            self._facial_features_worker_stop.set()
+        if self._facial_features_worker:
+            self._facial_features_worker.join(timeout=10)
 
-    def _tag_embeddings_loop(self, interval):
-        # Create a new connection for this thread
-        calculate_face_bboxes = True
+    def start_text_embedding_worker(self, interval=1):
+        import threading
 
-        while not self._tag_worker_stop.is_set():
+        if self._text_embedding_worker and self._text_embedding_worker.is_alive():
+            return
+        self._text_embedding_worker_stop = threading.Event()
+        self._text_embedding_worker = threading.Thread(
+            target=self._text_embedding_loop, args=(interval,), daemon=True
+        )
+        self._text_embedding_worker.start()
+
+    def stop_embeddings_worker(self):
+        if self._text_embedding_worker_stop:
+            self._text_embedding_worker_stop.set()
+        if self._text_embedding_worker:
+            self._text_embedding_worker.join(timeout=10)
+
+    def _facial_features_loop(self, interval):
+        while not self._facial_features_worker_stop.is_set():
             try:
                 data_updated = False
 
-                missing_tags = []
-                missing_embeddings = []
-                with self._db.threaded_connection as thread_conn:
-                    missing_tags, missing_embeddings = (
-                        self._fetch_missing_tags_and_embeddings(thread_conn)
-                    )
-
-                if self._tag_worker_stop.is_set():
+                # 1. Calculate face bboxes
+                logger.debug(
+                    "Generating face bounding boxes for pictures needing them."
+                )
+                pics_needing_face_bboxes = self._find_pics_needing_face_bbox()
+                insightface_ok, bboxes_updated = self._calculate_face_bboxes(
+                    pics_needing_face_bboxes
+                )
+                if not insightface_ok:
+                    logger.debug("InsightFace model not available, skipping facial feature generation.")
                     break
 
-                if missing_tags:
-                    logger.debug(f"Tagging {len(missing_tags)} pictures missing tags.")
-                    tagged_pictures = 0
-                    tagged_pictures = self._tag_pictures(
-                        self._picture_tagger, missing_tags
-                    )
-                    data_updated |= tagged_pictures > 0
+                data_updated |= bboxes_updated
 
-                if self._tag_worker_stop.is_set():
+                if self._facial_features_worker_stop.is_set():
                     break
-
-                if missing_embeddings:
+                
+                # 2. Generate facial features for pictures missing them
+                missing_facial_features = self._fetch_missing_facial_features()
+                if missing_facial_features:
                     logger.info(
-                        f"Generating embeddings for {len(missing_embeddings)} pictures."
+                        f"Generating facial features for {len(missing_facial_features)} pictures."
                     )
-                    data_updated = (
-                        self._embed_tagged_pictures(
-                            self._picture_tagger, missing_embeddings
-                        )
-                        or data_updated
+                    features_updated = self._generate_facial_features(
+                        self._picture_tagger, missing_facial_features
                     )
-
-                if self._tag_worker_stop.is_set():
-                    break
-
-                if calculate_face_bboxes:
-                    logger.debug(
-                        "Generating face bounding boxes for pictures needing them."
-                    )
-                    pics_needing_face_bboxes = self._find_pics_needing_face_bbox()
-                    calculate_face_bboxes, bboxes_updated = self._calculate_face_bboxes(
-                        pics_needing_face_bboxes
-                    )
-                    data_updated |= bboxes_updated
+                    data_updated |= features_updated
 
                 if not data_updated:
-                    self._tag_worker_stop.wait(interval)
+                    # Wait for the specified interval before checking again
+                    self._facial_features_worker_stop.wait(interval)
             except (sqlite3.OperationalError, OSError) as e:
                 # Database file was deleted or connection lost during shutdown
                 logger.debug(
@@ -211,14 +206,107 @@ class Pictures:
                 )
                 break
 
-    def _fetch_missing_tags_and_embeddings(self, thread_conn):
-        """Return PictureModels needing tags and embeddings using the provided connection."""
+    def _text_embedding_loop(self, interval):
+        # Create a new connection for this thread
+        while not self._facial_features_worker_stop.is_set():
+            try:
+                data_updated = False
+
+                # 1. Fetch missing text embeddings
+                missing_tags = []
+                missing_descriptions = []
+                logger.info("Fetching pictures missing tags and embeddings.")
+                with self._db.threaded_connection as thread_conn:
+                    missing_descriptions = self._fetch_missing_descriptions(thread_conn)
+
+                if self._facial_features_worker_stop.is_set():
+                    break
+
+                # 2. Generate text embeddings
+                descriptions_generated = []
+                if missing_descriptions:
+                    logger.info(
+                        f"Generating embeddings for {len(missing_descriptions)} pictures."
+                    )
+                    descriptions_generated (
+                        self._generate_descriptions(
+                            self._picture_tagger, missing_descriptions
+                        )
+                        or data_updated
+                    )
+
+                if self._facial_features_worker_stop.is_set():
+                    break
+
+                # 3. Store text embeddings
+                if descriptions_generated:
+                    with self._db.threaded_connection as thread_conn:
+                        self._update_descriptions(
+                            thread_conn, descriptions_generated
+                        )
+                    data_updated = True
+
+                # 4. Fetch missing tags
+                with self._db.threaded_connection as thread_conn:
+                    missing_tags = self._fetch_missing_tags(thread_conn)
+
+                # 5. Generate missing tags
+                tagged_pictures = []
+                if missing_tags:
+                    logger.info(f"Generating tags for {len(missing_tags)} pictures.")
+                    tagged_pictures = 0
+                    tagged_pictures = self._tag_pictures(
+                        self._picture_tagger, missing_tags
+                    )
+
+                if self._facial_features_worker_stop.is_set():
+                    break
+                
+                # 6. Store generated tags
+                if tagged_pictures:
+                    with self._db.threaded_connection as thread_conn:
+                        self._update_picture_tags(
+                            thread_conn, tagged_pictures
+                        )
+                    data_updated = True
+
+                # 7. Fetch pictures to embed
+                pictures_to_embed = []
+                with self._db.threaded_connection as thread_conn:
+                    pictures_to_embed = self._fetch_missing_text_embeddings(thread_conn)
+
+                # 8. Generate text embeddings for fetched pictures from descriptions and tags
+                embeddings_generated = []
+                if pictures_to_embed:
+                    embeddings_generated = self._generate_text_embeddings(pictures_to_embed)                    
+
+                # 9. Store generated embeddings
+                if embeddings_generated:
+                    with self._db.threaded_connection as thread_conn:
+                        self._update_text_embeddings(
+                            thread_conn, embeddings_generated
+                        )
+                    data_updated = True
+
+                if not data_updated:
+                    self._facial_features_worker_stop.wait(interval)
+            except (sqlite3.OperationalError, OSError) as e:
+                # Database file was deleted or connection lost during shutdown
+                logger.debug(
+                    f"Worker thread exiting due to DB error (likely shutdown): {e}"
+                )
+                break
+
+    def _fetch_missing_tags(self, thread_conn):
+        """Return PictureModels needing tags using the provided connection."""
+
+        logger.info("Starting the database fetch for missing tags.")
         cursor = thread_conn.cursor()
 
         cursor.execute(
             """
             SELECT p.*
-            FROM pictures p
+            FROM pictures p WHERE p.text_embedding IS NOT NULL AND
             LEFT JOIN picture_tags pt ON pt.picture_id = p.id
             GROUP BY p.id
             HAVING COUNT(pt.tag) = 0
@@ -229,15 +317,19 @@ class Pictures:
         if rows_missing_tags:
             empty_tags = [[] for _ in rows_missing_tags]
             missing_tags = self.from_batch_of_db_dicts(rows_missing_tags, empty_tags)
+        return missing_tags
 
+    def _fetch_missing_descriptions(self, thread_conn):
+        logger.info("Starting the database fetch for missing embeddings")
+
+        cursor = thread_conn.cursor()
+
+        # Find pictures missing regular embeddings
         cursor.execute(
             """
             SELECT p.*
             FROM pictures p
-            WHERE p.embedding IS NULL
-              AND EXISTS (
-                  SELECT 1 FROM picture_tags pt WHERE pt.picture_id = p.id
-              )
+            WHERE p.text_embedding IS NULL
             """
         )
         rows_missing_embeddings = cursor.fetchall()
@@ -259,7 +351,28 @@ class Pictures:
                 rows_missing_embeddings, tag_dicts
             )
 
-        return missing_tags, missing_embeddings
+        return missing_embeddings
+
+    def _fetch_missing_facial_features(self, thread_conn):
+        """Return PictureModels needing facial features using the provided connection."""
+
+        logger.info("Starting the database fetch for missing facial features.")
+        cursor = thread_conn.cursor()
+
+        # Find pictures missing facial features (for those with a valid face_bbox)
+        cursor.execute(
+            """
+            SELECT p.*
+            FROM pictures p
+            WHERE p.face_bbox IS NOT NULL AND p.face_bbox != ''
+              AND (p.facial_features IS NULL OR p.facial_features = '')
+              AND EXISTS (
+                  SELECT 1 FROM picture_tags pt WHERE pt.picture_id = p.id
+              )
+            """
+        )
+        rows = cursor.fetchall()
+        return self.from_batch_of_db_dicts(rows, [])
 
     def _quality_worker_loop(self, interval):
         # Create a new connection for this thread
@@ -357,6 +470,13 @@ class Pictures:
                     char_tag = getattr(pic, "primary_character_id", None)
                     if char_tag and char_tag in tags:
                         tags = [t for t in tags if t != char_tag]
+                    # Use Florence description to correct tags
+                    try:
+                        corrected_tags = picture_tagger.correct_tags_with_florence(pic.file_path, tags)
+                        if corrected_tags:
+                            tags = corrected_tags
+                    except Exception as e:
+                        logger.error(f"Florence tag correction failed for {pic.file_path}: {e}")
                     if tags:
                         pic.tags = tags
                         # Replace all tags in picture_tags table
@@ -407,12 +527,12 @@ class Pictures:
                     self._last_time_insightface_was_needed = None
             return True, bboxes_updated  # Keep going even if if there's nothing to do
 
-        logger.info(f"Have {len(pics)} pictures needing face embeddings.")
+        logger.info(f"Have {len(pics)} pictures needing facial featuress.")
         try:
             from insightface.app import FaceAnalysis
         except ImportError:
             logger.error(
-                "InsightFace is not installed. Skipping face embedding extraction."
+                "InsightFace is not installed. Skipping facial features extraction."
             )
             return False, bboxes_updated  # Without InsightFace, we cannot proceed
 
@@ -430,7 +550,7 @@ class Pictures:
             # Skip it regardless of whether we succeed or fail
             self._skip_pictures.add(pic.id)
 
-            if self._tag_worker_stop.is_set():
+            if self._facial_features_worker_stop.is_set():
                 return False, bboxes_updated
 
             try:
@@ -467,7 +587,7 @@ class Pictures:
                         cap.release()
                 else:
                     logger.warning(
-                        f"Unsupported file extension for face embedding: {file_path}"
+                        f"Unsupported file extension for facial features: {file_path}"
                     )
                 if not faces:
                     logger.warning(
@@ -512,11 +632,11 @@ class Pictures:
         logger.info("Done extracting face bboxes for current batch.")
 
         with self._db.threaded_connection as thread_conn:
-            self._update_thumbnails_and_embeddings(thread_conn, pics)
+            self._update_thumbnails_and_face_bboxes(thread_conn, pics)
 
         return True, bboxes_updated
 
-    def _embed_tagged_pictures(self, picture_tagger, missing_embeddings) -> int:
+    def _generate_descriptions(self, picture_tagger, missing_embeddings) -> int:
         """Generate embeddings for pictures that have tags but no embedding, including character name, description, and original_prompt if present."""
         assert missing_embeddings is not None
         batch = missing_embeddings[:MAX_CONCURRENT_IMAGES]
@@ -524,13 +644,6 @@ class Pictures:
         embedded_pictures = 0
         for pic in batch:
             try:
-                logger.debug(
-                    "Generating embedding for picture",
-                    pic.id,
-                    " (tags: ",
-                    pic.tags,
-                    ")",
-                )
                 # Look up full Character object if available
                 character_obj = None
                 char_id = getattr(pic, "primary_character_id", None)
@@ -548,11 +661,11 @@ class Pictures:
                 logger.info(
                     f"Generating embedding for picture {pic.id} with character {char_id} and character name {getattr(character_obj, 'name', None)}"
                 )
-                embedding, full_text = picture_tagger.generate_embedding(
+                text_embedding, full_text = picture_tagger.generate_embedding(
                     picture=pic, character=character_obj
                 )
                 # Use to_dict to ensure base64 encoding
-                pic.embedding = embedding
+                pic.text_embedding = text_embedding
                 row = pic.to_dict()
                 with self._db.threaded_connection as thread_conn:
                     cursor = thread_conn.cursor()
@@ -560,18 +673,18 @@ class Pictures:
                         f"Updating database with description {full_text} for picture {pic.id}"
                     )
                     cursor.execute(
-                        "UPDATE pictures SET embedding = ?, description = ? WHERE id = ?",
-                        (row["embedding"], full_text, pic.id),
+                        "UPDATE pictures SET text_embedding = ?, description = ? WHERE id = ?",
+                        (row["text_embedding"], full_text, pic.id),
                     )
                     thread_conn.commit()
                     embedded_pictures += 1
             except Exception as e:
                 logger.error(
-                    f"Failed to generate/store embedding for picture {pic.id}: {e}"
+                    f"Failed to generate/store text embedding for picture {pic.id}: {e}"
                 )
         return embedded_pictures
 
-    def _update_thumbnails_and_embeddings(self, thread_conn, pictures):
+    def _update_thumbnails_and_face_bboxes(self, thread_conn, pictures):
         """Update a list of Picture instances in the database using executemany for efficiency."""
         with thread_conn:
             cursor = thread_conn.cursor()
@@ -581,7 +694,6 @@ class Pictures:
                 values.append(
                     (
                         row["thumbnail"],
-                        row["embedding"],
                         row["face_bbox"],
                         picture.id,
                     )
@@ -589,7 +701,7 @@ class Pictures:
                 # logger.info(f"Updating picture {picture.id} with face bbox and thumbnails: {row}")
             cursor.executemany(
                 """
-                UPDATE pictures SET thumbnail=?, embedding=?, face_bbox=? WHERE id=?
+                UPDATE pictures SET thumbnail=?, face_bbox=? WHERE id=?
                 """,
                 values,
             )
@@ -641,7 +753,7 @@ class Pictures:
             )
             return []
         # Generate query embedding
-        query_emb, _ = self._picture_tagger.generate_embedding(
+        query_emb, _, _ = self._picture_tagger.generate_embedding(
             picture={"description": text}
         )
         logger.debug(

@@ -38,19 +38,20 @@ class PictureModel:
     __tablename__ = "pictures"
     id: str = field(default=None, metadata={"primary_key": True})
     file_path: str = field(default=None)
-    description: str = field(default=None, metadata={"include_in_embedding": True})
+    description: str = field(default=None, metadata={"include_in_text_embedding": True})
     format: str = field(default=None)
     width: int = field(default=None)
     height: int = field(default=None)
     size_bytes: int = field(default=None)
     created_at: str = field(default=None)
-    embedding: bytes = field(default=None)
+    text_embedding: bytes = field(default=None)
     face_bbox: str = field(default=None)
     thumbnail: bytes = field(default=None)
     quality: str = field(default=None)
     face_quality: str = field(default=None)
     score: int = field(default=None)
     character_likeness: float = field(default=None)
+    facial_features: bytes = field(default=None)
     pixel_sha: str = field(
         default=None,
         metadata={"index": True, "unique_index": True},
@@ -62,7 +63,7 @@ class PictureModel:
         default=None, metadata={"foreign_key": "picture_sets(id)", "index": True}
     )
     tags: list[str] = field(
-        default_factory=list, metadata={"db_ignore": True, "include_in_embedding": True}
+        default_factory=list, metadata={"db_ignore": True, "include_in_text_embedding": True}
     )
     character_ids: list[int] = field(default_factory=list, metadata={"db_ignore": True})
 
@@ -81,8 +82,11 @@ class PictureModel:
             "height": self.height,
             "size_bytes": self.size_bytes,
             "created_at": self.created_at,
-            "embedding": base64.b64encode(self.embedding).decode("ascii")
-            if self.embedding is not None
+            "text_embedding": base64.b64encode(self.text_embedding).decode("ascii")
+            if self.text_embedding is not None
+            else None,
+            "facial_features": base64.b64encode(self.facial_features).decode("ascii")
+            if self.facial_features is not None
             else None,
             "face_bbox": json.dumps(self.face_bbox) if self.face_bbox else None,
             "thumbnail": base64.b64encode(self.thumbnail).decode("ascii")
@@ -108,11 +112,15 @@ class PictureModel:
 
         assert "id" in row.keys(), "PictureModel.from_dict requires 'id' field in row"
 
-        # Embedding and thumbnail are always stored as base64 strings in DB (from to_dict())
+        # text_embedding and thumbnail are always stored as base64 strings in DB (from to_dict())
         # Decode them to bytes for internal use
-        embedding = None
-        if "embedding" in row.keys() and row["embedding"] is not None:
-            embedding = base64.b64decode(row["embedding"])
+        text_embedding = None
+        if "text_embedding" in row.keys() and row["text_embedding"] is not None:
+            text_embedding = base64.b64decode(row["text_embedding"])
+
+        facial_features = None
+        if "facial_features" in row.keys() and row["facial_features"] is not None:
+            facial_features = base64.b64decode(row["facial_features"])
 
         thumbnail = None
         if "thumbnail" in row.keys() and row["thumbnail"] is not None:
@@ -132,7 +140,8 @@ class PictureModel:
             height=row["height"] if "height" in row.keys() else None,
             size_bytes=row["size_bytes"] if "size_bytes" in row.keys() else None,
             created_at=row["created_at"] if "created_at" in row.keys() else None,
-            embedding=embedding,
+            text_embedding=text_embedding,
+            facial_features=facial_features,
             face_bbox=json.loads(row["face_bbox"])
             if "face_bbox" in row.keys() and row["face_bbox"]
             else None,

@@ -36,8 +36,9 @@ CAPTION_SEPARATOR = ", "
 
 class PictureTagger:
     """
-    Tags images using the WD14 tagger model and CLIP embeddings.
-    Can optionally use Florence-2 for natural language captioning.
+    Generates natural captions using Florence-2.
+    Also generates tags with WD14 and corrects them using the captions provided by Florence-2.
+    Generates text embeddings using OpenCLIP.
     """
 
     FAST_CAPTIONS = False  # Class variable to control fast caption mode
@@ -82,14 +83,16 @@ class PictureTagger:
 
         self._tag_naturaliser = TagNaturaliser()
 
-        # Initialize Florence-2 for optional captioning
+        # Initialize Florence-2 for captioning
         self._florence_model = None
         self._florence_processor = None
-        self._use_florence = False
+
         self._florence_device = None
         self._florence_model_name = "microsoft/Florence-2-base"
 
         self._florence_max_tokens = 40 if PictureTagger.FAST_CAPTIONS else 60
+
+        self._init_florence_captioning
 
     def __enter__(self):
         logger.debug("PictureTagger.__enter__ called.")
@@ -108,7 +111,7 @@ class PictureTagger:
         gc.collect()
         logger.debug("PictureTagger.exit called, resources released.")
 
-    def enable_florence_captioning(self):
+    def _init_florence_captioning(self):
         """
         Enable Florence-2 for natural language captioning instead of tag-based descriptions.
         This will download the model on first use (~900MB).
@@ -158,9 +161,7 @@ class PictureTagger:
 
         except Exception as e:
             logger.error(f"Failed to load Florence-2: {e}")
-            logger.info("Falling back to tag-based captioning")
             logger.info("Try: pip install --upgrade transformers")
-            self._use_florence = False
 
     def _load_florence_model(self, device, dtype):
         from transformers import AutoProcessor, AutoModelForCausalLM
@@ -207,7 +208,6 @@ class PictureTagger:
             logger.warning(f"Model compilation failed (not critical): {compile_error}")
 
         self._florence_device = device
-        self._use_florence = True
 
     def _reload_florence_on_cpu(self):
         logger.warning(
@@ -226,11 +226,10 @@ class PictureTagger:
             logger.error(
                 f"Failed to reload Florence-2 on CPU: {cpu_error}", exc_info=True
             )
-            self._use_florence = False
             return False
 
     def _generate_florence_caption(
-        self, image_path, character_name=None, tags=None, _retry_on_cpu=True
+        self, image_path, character_name=None, _retry_on_cpu=True
     ):
         """
         Generate a natural language caption for an image using Florence-2.
@@ -242,7 +241,8 @@ class PictureTagger:
         Returns:
             str: Natural language caption
         """
-        if not self._use_florence or self._florence_model is None:
+        if self._florence_model is None:
+            logger.error("Florence-2 model is not initialized")
             return None
 
         try:
@@ -266,100 +266,30 @@ class PictureTagger:
                     f"Resized image to {new_width}x{new_height} for faster processing"
                 )
 
-            # Florence expects task tokens alone, so build the natural-language prompt separately.
-            base_prompt = self._florence_processor.task_prompts_without_inputs.get(
-                "<MORE_DETAILED_CAPTION>",
-                "Describe with a paragraph what is shown in the image.",
-            )
 
-            tag_hints = None
-            if tags:
-                cleaned_tags = []
-                for tag in tags:
-                    tag_str = str(tag).strip()
-                    if not tag_str:
-                        continue
-                    if len(tag_str) > 40:
-                        continue
-                    if tag_str in cleaned_tags:
-                        continue
-                    cleaned_tags.append(tag_str)
-                    if len(cleaned_tags) >= 8:
-                        break
-                if cleaned_tags:
-                    tag_hints = ", ".join(cleaned_tags)
-
-            if tag_hints:
-                prompt_text = f"{base_prompt} Consider these candidate tags only if they truly match the scene: {tag_hints}."
-            else:
-                prompt_text = base_prompt
-
-            logger.debug(f"Processing image with prompt text: {prompt_text}")
-            logger.debug(f"Image size: {image.size}")
-
+            # Standard Florence captioning: no tag hints, just use the default prompt
             inputs = self._florence_processor(
                 text="<MORE_DETAILED_CAPTION>", images=image, return_tensors="pt"
             )
 
-            logger.debug(f"Processor output keys: {inputs.keys()}")
             if "pixel_values" not in inputs or inputs["pixel_values"] is None:
                 logger.error(
                     f"pixel_values missing or None in processor output: {inputs.keys()}"
                 )
                 return None
 
-            # Replace the textual prompt with the tailored instruction while keeping the multimodal formatting.
-            num_image_tokens = getattr(self._florence_processor, "num_image_tokens", 0)
-            image_token = getattr(self._florence_processor, "image_token", "")
-            bos_token = self._florence_processor.tokenizer.bos_token or ""
-            eos_token = self._florence_processor.tokenizer.eos_token or ""
-            prompt_with_special = (
-                image_token * num_image_tokens + bos_token + prompt_text + eos_token
-            )
-            text_inputs = self._florence_processor.tokenizer(
-                [prompt_with_special],
-                add_special_tokens=False,
-                return_tensors="pt",
-            )
-            inputs["input_ids"] = text_inputs["input_ids"]
-            inputs["attention_mask"] = text_inputs["attention_mask"]
-            logger.debug(f"Processor output keys after prompt patch: {inputs.keys()}")
-
-            # Move inputs to device (use Florence's device, not the general device)
             florence_device = getattr(self, "_florence_device", self._device)
-            # Match the dtype of the model (FP16 on GPU, FP32 on CPU)
-            target_dtype = (
-                self._florence_model.dtype
-                if hasattr(self._florence_model, "dtype")
-                else None
-            )
-            if target_dtype and target_dtype == torch.float16:
-                inputs = {
-                    k: v.to(florence_device).half()
-                    if torch.is_tensor(v) and v.dtype == torch.float32
-                    else v.to(florence_device)
-                    if torch.is_tensor(v)
-                    else v
-                    for k, v in inputs.items()
-                }
-            else:
-                inputs = {
-                    k: v.to(florence_device) if torch.is_tensor(v) else v
-                    for k, v in inputs.items()
-                }
-            logger.debug(f"Inputs moved to {florence_device}")
+            inputs = {k: v.to(florence_device) if torch.is_tensor(v) else v for k, v in inputs.items()}
 
-            # Use the Florence-2 specific generation method
-            # Use inference_mode for better performance than no_grad
             with torch.inference_mode():
                 generated_ids = self._florence_model.generate(
                     input_ids=inputs["input_ids"],
                     pixel_values=inputs["pixel_values"],
-                    max_new_tokens=self._florence_max_tokens,  # Configurable for speed vs quality
+                    max_new_tokens=self._florence_max_tokens,
                     early_stopping=False,
                     do_sample=False,
-                    num_beams=1,  # Use greedy decoding (fastest)
-                    use_cache=False,  # Disable cache - Florence-2 has issues with it
+                    num_beams=1,
+                    use_cache=False,
                     pad_token_id=self._florence_processor.tokenizer.pad_token_id,
                 )
 
@@ -368,48 +298,8 @@ class PictureTagger:
             )[0]
 
             # Florence-2 output format: "<s><MORE_DETAILED_CAPTION>caption text</s>"
-            # Extract the caption between the prompt and end token, removing special tokens
-            if prompt_text in generated_text:
-                caption = (
-                    generated_text.split(prompt_text)[1].replace("</s>", "").strip()
-                )
-            else:
-                caption = generated_text.replace("</s>", "").strip()
-
-            # Remove any remaining special tokens like <s>
-            caption = caption.replace("<s>", "").strip()
-
-            # Ensure caption ends with complete sentence
-            # If it doesn't end with sentence-ending punctuation, find the last complete sentence
-            if caption and caption[-1] not in ".!?":
-                # Find the last sentence-ending punctuation
-                last_period = max(
-                    caption.rfind("."), caption.rfind("!"), caption.rfind("?")
-                )
-                if last_period > 0:
-                    # Truncate to last complete sentence
-                    caption = caption[: last_period + 1].strip()
-                # If no sentence-ending punctuation found, add a period
-                elif caption:
-                    caption = caption + "."
-
-            # Insert character name if provided
-            if character_name:
-                # Find first mention of person-related words and insert "named CHARACTER_NAME" after
-                # Pattern: words like "woman", "man", "person", "girl", "boy", etc.
-                person_pattern = r"\b(woman|man|person|girl|boy|lady|gentleman|individual|figure|character)\b"
-                match = re.search(person_pattern, caption, re.IGNORECASE)
-                if match:
-                    # Insert "named CHARACTER_NAME" right after the person mention
-                    insert_pos = match.end()
-                    caption = (
-                        caption[:insert_pos]
-                        + f" named {character_name}"
-                        + caption[insert_pos:]
-                    )
-                else:
-                    # Fallback: prepend character name if no person mention found
-                    caption = f"{character_name}: {caption}"
+            # Extract the caption after the prompt and remove special tokens
+            caption = generated_text.replace("<s>", "").replace("</s>", "").strip()
 
             logger.info(f"Florence-2 caption: {caption}")
             return caption
@@ -628,12 +518,12 @@ class PictureTagger:
             for item in obj:
                 texts.extend(cls._collect_text(item, visited))
         elif hasattr(obj, "__dict__"):
-            # Only process dataclasses with explicit include_in_embedding metadata
+            # Only process dataclasses with explicit include_in_text_embedding metadata
             import dataclasses
 
             if dataclasses.is_dataclass(obj):
                 for field in dataclasses.fields(obj):
-                    if field.metadata.get("include_in_embedding", False):
+                    if field.metadata.get("include_in_text_embedding", False):
                         value = getattr(obj, field.name)
                         if field.name == "tags" and isinstance(
                             value, (list, tuple, set)
@@ -722,17 +612,10 @@ class PictureTagger:
         logger.info(f"Completed tagging for {len(all_results)} images.")
         return self._merge_video_frame_tags(all_results)
 
-    def generate_embedding(self, character=None, picture=None):
+    def generate_text_embedding(self, character=None, picture=None):
         """
         Generate a CLIP embedding from all text found in character and picture objects (recursively), avoiding cycles.
-        Can use Florence-2 for natural language captioning or TagNaturaliser for tag-based descriptions.
-
-        Args:
-            character (Character, optional): Character object.
-            picture (Picture, optional): Picture object.
-
-        Returns:
-            tuple: A tuple containing the embedding (numpy array) and the full text (str).
+        Returns text_embedding and full_text.
         """
 
         # Try Florence-2 captioning first if enabled and picture has file_path
@@ -748,22 +631,15 @@ class PictureTagger:
                 picture.file_path, tags=getattr(picture, "tags", None)
             )
             if florence_caption:
-                # Integrate character name naturally if available
                 character_name_capitalized = None
                 if character and hasattr(character, "name") and character.name:
-                    # Capitalize character name (title case each word)
                     character_name_capitalized = " ".join(
                         word.capitalize() for word in character.name.split()
                     )
-
-                    # Add "named CHARACTER_NAME" after the first mention of a person
                     import re
-
-                    # Pattern to find first mention of a person (case-insensitive)
                     person_pattern = r"\b(a young woman|a woman|the woman|a young man|a man|the man|a person|the person)\b"
                     match = re.search(person_pattern, florence_caption, re.IGNORECASE)
                     if match:
-                        # Insert "named CHARACTER_NAME" right after the matched term
                         insert_pos = match.end()
                         florence_caption = (
                             florence_caption[:insert_pos]
@@ -771,15 +647,11 @@ class PictureTagger:
                             + florence_caption[insert_pos:]
                         )
                     else:
-                        # If no person term found, prepend character name
                         florence_caption = (
                             f"{character_name_capitalized}. {florence_caption}"
                         )
-
-                # Keep the original capitalization - CLIP handles mixed case fine
                 full_text = florence_caption
-
-                logger.info(f"Embedding: using Florence-2 caption: {full_text}")
+                logger.debug(f"Text embedding: using Florence-2 caption: {full_text}")
             else:
                 logger.error(
                     "Florence captioning failed; refusing to fall back to tag-based description for %s",
@@ -789,36 +661,33 @@ class PictureTagger:
                     "Florence captioning failed and Florence-only captions are enabled."
                 )
 
-        # Fall back to tag-based approach if Florence didn't work
         if full_text is None:
-            # Collect text from both character and picture
             texts = []
             if character:
                 texts.extend(self._collect_text(character))
             if picture:
                 texts.extend(self._collect_text(picture))
-
             texts = self._filter_texts(texts)
-            logger.debug(f"Embedding: texts used for embedding (filtered): {texts}")
+            logger.debug(f"Text Embedding: texts used for embedding (filtered): {texts}")
             if not texts:
                 logger.error(
-                    "Embedding: No text data for embedding. character=%s, picture=%s",
+                    "Text Embedding: No text data for embedding. character=%s, picture=%s",
                     character,
                     picture,
                 )
                 raise ValueError("No text data for embedding.")
-
-            logger.info(f"Embedding: tags going into description: {texts}")
+            logger.debug(f"Text Embedding: tags going into description: {texts}")
             full_text = self._tag_naturaliser.tags_to_sentence(texts)
             full_text = full_text.lower()
-            logger.info(f"Embedding: full_text for CLIP: {full_text}")
+            logger.debug(f"Text Embedding: full_text for CLIP: {full_text}")
 
+        # Generate text embedding
+        text_embedding = None
         try:
             with torch.no_grad():
                 text_tokens = self._clip_tokenizer([full_text]).to(self._clip_device)
-                embedding = self._clip_model.encode_text(text_tokens)
-                embedding = embedding.cpu().numpy()[0]
-            return embedding, full_text
+                text_embedding = self._clip_model.encode_text(text_tokens)
+                text_embedding = text_embedding.cpu().numpy()[0]
         except RuntimeError as e:
             if (
                 ("CUDA out of memory" in str(e))
@@ -834,8 +703,62 @@ class PictureTagger:
                     text_tokens = self._clip_tokenizer([full_text]).to(
                         self._clip_device
                     )
-                    embedding = self._clip_model.encode_text(text_tokens)
-                    embedding = embedding.cpu().numpy()[0]
-                return embedding, full_text
+                    text_embedding = self._clip_model.encode_text(text_tokens)
+                    text_embedding = text_embedding.cpu().numpy()[0]
             else:
                 raise
+
+        return text_embedding, full_text
+
+    def generate_facial_features(self, picture):
+        """
+        Generate facial features from picture object if face_bbox is present.
+        Returns facial_features or None.
+        """
+        facial_features = None
+        if picture and hasattr(picture, "file_path") and hasattr(picture, "face_bbox") and picture.face_bbox:
+            try:
+                from pixlvault.picture_utils import PictureUtils
+                face_crop = PictureUtils.load_and_crop_face_bbox(picture.file_path, picture.face_bbox)
+                if face_crop is not None:
+                    # Preprocess for CLIP
+                    img_input = self._clip_preprocess(face_crop).unsqueeze(0).to(self._clip_device)
+                    with torch.no_grad():
+                        facial_features = self._clip_model.encode_image(img_input).cpu().numpy()[0]
+            except Exception as e:
+                logger.error(f"Failed to generate facial features for {getattr(picture, 'file_path', None)}: {e}")
+                facial_features = None
+
+        return facial_features
+    
+
+    def correct_tags_with_florence(self, florence_desc, current_tags=None):
+        """
+        Use Florence-2 description to extract candidate tags and update image tags.
+        Returns corrected tag list.
+        """
+        try:
+            import spacy
+            nlp = spacy.load("en_core_web_sm")
+            doc = nlp(florence_desc)
+            candidates = set()
+            for token in doc:
+                if token.pos_ in ("NOUN", "PROPN", "ADJ") and len(token.text) > 2:
+                    candidates.add(token.lemma_.lower())
+            # Map candidates to known tags using tag_naturaliser
+            mapped_tags = []
+            for cand in candidates:
+                nat_tag = TagNaturaliser.get_natural_tag(cand)
+                if nat_tag:
+                    mapped_tags.append(nat_tag)
+                else:
+                    mapped_tags.append(cand)
+            # Optionally merge with current tags
+            if current_tags:
+                # Keep tags that are in both or add new ones
+                merged = set(current_tags) | set(mapped_tags)
+                return sorted(merged)
+            return sorted(mapped_tags)
+        except Exception as e:
+            logger.error(f"Failed to extract tags from Florence description: {e}")
+            return current_tags or []

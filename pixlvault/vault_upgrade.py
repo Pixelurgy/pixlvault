@@ -41,6 +41,12 @@ class VaultUpgrade:
 
         # Ensure every character has a reference picture set
         self._ensure_reference_picture_sets()
+        # Version 3: Add reference_picture_likeness table
+        if current_version < 3:
+            self.logger.info("Upgrading database schema to version 3 (reference_picture_likeness)...")
+            self._upgrade_to_v3()
+            self.schema_version.set_version(3)
+            self.logger.info("Database schema upgraded to version 3")
 
     def _ensure_reference_picture_sets(self):
         self.logger.info("Ensuring reference picture sets for all characters...")
@@ -102,3 +108,33 @@ class VaultUpgrade:
 
         self.connection.commit()
         self.logger.info("Picture sets tables created successfully")
+    
+    def _upgrade_to_v3(self):
+        """Add reference_picture_likeness table for likeness scores."""
+        self.logger.info("Creating reference_picture_likeness table...")
+        self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS reference_picture_likeness (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reference_picture_id TEXT NOT NULL,
+                picture_id TEXT NOT NULL,
+                face_index INTEGER,
+                likeness REAL,
+                metric TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(reference_picture_id, picture_id, face_index, metric),
+                FOREIGN KEY (reference_picture_id) REFERENCES pictures(id),
+                FOREIGN KEY (picture_id) REFERENCES pictures(id)
+            )
+        """)
+        self.connection.execute("""
+            ALTER TABLE pictures ADD COLUMN facial_features BLOB
+        """)    
+        self.connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_reference_picture_likeness_reference_picture_id ON reference_picture_likeness(reference_picture_id)
+        """)
+        self.connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_reference_picture_likeness_picture_id ON reference_picture_likeness(picture_id)
+        """)
+        self.connection.commit()
+        self.logger.info("reference_picture_likeness table created successfully")
