@@ -1196,6 +1196,8 @@ async function patchScoreForSelection(score) {
   if (!selectedImageIds.value.length) return;
   for (const id of selectedImageIds.value) {
     try {
+      // Debug log PATCH request
+      console.debug("PATCH /pictures/", id, "?score=", score);
       const res = await fetch(`${BACKEND_URL}/pictures/${id}?score=${score}`, {
         method: "PATCH",
       });
@@ -1212,6 +1214,8 @@ async function patchScoreForSelection(score) {
 async function setImageScore(img, n) {
   const newScore = (img.score || 0) === n ? 0 : n;
   try {
+    // Debug log PATCH request
+    console.debug("PATCH /pictures/", img.id, "?score=", newScore);
     const res = await fetch(
       `${BACKEND_URL}/pictures/${img.id}?score=${newScore}`,
       { method: "PATCH" }

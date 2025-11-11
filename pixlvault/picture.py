@@ -79,6 +79,18 @@ class PictureModel:
     __indexes__ = []
 
     def to_dict(self, include=None, exclude=None) -> dict:
+        # Ensure no raw bytes are returned for any field
+        def safe_float(val):
+            if isinstance(val, bytes):
+                # Log and convert to float if possible, else None
+                import struct
+                try:
+                    # Try to decode as float32
+                    return struct.unpack('f', val)[0]
+                except Exception:
+                    return None
+            return float(val) if val is not None else None
+
         result = {
             "id": self.id,
             "primary_character_id": self.primary_character_id,
@@ -101,21 +113,25 @@ class PictureModel:
             "thumbnail": base64.b64encode(self.thumbnail).decode("ascii")
             if self.thumbnail is not None
             else None,
-            "sharpness": self.sharpness,
-            "edge_density": self.edge_density,
-            "contrast": self.contrast,
-            "brightness": self.brightness,
-            "noise_level": self.noise_level,
-            "face_sharpness": self.face_sharpness,
-            "face_edge_density": self.face_edge_density,
-            "face_contrast": self.face_contrast,
-            "face_brightness": self.face_brightness,
-            "face_noise_level": self.face_noise_level,
+            # Ensure metrics are always float, never bytes
+            "sharpness": safe_float(self.sharpness),
+            "edge_density": safe_float(self.edge_density),
+            "contrast": safe_float(self.contrast),
+            "brightness": safe_float(self.brightness),
+            "noise_level": safe_float(self.noise_level),
+            "face_sharpness": safe_float(self.face_sharpness),
+            "face_edge_density": safe_float(self.face_edge_density),
+            "face_contrast": safe_float(self.face_contrast),
+            "face_brightness": safe_float(self.face_brightness),
+            "face_noise_level": safe_float(self.face_noise_level),
             "score": self.score,
             "character_likeness": self.character_likeness,
             "pixel_sha": self.pixel_sha,
             "reference_picture_set_id": self.reference_picture_set_id,
         }
+        # Assert no bytes in result
+        for k, v in result.items():
+            assert not isinstance(v, bytes), f"Field '{k}' is bytes in to_dict: {v!r}"
         if include:
             result = {k: v for k, v in result.items() if k in include}
         if exclude:

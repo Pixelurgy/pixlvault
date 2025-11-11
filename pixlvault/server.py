@@ -902,6 +902,9 @@ class Server:
             updated = False
             # Update fields
             for key, value in params.items():
+                # Instrument for debugging: log if value is bytes
+                if isinstance(value, bytes):
+                    logger.error(f"PATCH attempted to set field '{key}' to bytes value: {value!r} (type={type(value)})")
                 try:
                     cast_val = int(value)
                 except Exception:
@@ -909,8 +912,14 @@ class Server:
 
                 if hasattr(pic, key):
                     logger.debug(
-                        f"Updating picture id={id} field={key} to value={cast_val}"
+                        f"Updating picture id={id} field={key} to value={cast_val} (type={type(cast_val)})"
                     )
+                    # Assert metrics are not bytes before assignment
+                    if key in [
+                        "sharpness", "edge_density", "contrast", "brightness", "noise_level",
+                        "face_sharpness", "face_edge_density", "face_contrast", "face_brightness", "face_noise_level"
+                    ]:
+                        assert not isinstance(cast_val, bytes), f"PATCH attempted to set metric '{key}' to bytes for picture {id}: {cast_val!r}"
                     old_val = getattr(pic, key)
                     setattr(pic, key, cast_val)
                     # Drop embedding if primary_character_id changes
