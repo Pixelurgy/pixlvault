@@ -3,11 +3,24 @@
 ## Patch Reliability Policy
 
 - **Always read file context before making changes:**
-  - Before generating or applying any code patch, read enough lines around the target location to fully understand the code structure, logic, and dependencies.
+  - Before generating or applying any code patch, you must always read enough lines around the target location (and at very least 20 lines before and after) to fully understand the code structure, logic, and dependencies.
   - Never create or apply a patch without first inspecting the relevant file context.
   - If the code region is ambiguous, read additional context until the correct placement is certain.
-  - Check a patch for illogical and abrupt changes that don't fit the surrounding code.
-
+  - You must always check a patch for illogical and abrupt changes that don't fit the surrounding code.
+  - An example of an illogical change is a class method being placed outside of its class definition or code being placed above the top import statements.
+  - An illogical change is placing a class method above the class docstring or above the __init__ method, rather than after the docstring and any class-level variables. All methods must be defined within the class block, following the established order and indentation.
+  - All schema upgrade steps in upgrade_if_necessary must be placed in strictly increasing version order, directly after the previous version’s block. Never insert a new version check out of sequence. This ensures upgrades are applied in the correct order and the code remains maintainable and logical.
+  - Always ensure correct indentation and placement within the class block. Read surrounding code to confirm the proper structure.
+  - Always ensure a blank line between top-level functions and class definitions
+  - For any class the code order must be:
+    1. import statements
+    2. Class definition
+    3. Class docstring
+    4. Class-level variables
+    5. __init__ method including initialisation of object properties
+    6. Properties (getters/setters)
+    7. Public methods in logical order
+    8. Private methods in logical order
 ## Project Architecture
 
 - **Backend:** Python FastAPI server (`pixlvault/server.py`), with core logic in `pixlvault/` and `build/pixelurgy_vault/`.
