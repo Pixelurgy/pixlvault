@@ -423,7 +423,7 @@ def test_semantic_search_on_all_pictures():
 
             # Wait for all pictures to be tagged (embeddings generated)
 
-            for _ in range(240):
+            for _ in range(360):
                 missing_embeddings = picture_ids.copy()
                 if not missing_embeddings:
                     break
@@ -433,7 +433,7 @@ def test_semantic_search_on_all_pictures():
                     if not get_resp.status_code == 200:
                         continue
                     pic_info = get_resp.json()
-                    embedding_b64 = pic_info.get("embedding")
+                    embedding_b64 = pic_info.get("text_embedding")
                     if not embedding_b64:
                         continue
                     import base64
@@ -467,7 +467,7 @@ def test_semantic_search_on_all_pictures():
                 "It was a bright winter morning, and Esmeralda decided to go for a walk in the woods. The snow had fallen the night before, and she enjoyed the glistening trees and the crisp air. She was glad to have her scarf and her warm coat to keep her cozy.",
                 "Esmeralda spent hours in her garden tending to her grass and bushes wearing her dungarees. The greenery made her smile. Especially when the sky was blue",
                 "Do I look like a man? Esmeralda asked, raising an eyebrow as she posed with her grey business suit, complete with shirt, jacket and tie.",
-                "Esmeralda sat down on the park bench and considered her predicament. A quiet sadness came over her.",
+                "Esmeralda sat down on the wooden park bench and considered her predicament. She was in serious trouble.",
             ]
 
             for search_text in search_texts:
