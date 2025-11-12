@@ -337,11 +337,21 @@ def test_tagger_worker_adds_tags():
         ) as server:
             client = TestClient(server.api)
 
+            # Create a character first
+            resp = client.post(
+                "/characters",
+                json={
+                    "name": "Test Character",
+                    "description": "For tagger worker test",
+                },
+            )
+            assert resp.status_code == 200
+            char_id = resp.json()["character"]["id"]
             # Upload TaggerTest.png as a new picture
             with open(src_img, "rb") as f:
                 files = [("file", ("TaggerTest.png", f.read(), "image/png"))]
                 data = {
-                    "primary_character_id": "testchar",
+                    "primary_character_id": char_id,
                 }
                 r = client.post("/pictures", files=files, data=data)
             assert r.status_code == 200

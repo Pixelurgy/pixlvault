@@ -95,7 +95,7 @@ class Pictures:
         )
         return [row["tag"] if isinstance(row, dict) else row[0] for row in rows]
 
-    def _set_tags_for_pictures(self, picture_id, tags):
+    def _set_tags_for_picture(self, picture_id, tags):
         self._db.execute(
             "DELETE FROM picture_tags WHERE picture_id = ?", (picture_id,), commit=True
         )
@@ -129,11 +129,21 @@ class Pictures:
         for row in rows:
             yield PictureModel.from_dict(row)
 
-    def _update_picture_tags(self, picture_id, tags):
+    def _update_picture_tags(self, thread_conn, pictures):
         """
         Update the tags for a picture in the database using the picture_tags table.
         """
-        self._set_tags_for_picture(picture_id, tags)
+        cursor = thread_conn.cursor()
+        cursor.executemany(
+            "DELETE FROM picture_tags WHERE picture_id = ?",
+            [(picture.id,) for picture in pictures],
+        )
+        for picture in pictures:
+            cursor.executemany(
+                "INSERT INTO picture_tags (picture_id, tag) VALUES (?, ?)",
+                [(picture.id, tag) for tag in picture.tags],
+            )
+        thread_conn.commit()
 
     def start_facial_features_worker(self, interval=5):
         import threading
@@ -954,7 +964,7 @@ class Pictures:
             image_paths.append(pic.file_path)
             pic_by_path[pic.file_path] = pic
 
-        tagged_pictures = 0
+        tagged_pictures = []
         if image_paths:
             logger.debug(f"Tagging {len(image_paths)} images: {image_paths}")
             tag_results = picture_tagger.tag_images(image_paths)
@@ -980,19 +990,7 @@ class Pictures:
                         )
                     if tags:
                         pic.tags = tags
-                        # Replace all tags in picture_tags table
-                        with self._db.threaded_connection as thread_conn:
-                            cursor = thread_conn.cursor()
-                            cursor.execute(
-                                "DELETE FROM picture_tags WHERE picture_id = ?",
-                                (pic.id,),
-                            )
-                            cursor.executemany(
-                                "INSERT INTO picture_tags (picture_id, tag) VALUES (?, ?)",
-                                [(pic.id, tag) for tag in tags],
-                            )
-                            thread_conn.commit()
-                        tagged_pictures += 1
+                        tagged_pictures.append(pic)
 
         return tagged_pictures
 

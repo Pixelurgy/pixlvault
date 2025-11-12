@@ -320,6 +320,24 @@ class PictureTagger:
             # Extract the caption after the prompt and remove special tokens
             caption = generated_text.replace("<s>", "").replace("</s>", "").strip()
 
+            # Insert character name if provided
+            if character_name:
+                # Find first mention of person-related words and insert "named CHARACTER_NAME" after
+                # Pattern: words like "woman", "man", "person", "girl", "boy", etc.
+                person_pattern = r"\b(woman|man|person|girl|boy|lady|gentleman|individual|figure|character)\b"
+                match = re.search(person_pattern, caption, re.IGNORECASE)
+                if match:
+                    # Insert "named CHARACTER_NAME" right after the person mention
+                    insert_pos = match.end()
+                    caption = (
+                        caption[:insert_pos]
+                        + f" named {character_name}"
+                        + caption[insert_pos:]
+                    )
+                else:
+                    # Fallback: prepend character name if no person mention found
+                    caption = f"{character_name}: {caption}"
+
             logger.info(f"Florence-2 caption: {caption}")
             return caption
 
@@ -772,7 +790,14 @@ class PictureTagger:
         try:
             import spacy
 
-            nlp = spacy.load("en_core_web_sm")
+            nlp = None
+            try:
+                nlp = spacy.load("en_core_web_sm")
+            except OSError:
+                import spacy.cli
+
+                spacy.cli.download("en_core_web_sm")
+            assert nlp is not None, "Failed to load spaCy model"
             doc = nlp(florence_desc)
             candidates = set()
             for token in doc:

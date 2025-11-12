@@ -51,7 +51,7 @@ descriptions = [
 
 @pytest.mark.parametrize("query", ["Clementine holding a black assault rifle"])
 def test_clip_text_embedding_similarity_measures(query):
-    tagger = PictureTagger()
+    tagger = PictureTagger(device="cpu")
     query_embedding = (
         tagger._clip_model.encode_text(
             tagger._clip_tokenizer([query]).to(tagger._clip_device)
@@ -114,7 +114,7 @@ def test_clip_text_embedding_similarity_measures(query):
 
 @pytest.mark.parametrize("query", ["Clementine holding a black assault rifle"])
 def test_sbert_text_similarity(query):
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+    model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
     # Encode all descriptions and query
     desc_embeddings = model.encode(descriptions, convert_to_tensor=True)
     query_embedding = model.encode(query, convert_to_tensor=True)

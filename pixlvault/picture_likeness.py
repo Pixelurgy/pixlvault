@@ -3,40 +3,37 @@ from typing import Self
 
 
 @dataclass
-class ReferencePictureLikenessModel:
+class PictureLikenessModel:
     """
-    Database model for the reference_picture_likeness table.
-    Stores likeness scores for each (picture, reference_picture, face) combination.
+    Database model for the picture_likeness table.
+    Stores likeness scores for each (picture, picture, face) combination.
     """
 
-    __tablename__ = "reference_picture_likeness"
-    picture_id: str = field(
-        default=None, metadata={"foreign_key": "pictures(id)", "composite_key": True}
+    __tablename__ = "picture_likeness"
+    picture_id_a: str = field(
+        default=None,
+        metadata={"foreign_key": "pictures(id)", "composite_key": True, "index": True},
     )
-    reference_picture_id: str = field(
-        default=None, metadata={"foreign_key": "pictures(id)", "composite_key": True}
+    picture_id_b: str = field(
+        default=None,
+        metadata={"foreign_key": "pictures(id)", "composite_key": True, "index": True},
     )
-    character_id: int = field(
-        default=None, metadata={"foreign_key": "characters(id)", "composite_key": True}
-    )
-    face_index: int = field(default=None, metadata={"composite_key": True})
     likeness_score: float = field(default=None)
+    metric: str = field(default=None)
 
     @classmethod
     def from_dict(cls, row: dict) -> Self:
         return cls(
-            picture_id=row["picture_id"],
-            reference_picture_id=row["reference_picture_id"],
-            character_id=row["character_id"],
-            face_index=row.get("face_index", 0),
+            picture_id_a=row["picture_id_a"],
+            picture_id_b=row["picture_id_b"],
             likeness_score=row.get("likeness_score"),
+            metric=row.get("metric"),
         )
 
     def to_dict(self) -> dict:
         return {
-            "picture_id": self.picture_id,
-            "reference_picture_id": self.reference_picture_id,
-            "character_id": self.character_id,
-            "face_index": self.face_index,
+            "picture_id_a": self.picture_id_a,
+            "picture_id_b": self.picture_id_b,
             "likeness_score": self.likeness_score,
+            "metric": self.metric,
         }

@@ -22,9 +22,7 @@ class VaultUpgrade:
         self.logger = get_logger(__name__)
         self.connection = connection
         self.schema_version = SchemaVersion(connection)
-        self.logger.debug(
-            f"Current schema version: {self.schema_version.get_version()}"
-        )
+        self.logger.info(f"Current schema version: {self.schema_version.get_version()}")
 
     def upgrade_if_necessary(self):
         """
