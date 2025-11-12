@@ -45,6 +45,7 @@ const emit = defineEmits([
   "delete-set",
   "drop-on-set",
   "open-set-editor",
+  "switch-to-likeness",
 ]);
 
 
@@ -452,6 +453,24 @@ function isTruncated(event, text) {
             </span>
           </div>
         </template>
+      </div>
+    </transition>
+
+    <div class="sidebar-section-header" @click="toggleSection('analysis')">
+      <v-icon small style="margin-right: 8px">
+        {{ sections.analysis ? "mdi-chevron-down" : "mdi-chevron-right" }}
+      </v-icon>
+      Analysis
+      <span style="flex: 1 1 auto"></span>
+    </div>
+    <transition name="fade">
+      <div v-show="sections.analysis">
+        <div class="sidebar-list-item" @click="$emit('switch-to-likeness')">
+          <span class="sidebar-list-icon">
+            <v-icon size="44">mdi-account-group</v-icon>
+          </span>
+          <span class="sidebar-list-label">Likeness View</span>
+        </div>
       </div>
     </transition>
 

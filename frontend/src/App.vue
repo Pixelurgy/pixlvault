@@ -17,6 +17,7 @@ import ImageGrid from "./components/ImageGrid.vue";
 import ImageOverlay from "./components/ImageOverlay.vue";
 import CharacterEditor from "./components/CharacterEditor.vue";
 import PictureSetEditor from "./components/PictureSetEditor.vue";
+import LikenessRows from "./components/LikenessRows.vue";
 import { useOverlayActions } from "./composables/useOverlayActions";
 
 // --- Backend Constants & Identifiers ---
@@ -86,10 +87,30 @@ const VIDEO_EXTENSIONS = [
   "m4v",
 ];
 
+
 // --- Template & Component Refs ---
 const gridContainer = ref(null);
 const imageImporterRef = ref(null);
 const chatWindowRef = ref(null);
+
+const currentView = ref('grid'); // or 'likeness'
+
+function handleEndKey() {
+  // Jump to last visible page
+  console.log('Scrolling to END. totalImages.value:', totalImages.value);
+  // Simple: load last page and scroll to bottom
+  pageOffset.value = Math.max(totalImages.value - pageSize.value, 0);
+  refreshImages();
+  nextTick(() => {
+    const gridEl = document.querySelector('.image-grid');
+    if (gridEl) gridEl.scrollTop = gridEl.scrollHeight;
+  });
+}
+
+function handleInfiniteScroll() {
+  pageOffset.value += pageSize.value;
+  refreshImages(true);
+}
 
 // --- Drag-and-Drop State ---
 const dragOverlayVisible = ref(false);
@@ -103,6 +124,7 @@ const previousSort = ref("");
 const pageSize = ref(100);
 const pageOffset = ref(0);
 const hasMoreImages = ref(true);
+const totalImages = ref(0);
 
 // --- Character & Sidebar State ---
 const selectedCharacter = ref(ALL_PICTURES_ID);
@@ -117,6 +139,7 @@ const sidebarSections = ref({
   pictures: true,
   people: true,
   sets: true,
+  analysis: true,
   search: true,
 });
 const dragOverCharacter = ref(null);
@@ -375,6 +398,22 @@ async function refreshImages(append = false) {
 
 // --- Sidebar & Character Data ---
 async function fetchSidebarCounts() {
+  // Fetch total image count for END key logic
+  try {
+    const resAll = await fetch(`${BACKEND_URL}/category/summary`);
+    if (resAll.ok) {
+      const data = await resAll.json();
+      totalImages.value = data.image_count || 0;
+      categoryCounts.value[ALL_PICTURES_ID] = data.image_count;
+    }
+  } catch {}
+function handleEndKey() {
+  // Jump to last page
+  if (totalImages.value > 0) {
+    pageOffset.value = Math.max(totalImages.value - pageSize.value, 0);
+    refreshImages();
+  }
+}
   try {
     const resAll = await fetch(`${BACKEND_URL}/category/summary`);
     if (resAll.ok) {
@@ -459,6 +498,7 @@ async function fetchPictureSets() {
 }
 
 async function handleSelectSet(setId) {
+  handleSwitchToGrid();
   selectedSet.value = setId;
   selectedCharacter.value = null; // Clear character selection
 
@@ -518,6 +558,7 @@ async function handleDeleteSet() {
 }
 
 async function removeSelectedFromSet() {
+  handleSwitchToGrid();
   if (!selectedSet.value || selectedImageIds.value.length === 0) return;
 
   const setToUpdate = pictureSets.value.find((s) => s.id === selectedSet.value);
@@ -553,6 +594,7 @@ async function removeSelectedFromSet() {
 }
 
 async function removeSelectedFromCharacter() {
+  handleSwitchToGrid();
   if (!selectedCharacter.value || selectedImageIds.value.length === 0) return;
   if (
     selectedCharacter.value === ALL_PICTURES_ID ||
@@ -642,6 +684,16 @@ async function handleDropOnSet({ setId, event }) {
   } catch (e) {
     alert("Failed to add images to set: " + (e.message || e));
   }
+}
+
+
+function handleSwitchToLikeness() { currentView.value = 'likeness'; }
+function handleSwitchToGrid() { currentView.value = 'grid'; }
+
+// Make sure clearSelection is defined for template
+function clearSelection() {
+  selectedImageIds.value = [];
+  lastSelectedIndex = null;
 }
 
 // --- Settings & Config ---
@@ -946,6 +998,7 @@ async function exportCurrentView() {
 
 // --- Search ---
 async function searchImages(query) {
+  handleSwitchToGrid();
   const q = (typeof query === "string" ? query : searchQuery.value).trim();
   if (!q) return;
   searchQuery.value = q;
@@ -1049,6 +1102,31 @@ async function selectAllInCurrentView() {
 }
 
 function handleOverlayKeydown(e) {
+  // END key support for grid view
+  if (e.key === "End" && currentView.value === "grid") {
+    e.preventDefault();
+    handleEndKey();
+    return;
+  }
+  // HOME key support for grid view
+  if (e.key === "Home" && currentView.value === "grid") {
+    e.preventDefault();
+    pageOffset.value = 0;
+    refreshImages();
+    return;
+  }
+  // PGUP/PGDN key support for grid view
+  if (currentView.value === "grid" && (e.key === "PageUp" || e.key === "PageDown")) {
+    e.preventDefault();
+    if (e.key === "PageUp") {
+      pageOffset.value = Math.max(pageOffset.value - pageSize.value, 0);
+      refreshImages();
+    } else if (e.key === "PageDown") {
+      pageOffset.value = Math.min(pageOffset.value + pageSize.value, Math.max(totalImages.value - pageSize.value, 0));
+      refreshImages();
+    }
+    return;
+  }
   const tag =
     e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
   const isEditable =
@@ -1143,6 +1221,7 @@ function showNextImage() {
 
 // --- Image Mutations ---
 async function deleteSelectedImages() {
+  handleSwitchToGrid();
   if (!selectedImageIds.value.length) return;
   const confirmed = confirm(
     `Delete ${selectedImageIds.value.length} selected image(s)? This cannot be undone.`
@@ -1229,6 +1308,7 @@ async function setImageScore(img, n) {
 
 // --- Character Assignment ---
 function handleSelectCharacter(id) {
+  handleSwitchToGrid();
   selectedCharacter.value = id;
   selectedSet.value = null; // Clear set selection when selecting a character
 }
@@ -1247,10 +1327,12 @@ function handleDropOnCharacter(payload) {
 }
 
 function handleUpdateSearchQuery(value) {
+  handleSwitchToGrid();
   searchQuery.value = value;
 }
 
 function handleUpdateSelectedSort(value) {
+  handleSwitchToGrid();
   selectedSort.value = value;
 }
 
@@ -1565,6 +1647,16 @@ const { removeTagFromOverlayImage, addTagToOverlay, handleOverlaySetScore } =
   });
 
 // --- Watchers ---
+// Scroll to bottom after END loads last page
+watch(images, (newVal, oldVal) => {
+  if (pageOffset.value >= Math.max(totalImages.value - pageSize.value, 0)) {
+    nextTick(() => {
+      const gridEl = document.querySelector('.image-grid');
+      if (gridEl) gridEl.scrollTop = gridEl.scrollHeight;
+    });
+  }
+});
+
 watch([selectedSort, selectedCharacter, selectedSet], () => {
   if (searchQuery.value && searchQuery.value.trim()) {
     return;
@@ -1638,6 +1730,7 @@ watch(
 
 // --- Lifecycle ---
 onMounted(() => {
+
   fetchConfig();
   fetchSortOptions();
   fetchCharacters();
@@ -1646,7 +1739,19 @@ onMounted(() => {
   window.addEventListener("keydown", handleOverlayKeydown);
   setTimeout(updateColumns, 100);
 
-  // ...existing code...
+  // Ensure gridContainer.value is set to the actual DOM node
+  nextTick(() => {
+    if (gridContainer.value && gridContainer.value.$el) {
+      gridContainer.value = gridContainer.value.$el;
+    }
+    // If using Vue 3, $el may not be available, fallback to $refs
+    if (gridContainer.value && gridContainer.value instanceof HTMLElement) {
+      // Already correct
+    } else if (gridContainer.value && gridContainer.value.$el) {
+      gridContainer.value = gridContainer.value.$el;
+    }
+  });
+
   setTimeout(() => {
     console.log('pagedImages.value:', pagedImages.value);
   }, 500);
@@ -1658,6 +1763,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("resize", updateColumns);
 });
 
+defineExpose({ currentView, clearSelection });
 </script>
 <template src="./App.template.html"></template>
 <style scoped src="./App.css"></style>
