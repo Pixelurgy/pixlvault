@@ -377,150 +377,47 @@
                 >
               </div>
             </div>
-            <div
-              class="image-grid"
-              :style="{ gridTemplateColumns: `repeat(${columns}, 1fr)` }"
-              ref="gridContainer"
-              style="position: relative"
-              @dragenter.prevent="handleGridDragEnter"
-              @dragover.prevent="handleGridDragOver"
-              @dragleave.prevent="handleGridDragLeave"
-              @drop.prevent="handleGridDrop"
-              @scroll="onGridScroll"
-              @click="handleGridBackgroundClick"
-            >
-              <div
-                v-if="images.length === 0 && !imagesLoading && !imagesError"
-                class="empty-state"
-              >
-                No images found for this character.
-              </div>
-              <div v-if="imagesError" class="empty-state">
-                {{ imagesError }}
-              </div>
-              <div v-if="dragOverlayVisible" class="drag-overlay-grid">
-                <span>{{ dragOverlayMessage }}</span>
-              </div>
-              <div
-                v-for="(img, idx) in pagedImages"
-                :key="img.id"
-                class="image-card"
-                :class="[
-                isImageSelected(img.id) ? 'selected' : '',
-                getSelectionBorderClasses(idx),
-                ]"
-                :draggable="isImageSelected(img.id)"
-                @dragstart="onImageDragStart(img, idx, $event)"
-                @click="handleGridBackgroundClick"
-              >
-                <v-card class="thumbnail-card">
-                  <div class="thumbnail-container">
-                    <div
-                      class="star-overlay"
-                      v-if="showStars && thumbLoaded[img.id]"
-                    >
-                      <v-icon
-                        v-for="n in 5"
-                        :key="n"
-                        small
-                        :color="
-                        n <= (img.score || 0) ? 'orange' : 'grey darken-2'
-                        "
-                        style="cursor: pointer"
-                        @click.stop="setImageScore(img, n)"
-                        >mdi-star</v-icon
-                      >
-                    </div>
-                    <template
-                      v-if="
-                        (img.format && isSupportedVideoFile(img.format)) ||
-                        (!img.format &&
-                        isSupportedVideoFile(
-                            (img.id || '').split('.').pop()
-                        ))
-                    "
-                    >
-                      <img
-                        :src="`${BACKEND_URL}/thumbnails/${img.id}`"
-                        class="thumbnail-img video-thumb"
-                        @load="thumbLoaded[img.id] = true"
-                        @error="thumbLoaded[img.id] = true"
-                        @click.stop="
-                        (e) => {
-                            if (e.ctrlKey || e.metaKey || e.shiftKey) {
-                            handleImageSelect(img, idx, e);
-                            } else {
-                            openOverlay(img);
-                            }
-                        }
-                        "
-                        style="cursor: pointer; border: 2px solid #2196f3"
-                      />
-                      <v-icon
-                        class="video-icon-overlay"
-                        style="
-                          position: absolute;
-                          bottom: 8px;
-                          left: 8px;
-                          color: #2196f3;
-                          background: white;
-                          border-radius: 50%;
-                        "
-                        >mdi-play-circle</v-icon
-                      >
-                    </template>
-                    <template v-else>
-                      <img
-                        :src="`${BACKEND_URL}/thumbnails/${img.id}`"
-                        class="thumbnail-img"
-                        @load="thumbLoaded[img.id] = true"
-                        @error="thumbLoaded[img.id] = true"
-                        @click.stop="
-                        (e) => {
-                            if (e.ctrlKey || e.metaKey || e.shiftKey) {
-                            handleImageSelect(img, idx, e);
-                            } else {
-                            openOverlay(img);
-                            }
-                        }
-                        "
-                        style="cursor: pointer"
-                      />
-                    </template>
-                  </div>
-                  <!-- Show date under thumbnail if sorting by date -->
-                  <div
-                    v-if="
-                    selectedSort === 'ORDER BY created_at DESC' ||
-                    selectedSort === 'ORDER BY created_at ASC'
-                    "
-                    class="thumbnail-info"
-                  >
-                    {{ new Date(img.created_at).toLocaleString() }}
-                  </div>
-                  <!-- Show likeness score under thumbnail if sorting by likeness-->
-                  <div
-                    v-if="selectedSort === 'search_likeness'"
-                    class="thumbnail-info"
-                  >
-                    {{ formatLikenessScore(img.likeness_score) }}
-                  </div>
-                </v-card>
-              </div>
-              <ChatWindow
-                v-if="chatOpen"
-                ref="chatWindowRef"
-                :open="chatOpen"
-                :title="selectedCharacterObj ? `Chat with ${selectedCharacterObj.name}` : 'AI Chat'"
-                :selected-character="selectedCharacterObj"
-                :config="config"
-                :extract-keywords="extractKeywords"
-                :backend-url="BACKEND_URL"
-                @close="closeChatOverlay"
-              />
+            <div style="margin-bottom: 16px; color: #1976d2; font-size: 1.1em;">
+              <span v-if="imagesLoading"> | Loading...</span>
+              <span v-if="imagesError"> | Error: {{ imagesError }}</span>
+              <span v-if="pagedImages.length === 0 && !imagesLoading && !imagesError" style="color: #c00;"> | No images to display</span>
             </div>
+            <ImageGrid
+              :images="pagedImages"
+              :imagesLoading="imagesLoading"
+              :imagesError="imagesError"
+              :thumbLoaded="thumbLoaded"
+              :thumbnailSize="thumbnailSize"
+              :columns="columns"
+              :sidebarVisible="sidebarVisible"
+              :selectedImageIds="selectedImageIds"
+              :showStars="showStars"
+              :selectedSort="selectedSort"
+              :dragOverlayVisible="dragOverlayVisible"
+              :dragOverlayMessage="dragOverlayMessage"
+              :BACKEND_URL="BACKEND_URL"
+              :selectedCharacterObj="selectedCharacterObj"
+              :config="config"
+              :extractKeywords="extractKeywords"
+              @open-overlay="openOverlay"
+              @select-image="handleImageSelect"
+              @clear-selection="clearSelection"
+              @set-image-score="setImageScore"
+            />
+            <ChatWindow
+              v-if="chatOpen"
+              ref="chatWindowRef"
+              :open="chatOpen"
+              :title="selectedCharacterObj ? `Chat with ${selectedCharacterObj.name}` : 'AI Chat'"
+              :selected-character="selectedCharacterObj"
+              :config="config"
+              :extract-keywords="extractKeywords"
+              :backend-url="BACKEND_URL"
+              @close="closeChatOverlay"
+            />
           </template>
           <template v-else>
+              <!--  -->
             <div class="empty-state">Nothing to see here.</div>
           </template>
         </div>

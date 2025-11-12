@@ -13,6 +13,7 @@ import {
 import SideBar from "./components/SideBar.vue";
 import ChatWindow from "./components/ChatWindow.vue";
 import ImageImporter from "./components/ImageImporter.vue";
+import ImageGrid from "./components/ImageGrid.vue";
 import ImageOverlay from "./components/ImageOverlay.vue";
 import CharacterEditor from "./components/CharacterEditor.vue";
 import PictureSetEditor from "./components/PictureSetEditor.vue";
@@ -212,38 +213,7 @@ const selectedCharacterObj = computed(() => {
 });
 
 // --- Selection Helpers ---
-const isImageSelected = (id) =>
-  selectedImageIds.value.includes(id) &&
-  pagedImages.value.some((img) => img.id === id);
-
-const getSelectionBorderClasses = (idx) => {
-  const sorted = pagedImages.value;
-  if (!isImageSelected(sorted[idx]?.id)) return "";
-  const cols = columns.value;
-  const total = sorted.length;
-  const row = Math.floor(idx / cols);
-  const col = idx % cols;
-  const classes = [];
-  if (row === 0 || !isImageSelected(sorted[(row - 1) * cols + col]?.id)) {
-    classes.push("selected-border-top");
-  }
-  if (
-    row === Math.floor((total - 1) / cols) ||
-    !isImageSelected(sorted[(row + 1) * cols + col]?.id)
-  ) {
-    classes.push("selected-border-bottom");
-  }
-  if (col === 0 || !isImageSelected(sorted[row * cols + (col - 1)]?.id)) {
-    classes.push("selected-border-left");
-  }
-  if (
-    col === cols - 1 ||
-    !isImageSelected(sorted[row * cols + (col + 1)]?.id)
-  ) {
-    classes.push("selected-border-right");
-  }
-  return classes.join(" ");
-};
+// Now handled in ImageGrid.vue
 
 // --- Text & Display Utilities ---
 function formatLikenessScore(score) {
@@ -386,11 +356,14 @@ async function refreshImages(append = false) {
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to fetch images");
     let baseImages = await res.json();
+    console.log('API response:', baseImages); // <--- Add this line
+
     const newImages = baseImages.map((img) => ({
       ...img,
       score: typeof img.score !== "undefined" ? img.score : null,
     }));
     images.value = append ? [...images.value, ...newImages] : newImages;
+    console.log('images.value after assignment:', images.value); // <--- Add this line
     hasMoreImages.value = newImages.length === pageSize.value;
     setTimeout(updateColumns, 0);
   } catch (e) {
@@ -1672,12 +1645,19 @@ onMounted(() => {
   window.addEventListener("resize", updateColumns);
   window.addEventListener("keydown", handleOverlayKeydown);
   setTimeout(updateColumns, 100);
+
+  // ...existing code...
+  setTimeout(() => {
+    console.log('pagedImages.value:', pagedImages.value);
+  }, 500);
 });
+
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleOverlayKeydown);
   window.removeEventListener("resize", updateColumns);
 });
+
 </script>
 <template src="./App.template.html"></template>
 <style scoped src="./App.css"></style>
