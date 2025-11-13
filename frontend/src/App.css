@@ -68,6 +68,7 @@ body {
   transition: border-color 0.2s;
   min-height: 0;
   height: 100%;
+  /* No overflow property here; only .image-grid should scroll */
 }
 
 .empty-state {
