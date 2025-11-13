@@ -292,19 +292,31 @@ function onGridScroll(e) {
 }
 </script>
 <style scoped>
-.image-grid {
-  display: grid;
-  gap: 0;
-  width: 100%;
-  height: 100%;
-  min-height: 64px;
-  flex: 1 1 0%;
-  padding: 0 12px 0 4px !important; /* Remove top/bottom padding, keep right for scrollbar */
-  overflow-y: auto;
+ .image-grid {
+   display: grid;
+   gap: 0;
+   width: calc(100% - 8px);
+   box-sizing: border-box;
+   flex: 1 1 0%;
+   min-height: 0;
+   overflow-y: auto;
+   padding: 0 16px 0 16px !important; /* Extra right padding for visible scrollbar */
+   overflow: auto;
+   scrollbar-width: 16px !important;
+   scrollbar-color: orange #ddd;
+   align-content: start;
+   justify-content: start;
+   padding-bottom: 72px !important;
+}
+.image-grid::-webkit-scrollbar {
+  width: 24px;
+}
+.image-grid::-webkit-scrollbar-thumb {
+  background: orange;
+  border-radius: 8px;
+}
+.image-grid::-webkit-scrollbar-track {
   background: #ddd;
-  align-content: start;
-  justify-content: start;
-  padding-bottom: 72px !important;
 }
 .image-card {
   min-width: 0;
