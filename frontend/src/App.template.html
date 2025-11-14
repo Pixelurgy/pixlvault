@@ -98,14 +98,6 @@
         >
           <v-icon>mdi-robot</v-icon>
         </v-btn>
-        <v-btn
-          icon
-          @click="exportCurrentView"
-          title="Export current view as ZIP"
-          style="margin-left: 4px"
-        >
-          <v-icon>mdi-download</v-icon>
-        </v-btn>
 
         <!-- Settings Dialog -->
         <v-dialog v-model="settingsDialog" max-width="70vw">
@@ -320,75 +312,6 @@
           style="margin-top:0;padding-top:0;"
         >
           <template v-if="selectedCharacter || selectedSet !== null">
-            <!-- Selection Info Bar -->
-            <div
-              v-if="selectedImageIds.length > 0"
-              class="selection-info-bar"
-              style="
-                background: #fffbe7;
-                color: #333;
-                border-bottom: 1px solid #e0c97f;
-                padding: 8px 16px;
-                display: flex;
-                align-items: center;
-                gap: 16px;
-                font-size: 1.08em;
-              "
-            >
-              <span>
-                <strong>{{ selectedImageIds.length }}</strong>
-                image{{ selectedImageIds.length === 1 ? "" : "s" }} selected
-              </span>
-              <div
-                style="
-                  margin-left: auto;
-                  display: flex;
-                  align-items: center;
-                  gap: 12px;
-                "
-              >
-                <v-btn
-                  v-if="selectedSet"
-                  small
-                  class="remove-from-set-button"
-                  variant="text"
-                  @click="removeSelectedFromSet"
-                  >Remove from set</v-btn
-                >
-                <v-btn
-                  v-if="selectedCharacter && selectedCharacter !== ALL_PICTURES_ID && selectedCharacter !== UNASSIGNED_PICTURES_ID"
-                  small
-                  class="remove-from-character-button"
-                  variant="text"
-                  @click="removeSelectedFromCharacter"
-                  >Remove from character</v-btn
-                >
-                <v-btn
-                  small
-                  class="clear-selection-button"
-                  variant="text"
-                  @click="clearSelection"
-                  >Clear selection</v-btn
-                >
-                <v-btn
-                  small
-                  class="delete-button"
-                  variant="text"
-                  @click="deleteSelectedImages"
-                  >Delete</v-btn
-                >
-              </div>
-            </div>
-            <div style="margin-bottom: 0px; color: #1976d2; font-size: 1.1em">
-              <span v-if="imagesLoading"> | Loading...</span>
-              <span v-if="imagesError"> | Error: {{ imagesError }}</span>
-              <span
-                v-if="pagedImages.length === 0 && !imagesLoading && !imagesError"
-                style="color: #c00"
-              >
-                | No images to display</span
-              >
-            </div>
              <template v-if="currentView === 'likeness'">
               <LikenessRows :backendUrl="BACKEND_URL" :likenessRows="[]"
               />
@@ -396,28 +319,15 @@
                 >Back to Grid View</v-btn>
             </template>
             <template v-else>
-              <ImageGrid
+              <ImageGrid 
                 ref="gridContainer"
-                :images="pagedImages"
-                :imagesLoading="imagesLoading"
-                :imagesError="imagesError"
-                :thumbLoaded="thumbLoaded"
                 :thumbnailSize="thumbnailSize"
                 :sidebarVisible="sidebarVisible"
-                :selectedImageIds="selectedImageIds"
-                :showStars="showStars"
-                :selectedSort="selectedSort"
-                :dragOverlayVisible="dragOverlayVisible"
-                :dragOverlayMessage="dragOverlayMessage"
                 :BACKEND_URL="BACKEND_URL"
-                :selectedCharacterObj="selectedCharacterObj"
-                :config="config"
-                :extractKeywords="extractKeywords"
-                @open-overlay="openOverlay"
-                @select-image="handleImageSelect"
-                @clear-selection="clearSelection"
-                @set-image-score="setImageScore"
-                @infinite-scroll="handleInfiniteScroll"
+                :selectedCharacter="selectedCharacter"
+                :selectedSet="selectedSet"
+                :searchQuery="searchQuery"
+                :selectedSort="selectedSort"
               />
             </template>
            

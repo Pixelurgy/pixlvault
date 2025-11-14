@@ -143,9 +143,7 @@ function buildPictureIdsQueryParams() {
       params.append('primary_character_id', props.selectedCharacter);
     }
   }
-  if (props.selectedSet !== null && typeof props.selectedSet !== 'undefined') {
-    params.append('set_id', props.selectedSet);
-  }
+ 
   if (props.searchQuery && props.searchQuery.trim()) {
     params.append('query', props.searchQuery.trim());
   }
@@ -159,7 +157,14 @@ async function fetchAllPictureIds() {
   imagesLoading.value = true;
   imagesError.value = null;
   try {
-    const url = `${props.BACKEND_URL}/picture_ids?${buildPictureIdsQueryParams()}`;
+    let url = null;
+    if (false && props.selectedSet !== null && typeof props.selectedSet !== 'undefined') {
+        url = `${props.BACKEND_URL}/picture_sets/${props.selectedSet}`;
+    } else {
+        url = `${props.BACKEND_URL}/picture_ids?${buildPictureIdsQueryParams()}`;
+    }   
+    console.log("Fetching picture IDs from URL:", url);
+    
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to fetch picture ids");
     const ids = await res.json();

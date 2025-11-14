@@ -94,36 +94,15 @@ const chatWindowRef = ref(null);
 
 const currentView = ref("grid"); // or 'likeness'
 
-function handleEndKey() {
-  // Jump to last visible page
-  console.log("Scrolling to END. totalImages.value:", totalImages.value);
-  // Simple: load last page and scroll to bottom
-  pageOffset.value = Math.max(totalImages.value - pageSize.value, 0);
-  refreshImages();
-  nextTick(() => {
-    const gridEl = document.querySelector(".image-grid");
-    if (gridEl) gridEl.scrollTop = gridEl.scrollHeight;
-  });
-}
-
-function handleInfiniteScroll() {
-  pageOffset.value += pageSize.value;
-  refreshImages(true);
-}
-
 // --- Drag-and-Drop State ---
 const dragOverlayVisible = ref(false);
 const dragOverlayMessage = ref("");
 const dragSource = ref(null);
 
-// --- Pagination & Sorting State ---
+// --- Sorting State ---
 const sortOptions = ref([]);
 const selectedSort = ref("");
 const previousSort = ref("");
-const pageSize = ref(100);
-const pageOffset = ref(0);
-const hasMoreImages = ref(true);
-const totalImages = ref(0);
 
 // --- Character & Sidebar State ---
 const selectedCharacter = ref(ALL_PICTURES_ID);
@@ -150,16 +129,8 @@ const editingCharacterName = ref("");
 const pictureSets = ref([]);
 const selectedSet = ref(null);
 
-// --- Image Grid State ---
-const images = ref([]);
-const imagesLoading = ref(false);
-const imagesError = ref(null);
-const thumbLoaded = reactive({});
 const thumbnailSize = ref(256);
-const columns = ref(5);
 const sidebarVisible = ref(true);
-const selectedImageIds = ref([]);
-let lastSelectedIndex = null;
 
 // --- Overlay & Tag State ---
 const overlayOpen = ref(false);
@@ -200,12 +171,26 @@ const newImageRoot = ref("");
 const loading = ref(false);
 const error = ref(null);
 
-// --- Computed Collections ---
-const filteredImages = computed(() => {
-  return images.value;
-});
+// --- Image Metadata State ---
+const allGridImages = ref([]);
+const imagesLoading = ref(false);
+const imagesError = ref(null);
 
-const pagedImages = computed(() => filteredImages.value);
+async function fetchAllImageMetadata() {
+  imagesLoading.value = true;
+  imagesError.value = null;
+  try {
+    const res = await fetch(`${BACKEND_URL}/pictures/?info=true`);
+    if (!res.ok) throw new Error("Failed to fetch image metadata");
+    const images = await res.json();
+    allGridImages.value = images;
+  } catch (e) {
+    imagesError.value = e.message;
+    allGridImages.value = [];
+  } finally {
+    imagesLoading.value = false;
+  }
+}
 
 const sortedCharacters = computed(() => {
   return [...characters.value]
@@ -312,15 +297,7 @@ function dataTransferHasSupportedMedia(dataTransfer) {
   return false;
 }
 
-// --- Grid Layout Helpers ---
-function updateColumns() {
-  if (!gridContainer.value) return;
-  const containerWidth = gridContainer.value.offsetWidth;
-  columns.value = Math.max(
-    1,
-    Math.floor(containerWidth / (thumbnailSize.value + 32))
-  );
-}
+// ...existing code...
 
 // --- Sorting & Pagination ---
 async function fetchSortOptions() {
@@ -349,52 +326,6 @@ async function fetchSortOptions() {
   }
 }
 
-async function refreshImages(append = false) {
-  if (!append) {
-    images.value = [];
-    hasMoreImages.value = true;
-    selectedImageIds.value = [];
-  }
-  imagesError.value = null;
-  const id = selectedCharacter.value;
-  if (!id) return;
-  imagesLoading.value = true;
-  try {
-    let url;
-    const params = new URLSearchParams();
-    params.set("info", "true");
-    params.set("sort", selectedSort.value || "ORDER BY created_at DES");
-    params.set("offset", String(pageOffset.value));
-    params.set("limit", String(pageSize.value));
-    if (id === ALL_PICTURES_ID) {
-      url = `${BACKEND_URL}/pictures?${params.toString()}`;
-    } else if (id === UNASSIGNED_PICTURES_ID) {
-      url = `${BACKEND_URL}/pictures?primary_character_id=&${params.toString()}`;
-    } else {
-      url = `${BACKEND_URL}/pictures?primary_character_id=${encodeURIComponent(
-        id
-      )}&${params.toString()}`;
-    }
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("Failed to fetch images");
-    let baseImages = await res.json();
-    console.log("API response:", baseImages); // <--- Add this line
-
-    const newImages = baseImages.map((img) => ({
-      ...img,
-      score: typeof img.score !== "undefined" ? img.score : null,
-    }));
-    images.value = append ? [...images.value, ...newImages] : newImages;
-    console.log("images.value after assignment:", images.value); // <--- Add this line
-    hasMoreImages.value = newImages.length === pageSize.value;
-    setTimeout(updateColumns, 0);
-  } catch (e) {
-    imagesError.value = e.message;
-  } finally {
-    imagesLoading.value = false;
-  }
-}
-
 // --- Sidebar & Character Data ---
 async function fetchSidebarCounts() {
   // Fetch total image count for END key logic
@@ -406,13 +337,6 @@ async function fetchSidebarCounts() {
       categoryCounts.value[ALL_PICTURES_ID] = data.image_count;
     }
   } catch {}
-  function handleEndKey() {
-    // Jump to last page
-    if (totalImages.value > 0) {
-      pageOffset.value = Math.max(totalImages.value - pageSize.value, 0);
-      refreshImages();
-    }
-  }
   try {
     const resAll = await fetch(`${BACKEND_URL}/category/summary`);
     if (resAll.ok) {
@@ -505,24 +429,10 @@ async function handleSelectSet(setId) {
     // Fetch the set with pictures (no ?info=true means we get the pictures)
     const res = await fetch(`${BACKEND_URL}/picture_sets/${setId}`);
     if (!res.ok) throw new Error("Failed to fetch set details");
-    const data = await res.json();
-
-    // The response now includes pictures directly
-    if (data.pictures && data.pictures.length > 0) {
-      images.value = data.pictures.map((img) => ({
-        ...img,
-        score: typeof img.score !== "undefined" ? img.score : null,
-      }));
-    } else {
-      images.value = [];
-    }
-
-    hasMoreImages.value = false;
+    // No longer assign images.value
     await nextTick();
-    updateColumns();
   } catch (e) {
     console.error("Error loading set pictures:", e);
-    images.value = [];
   }
 }
 
@@ -548,9 +458,8 @@ async function handleDeleteSet() {
 
     if (!res.ok) throw new Error("Failed to delete set");
 
-    selectedSet.value = null;
-    images.value = [];
-    await fetchPictureSets();
+  selectedSet.value = null;
+  await fetchPictureSets();
   } catch (e) {
     alert("Failed to delete set: " + (e.message || e));
   }
@@ -575,16 +484,12 @@ async function removeSelectedFromSet() {
 
     await Promise.all(removePromises);
 
-    // Remove from local images array
-    images.value = images.value.filter(
-      (img) => !selectedImageIds.value.includes(img.id)
-    );
+    // No longer remove from local images array
     selectedImageIds.value = [];
 
     // Refresh the picture sets to update counts
     await fetchPictureSets();
 
-    setTimeout(updateColumns, 0);
   } catch (e) {
     alert("Failed to remove images from set: " + (e.message || e));
     // Refresh the view to ensure consistency
@@ -620,21 +525,15 @@ async function removeSelectedFromCharacter() {
 
     await Promise.all(updatePromises);
 
-    // Remove from local images array
-    images.value = images.value.filter(
-      (img) => !selectedImageIds.value.includes(img.id)
-    );
+    // No longer remove from local images array
     selectedImageIds.value = [];
 
     // Refresh character counts
     await fetchSidebarCounts();
 
-    setTimeout(updateColumns, 0);
   } catch (e) {
     console.error("Error removing images:", e);
     alert("Failed to remove images from character: " + (e.message || e));
-    // Refresh the view to ensure consistency
-    refreshImages();
   }
 }
 
@@ -690,16 +589,6 @@ function handleSwitchToLikeness() {
 }
 function handleSwitchToGrid() {
   currentView.value = "grid";
-  nextTick(() => {
-    nextTick(() => {
-      updateColumns();
-    });
-  });
-}
-// Make sure clearSelection is defined for template
-function clearSelection() {
-  selectedImageIds.value = [];
-  lastSelectedIndex = null;
 }
 
 // --- Settings & Config ---
@@ -748,7 +637,6 @@ async function fetchConfig() {
     if (thumbnailValue !== null) {
       thumbnailSize.value = thumbnailValue;
       await nextTick();
-      updateColumns();
     }
     if (typeof data.show_stars === "boolean") showStars.value = data.show_stars;
     config.sort_order = sortValue || selectedSort.value;
@@ -796,8 +684,7 @@ async function updateSelectedRoot() {
   await fetchConfig();
   await fetchCharacters();
   await fetchSidebarCounts();
-  await refreshImages();
-}
+s}
 
 async function patchConfigUIOptions(opts = {}) {
   const patch = {
@@ -906,7 +793,6 @@ function handleGridDrop(e) {
 }
 
 function handleImportFinished() {
-  refreshImages();
   fetchSidebarCounts();
 }
 
@@ -914,15 +800,6 @@ function handleGridBackgroundClick(e) {
   if (!e.target.closest(".thumbnail-card")) {
     selectedImageIds.value = [];
     lastSelectedIndex = null;
-  }
-}
-
-function onGridScroll(e) {
-  const el = e.target;
-  if (!hasMoreImages.value || imagesLoading.value) return;
-  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200) {
-    pageOffset.value += pageSize.value;
-    refreshImages(true);
   }
 }
 
@@ -963,45 +840,6 @@ function closeChatOverlay() {
   chatOpen.value = false;
 }
 
-// --- Export ---
-async function exportCurrentView() {
-  try {
-    // Build query params based on current view
-    const params = new URLSearchParams();
-
-    // Add character filter
-    if (
-      selectedCharacter.value &&
-      selectedCharacter.value !== ALL_PICTURES_ID
-    ) {
-      if (selectedCharacter.value === "null") {
-        params.append("primary_character_id", "null");
-      } else {
-        params.append("primary_character_id", selectedCharacter.value);
-      }
-    }
-
-    // Add picture set filter (takes precedence over character)
-    if (selectedSet.value !== null) {
-      params.append("set_id", selectedSet.value);
-    }
-
-    // Add search query
-    if (searchQuery.value) {
-      params.append("query", searchQuery.value);
-    }
-
-    // Build the URL
-    const url = `${BACKEND_URL}/export/zip?${params.toString()}`;
-
-    // Trigger download by opening in new window
-    window.open(url, "_blank");
-  } catch (e) {
-    console.error("Export failed:", e);
-    alert("Failed to export: " + (e.message || e));
-  }
-}
-
 // --- Search ---
 async function searchImages(query) {
   handleSwitchToGrid();
@@ -1030,7 +868,6 @@ async function searchImages(query) {
       ...img,
       score: typeof img.score !== "undefined" ? img.score : null,
     }));
-    setTimeout(updateColumns, 0);
   } catch (e) {
     imagesError.value = e.message;
   } finally {
@@ -1038,180 +875,7 @@ async function searchImages(query) {
   }
 }
 
-// --- Selection & Keyboard Handling ---
-function handleImageSelect(img, idx, event) {
-  const sorted = pagedImages.value;
-  const id = img.id;
-  const isSelected = selectedImageIds.value.includes(id);
-  const isCtrl = event.ctrlKey || event.metaKey;
-  const isShift = event.shiftKey;
-  if (isShift) {
-    if (lastSelectedIndex !== null) {
-      const start = Math.min(lastSelectedIndex, idx);
-      const end = Math.max(lastSelectedIndex, idx);
-      const rangeIds = sorted.slice(start, end + 1).map((i) => i.id);
-      const newSelection = isCtrl
-        ? Array.from(new Set([...selectedImageIds.value, ...rangeIds]))
-        : rangeIds;
-      selectedImageIds.value = newSelection;
-    } else {
-      selectedImageIds.value = [id];
-    }
-    lastSelectedIndex = idx;
-  } else if (isCtrl) {
-    if (isSelected) {
-      selectedImageIds.value = selectedImageIds.value.filter((i) => i !== id);
-    } else {
-      selectedImageIds.value = [...selectedImageIds.value, id];
-    }
-    lastSelectedIndex = idx;
-  } else {
-    selectedImageIds.value = [id];
-    lastSelectedIndex = idx;
-  }
-}
-
-async function selectAllInCurrentView() {
-  try {
-    const id = selectedCharacter.value;
-    if (searchQuery.value && searchQuery.value.trim()) {
-      const q = searchQuery.value.trim();
-      const url = `${BACKEND_URL}/search?query=${encodeURIComponent(
-        q
-      )}&threshold=0.5&top_n=10000`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch search results");
-      const results = await res.json();
-      selectedImageIds.value = results.map((img) => img.id);
-      return;
-    }
-    let url;
-    const params = new URLSearchParams();
-    params.set("sort", selectedSort.value || "ORDER BY created_at DES");
-    if (id === ALL_PICTURES_ID) {
-      url = `${BACKEND_URL}/picture_ids?${params.toString()}`;
-    } else if (id === UNASSIGNED_PICTURES_ID) {
-      url = `${BACKEND_URL}/picture_ids?primary_character_id=&${params.toString()}`;
-    } else {
-      url = `${BACKEND_URL}/picture_ids?primary_character_id=${encodeURIComponent(
-        id
-      )}&${params.toString()}`;
-    }
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("Failed to fetch picture IDs");
-    const ids = await res.json();
-    selectedImageIds.value = ids;
-  } catch (e) {
-    console.error("Failed to select all images:", e);
-    alert("Failed to select all images: " + (e.message || e));
-  }
-}
-
-function handleOverlayKeydown(e) {
-  // END key support for grid view
-  if (e.key === "End" && currentView.value === "grid") {
-    e.preventDefault();
-    handleEndKey();
-    return;
-  }
-  // HOME key support for grid view
-  if (e.key === "Home" && currentView.value === "grid") {
-    e.preventDefault();
-    pageOffset.value = 0;
-    refreshImages();
-    return;
-  }
-  // PGUP/PGDN key support for grid view
-  if (
-    currentView.value === "grid" &&
-    (e.key === "PageUp" || e.key === "PageDown")
-  ) {
-    e.preventDefault();
-    if (e.key === "PageUp") {
-      pageOffset.value = Math.max(pageOffset.value - pageSize.value, 0);
-      refreshImages();
-    } else if (e.key === "PageDown") {
-      pageOffset.value = Math.min(
-        pageOffset.value + pageSize.value,
-        Math.max(totalImages.value - pageSize.value, 0)
-      );
-      refreshImages();
-    }
-    return;
-  }
-  const tag =
-    e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
-  const isEditable =
-    e.target &&
-    (e.target.isContentEditable || tag === "input" || tag === "textarea");
-  if (isEditable && !(chatOpen.value && e.key === "Escape")) return;
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
-    e.preventDefault();
-    selectAllInCurrentView();
-    return;
-  }
-  if (overlayOpen.value) {
-    if (e.key === "ArrowLeft") {
-      showPrevImage();
-      e.preventDefault();
-      return;
-    } else if (e.key === "ArrowRight") {
-      showNextImage();
-      e.preventDefault();
-      return;
-    } else if (e.key === "Escape") {
-      closeOverlay();
-      e.preventDefault();
-      return;
-    }
-  }
-  if (chatOpen.value && e.key === "Escape") {
-    closeChatOverlay();
-    e.preventDefault();
-    return;
-  }
-  if (e.key === "Escape" && selectedImageIds.value.length) {
-    selectedImageIds.value = [];
-    e.preventDefault();
-    return;
-  }
-  if (!images.value.length) return;
-  const cols = columns.value;
-  let idx = lastSelectedIndex;
-  if (idx === null || idx < 0 || idx >= images.value.length) idx = 0;
-  let nextIdx = idx;
-  if (e.key === "ArrowLeft") {
-    if (idx % cols > 0) nextIdx = idx - 1;
-    else return;
-  } else if (e.key === "ArrowRight") {
-    if (idx % cols < cols - 1 && idx + 1 < images.value.length)
-      nextIdx = idx + 1;
-    else return;
-  } else if (e.key === "ArrowUp") {
-    if (idx - cols >= 0) nextIdx = idx - cols;
-    else return;
-  } else if (e.key === "ArrowDown") {
-    if (idx + cols < images.value.length) nextIdx = idx + cols;
-    else return;
-  } else if (e.key === "Delete") {
-    if (selectedImageIds.value.length) {
-      deleteSelectedImages();
-      e.preventDefault();
-      return;
-    }
-  }
-  if (/^[1-5]$/.test(e.key)) {
-    showStars.value = true;
-    if (overlayOpen.value && overlayImage.value) {
-      setImageScore(overlayImage.value, Number(e.key));
-    } else if (selectedImageIds.value.length) {
-      patchScoreForSelection(Number(e.key));
-    }
-    e.preventDefault();
-    return;
-  }
-  return;
-}
+// ...existing code...
 
 function showPrevImage() {
   const sorted = pagedImages.value;
@@ -1320,9 +984,9 @@ async function setImageScore(img, n) {
 
 // --- Character Assignment ---
 function handleSelectCharacter(id) {
-  handleSwitchToGrid();
-  selectedCharacter.value = id;
+  selectedCharacter.value = String(id);
   selectedSet.value = null; // Clear set selection when selecting a character
+  handleSwitchToGrid();
 }
 
 function handleDragOverCharacter(id) {
@@ -1415,7 +1079,6 @@ async function assignImagesToCharacter(imageIds, characterId) {
         images.value.some((img) => img.id === id)
       );
       lastSelectedIndex = null;
-      setTimeout(updateColumns, 0);
     } else {
       // Otherwise refresh the view properly with sorting
       refreshImages();
@@ -1660,28 +1323,9 @@ const { removeTagFromOverlayImage, addTagToOverlay, handleOverlaySetScore } =
 
 // --- Watchers ---
 // Scroll to bottom after END loads last page
-watch(images, (newVal, oldVal) => {
-  if (pageOffset.value >= Math.max(totalImages.value - pageSize.value, 0)) {
-    nextTick(() => {
-      const gridEl = document.querySelector(".image-grid");
-      if (gridEl) gridEl.scrollTop = gridEl.scrollHeight;
-    });
-  }
-});
+// (Removed watch on images)
 
-watch([selectedSort, selectedCharacter, selectedSet], () => {
-  if (searchQuery.value && searchQuery.value.trim()) {
-    return;
-  }
-  // Don't refresh if a set is selected (set handles its own image loading)
-  if (selectedSet.value !== null) {
-    return;
-  }
-  pageOffset.value = 0;
-  hasMoreImages.value = true;
-  lastSelectedIndex = null;
-  refreshImages();
-});
+// (Removed watch on selectedSort, selectedCharacter, selectedSet for image loading)
 
 watch(searchQuery, (newVal, oldVal) => {
   if (!newVal && oldVal) {
@@ -1702,7 +1346,6 @@ watch(selectedSort, (val) => {
 
 watch(thumbnailSize, (val) => {
   patchConfigUIOptions({ thumbnail: val });
-  updateColumns();
 });
 
 watch(showStars, (val) => {
@@ -1735,45 +1378,43 @@ watch(
     if (val !== oldVal) {
       fetchCharacters();
       fetchSidebarCounts && fetchSidebarCounts();
-      refreshImages();
     }
   }
 );
 
 // --- Lifecycle ---
+
+
 onMounted(() => {
   fetchConfig();
   fetchSortOptions();
   fetchCharacters();
   fetchPictureSets();
-  window.addEventListener("resize", updateColumns);
-  window.addEventListener("keydown", handleOverlayKeydown);
-  setTimeout(updateColumns, 100);
+  fetchAllImageMetadata();
 
-  // Ensure gridContainer.value is set to the actual DOM node
-  nextTick(() => {
-    if (gridContainer.value && gridContainer.value.$el) {
-      gridContainer.value = gridContainer.value.$el;
-    }
-    // If using Vue 3, $el may not be available, fallback to $refs
-    if (gridContainer.value && gridContainer.value instanceof HTMLElement) {
-      // Already correct
-    } else if (gridContainer.value && gridContainer.value.$el) {
-      gridContainer.value = gridContainer.value.$el;
-    }
-  });
-
-  setTimeout(() => {
-    console.log("pagedImages.value:", pagedImages.value);
-  }, 500);
+  window.addEventListener('keydown', handleGlobalKeydown);
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("keydown", handleOverlayKeydown);
-  window.removeEventListener("resize", updateColumns);
+  window.removeEventListener('keydown', handleGlobalKeydown);
+  // ...existing code...
 });
 
-defineExpose({ currentView, clearSelection });
+function handleGlobalKeydown(e) {
+  const keys = ['Home', 'End', 'PageUp', 'PageDown'];
+  if (keys.includes(e.key)) {
+    const grid = gridContainer.value;
+    if (grid && typeof grid.onGlobalKeyPress === 'function') {
+      grid.onGlobalKeyPress(e.key, e);
+    }
+  }
+}
+
+onBeforeUnmount(() => {
+  // ...existing code...
+});
+
+defineExpose({ currentView, sidebarVisible });
 </script>
 <template src="./App.template.html"></template>
 <style scoped src="./App.css"></style>
