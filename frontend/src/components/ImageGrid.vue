@@ -4,16 +4,21 @@
     :initialImage="overlayImage"
     :allImages="allGridImages"
     :backendUrl="props.backendUrl"
-    :isVideo="isSupportedVideoFile(overlayImage?.file_path)"
     @close="closeOverlay"
     @set-score="setScore"
   />
-
+  <ImageImporter
+    ref="imageImporterRef"
+    :backendUrl="props.backendUrl"
+    :selectedCharacterId="props.selectedCharacter"
+    :allPicturesId="'__all__'"
+    :unassignedPicturesId="'__unassigned__'"
+    @import-finished="handleImagesUploaded"
+  />
   <div
     class="image-grid"
-    :style="{ gridTemplateColumns: `repeat(${columns}, 1fr)` }"
+    :style="{ gridTemplateColumns: `repeat(${columns}, 1fr)`, position: 'relative' }"
     ref="gridContainer"
-    style="position: relative"
     @dragenter.prevent="handleGridDragEnter"
     @dragover.prevent="handleGridDragOver"
     @dragleave.prevent="handleGridDragLeave"
@@ -22,18 +27,10 @@
     @click="handleGridBackgroundClick"
   >
     <div
-      v-if="
-        allGridImages.length === 0 && !props.imagesLoading && !props.imagesError
-      "
-      class="empty-state"
+      v-if="dragOverlayVisible"
+      class="drag-overlay"
     >
-      No images found for this character.
-    </div>
-    <div v-if="props.imagesError" class="empty-state">
-      {{ props.imagesError }}
-    </div>
-    <div v-if="dragOverlayVisible" class="drag-overlay-grid">
-      <span>{{ dragOverlayMessage }}</span>
+      <div class="drag-overlay-message">{{ dragOverlayMessage }}</div>
     </div>
     <div
       v-for="(img, idx) in allGridImages"
@@ -94,6 +91,26 @@ import { useOverlayActions } from "../utils/useOverlayActions";
 
 const emit = defineEmits(["open-overlay", "select-image", "clear-selection"]);
 
+const imageImporterRef = ref(null);
+// Handle images-uploaded event from ImageImporter
+async function handleImagesUploaded(newIds) {
+  console.log('[IMPORT] Import finished event received.');
+  console.log('[IMPORT] Fetching sorted image IDs from backend...');
+  await fetchAllPictureIds();
+  console.log('[IMPORT] Updated allImageIds:', allImageIds.value);
+  // Do NOT clear thumbnails; keep existing ones
+  console.log('[IMPORT] Preserving existing thumbnails.');
+  // Reset loadedRanges so new thumbnails can be fetched
+  loadedRanges.value = [];
+  console.log('[IMPORT] Reset loadedRanges.');
+  // Recalculate visible indices and fetch thumbnails for visible images
+  nextTick(() => {
+    if (gridContainer.value) {
+      console.log('[IMPORT] Recalculating visible indices and fetching thumbnails for visible images.');
+      onGridScroll({ target: gridContainer.value });
+    }
+  });
+}
 // Props
 const props = defineProps({
   thumbnailSize: Number,
@@ -198,8 +215,20 @@ async function setScore(img, n) {
   }
 }
 
+async function fetchCharacter(id) {
+  try {
+    const res = await fetch(`${props.backendUrl}/characters/${id}`);
+    if (!res.ok) throw new Error("Failed to fetch character");
+    const char = await res.json();
+    return char;
+  } catch (e) {
+    console.error("Character fetch failed:", e);
+  }
+  return null;
+}
+
 // Drag-and-drop overlay handlers
-function handleGridDragEnter(e) {
+async function handleGridDragEnter(e) {
   if (
     e.relatedTarget &&
     gridContainer.value &&
@@ -210,7 +239,15 @@ function handleGridDragEnter(e) {
   const hasSupported = dataTransferHasSupportedMedia(e.dataTransfer);
   if (!hasSupported) return;
   dragOverlayVisible.value = true;
-  dragOverlayMessage.value = "Drop files here to import";
+
+  const itemCount = e.dataTransfer.items.length;
+  if (props.selectedCharacter && props.selectedCharacter !== "__all__" && props.selectedCharacter !== "__unassigned__") {
+    const character = await fetchCharacter(props.selectedCharacter);
+    const characterName = character ? "for " + character.name : "";
+    dragOverlayMessage.value = `Drop files here to import ${itemCount} file(s) ${characterName}`;
+  } else {
+    dragOverlayMessage.value = `Drop files here to import ${itemCount} file(s)`;
+  }
   e.preventDefault();
   console.debug("Overlay shown");
 }
@@ -248,8 +285,15 @@ function handleGridDrop(e) {
     return;
   }
   dragSource.value = null;
-  // Emit import event for parent to handle
-  emit("import-files", files);
+  // Trigger import directly in ImageGrid
+  if (imageImporterRef.value && files.length) {
+    imageImporterRef.value.startImport(files, {
+      backendUrl: props.backendUrl,
+      selectedCharacterId: props.selectedCharacter,
+      allPicturesId: '__all__',
+      unassignedPicturesId: '__unassigned__',
+    });
+  }
 }
 
 // Method to handle global key presses from App.vue
@@ -587,6 +631,23 @@ onMounted(() => {
 });
 </script>
 <style scoped>
+.drag-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 166, 0, 0.2);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: all;
+  border: 8px solid #ffa600; /* thick orange border */
+  border-radius: 16px; /* rounded corners */
+  box-sizing: border-box;
+  transition: border-color 0.2s, background 0.2s;
+  color: #ffffff;
+  font-size: 3.0em;
+  font-weight: bold;
+}
 .image-grid {
   display: grid;
   gap: 0;
@@ -628,26 +689,12 @@ onMounted(() => {
   z-index: 0; /* Ensure stacking context */
   border: 3px solid transparent;
 }
-.image-card.selected {
-  z-index: 2;
-  position: relative;
-  border: 3px solid rgba(25, 118, 210, 0.32);
-}
+/* Removed stray lines: these belong only in .drag-overlay */
 .selected-border-top {
-  border-top-color: #1976d2 !important;
-}
-.selected-border-bottom {
-  border-bottom-color: #1976d2 !important;
-}
-.selected-border-left {
-  border-left-color: #1976d2 !important;
-}
-.selected-border-right {
-  border-right-color: #1976d2 !important;
-}
-.image-card.selected::after {
-  content: "";
-  position: absolute;
+    border: 10px solid #1976d2; /* thick blue border */
+    border-radius: 32px; /* rounded corners */
+    box-sizing: border-box;
+    transition: border-color 0.2s, background 0.2s;
   inset: 0;
   background: rgba(25, 118, 210, 0.32);
   border-radius: 0;

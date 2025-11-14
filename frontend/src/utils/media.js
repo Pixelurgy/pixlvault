@@ -17,6 +17,7 @@ export function isSupportedImageFile(file) {
 }
 
 export function isSupportedVideoFile(file) {
+  console.log("Checking video file:", file);
   let ext = '';
   if (typeof file === 'string') {
     ext = file.toLowerCase();
