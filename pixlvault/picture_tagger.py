@@ -91,7 +91,7 @@ class PictureTagger:
         self._florence_device = None
         self._florence_model_name = "microsoft/Florence-2-base"
 
-        self._florence_max_tokens = 40 if PictureTagger.FAST_CAPTIONS else 60
+        self._florence_max_tokens = 40 if PictureTagger.FAST_CAPTIONS else 70
 
         self._init_florence_captioning()
 
@@ -247,87 +247,154 @@ class PictureTagger:
             return None
 
         try:
+            import os
+
+            ext = os.path.splitext(image_path)[1].lower()
+            video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv"}
             from PIL import Image
 
-            image = Image.open(image_path).convert("RGB")
-
-            # Resize large images to speed up processing (Florence works well with smaller images)
-            # Florence-2 uses 768px internally, so going smaller helps a lot
-            MAX_DIM = 768
-            if max(image.size) > MAX_DIM:
-                aspect_ratio = image.width / image.height
-                if image.width > image.height:
-                    new_width = MAX_DIM
-                    new_height = int(MAX_DIM / aspect_ratio)
-                else:
-                    new_height = MAX_DIM
-                    new_width = int(MAX_DIM * aspect_ratio)
-                image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                logger.debug(
-                    f"Resized image to {new_width}x{new_height} for faster processing"
-                )
-
-            # Standard Florence captioning: no tag hints, just use the default prompt
-            inputs = self._florence_processor(
-                text="<MORE_DETAILED_CAPTION>", images=image, return_tensors="pt"
-            )
-
-            # Move inputs to device (use Florence's device, not the general device)
-            florence_device = getattr(self, "_florence_device", self._device)
-
-            # Match the dtype of the model (FP16 on GPU, FP32 on CPU)
-            target_dtype = (
-                self._florence_model.dtype
-                if hasattr(self._florence_model, "dtype")
-                else None
-            )
-
-            if target_dtype and target_dtype == torch.float16:
-                inputs = {
-                    k: v.to(florence_device).half()
-                    if torch.is_tensor(v) and v.dtype == torch.float32
-                    else v.to(florence_device)
-                    if torch.is_tensor(v)
-                    else v
-                    for k, v in inputs.items()
-                }
-
+            caption = None
+            if ext in video_exts:
+                from pixlvault.picture_utils import PictureUtils
+                frames = PictureUtils.extract_video_frames(image_path)
+                for idx, pil_img in enumerate(frames):
+                    # Resize large images to speed up processing
+                    MAX_DIM = 768
+                    if max(pil_img.size) > MAX_DIM:
+                        aspect_ratio = pil_img.width / pil_img.height
+                        if pil_img.width > pil_img.height:
+                            new_width = MAX_DIM
+                            new_height = int(MAX_DIM / aspect_ratio)
+                        else:
+                            new_height = MAX_DIM
+                            new_width = int(MAX_DIM * aspect_ratio)
+                        pil_img = pil_img.resize(
+                            (new_width, new_height), Image.Resampling.LANCZOS
+                        )
+                        logger.debug(
+                            f"Resized video frame to {new_width}x{new_height} for faster processing"
+                        )
+                    inputs = self._florence_processor(
+                        text="<MORE_DETAILED_CAPTION>",
+                        images=pil_img,
+                        return_tensors="pt",
+                    )
+                    florence_device = getattr(self, "_florence_device", self._device)
+                    target_dtype = (
+                        self._florence_model.dtype
+                        if hasattr(self._florence_model, "dtype")
+                        else None
+                    )
+                    if target_dtype and target_dtype == torch.float16:
+                        inputs = {
+                            k: v.to(florence_device).half()
+                            if torch.is_tensor(v) and v.dtype == torch.float32
+                            else v.to(florence_device)
+                            if torch.is_tensor(v)
+                            else v
+                            for k, v in inputs.items()
+                        }
+                    else:
+                        inputs = {
+                            k: v.to(florence_device) if torch.is_tensor(v) else v
+                            for k, v in inputs.items()
+                        }
+                    logger.debug(f"Inputs moved to {florence_device}")
+                    with torch.inference_mode():
+                        generated_ids = self._florence_model.generate(
+                            input_ids=inputs["input_ids"],
+                            pixel_values=inputs["pixel_values"],
+                            max_new_tokens=self._florence_max_tokens,
+                            early_stopping=False,
+                            do_sample=False,
+                            num_beams=1,
+                            use_cache=False,
+                            pad_token_id=self._florence_processor.tokenizer.pad_token_id,
+                        )
+                    generated_text = self._florence_processor.batch_decode(
+                        generated_ids, skip_special_tokens=False
+                    )[0]
+                    caption = (
+                        generated_text.replace("<s>", "").replace("</s>", "").strip()
+                    )
+                    # Ensure caption ends at last sentence-ending punctuation
+                    last_punct = max(
+                        [caption.rfind(p) for p in [".", "!", "?"]]
+                    )
+                    if last_punct != -1:
+                        caption = caption[: last_punct + 1].strip()
+                    if caption:
+                        logger.info(f"Florence-2 caption (frame {idx}): {caption}")
+                        break
             else:
-                inputs = {
-                    k: v.to(florence_device) if torch.is_tensor(v) else v
-                    for k, v in inputs.items()
-                }
-
-            logger.debug(f"Inputs moved to {florence_device}")
-
-            with torch.inference_mode():
-                generated_ids = self._florence_model.generate(
-                    input_ids=inputs["input_ids"],
-                    pixel_values=inputs["pixel_values"],
-                    max_new_tokens=self._florence_max_tokens,
-                    early_stopping=False,
-                    do_sample=False,
-                    num_beams=1,
-                    use_cache=False,
-                    pad_token_id=self._florence_processor.tokenizer.pad_token_id,
+                image = Image.open(image_path).convert("RGB")
+                MAX_DIM = 768
+                if max(image.size) > MAX_DIM:
+                    aspect_ratio = image.width / image.height
+                    if image.width > image.height:
+                        new_width = MAX_DIM
+                        new_height = int(MAX_DIM / aspect_ratio)
+                    else:
+                        new_height = MAX_DIM
+                        new_width = int(MAX_DIM * aspect_ratio)
+                    image = image.resize(
+                        (new_width, new_height), Image.Resampling.LANCZOS
+                    )
+                    logger.debug(
+                        f"Resized image to {new_width}x{new_height} for faster processing"
+                    )
+                inputs = self._florence_processor(
+                    text="<MORE_DETAILED_CAPTION>", images=image, return_tensors="pt"
                 )
-
-            generated_text = self._florence_processor.batch_decode(
-                generated_ids, skip_special_tokens=False
-            )[0]
-
-            # Florence-2 output format: "<s><MORE_DETAILED_CAPTION>caption text</s>"
-            # Extract the caption after the prompt and remove special tokens
-            caption = generated_text.replace("<s>", "").replace("</s>", "").strip()
-
+                florence_device = getattr(self, "_florence_device", self._device)
+                target_dtype = (
+                    self._florence_model.dtype
+                    if hasattr(self._florence_model, "dtype")
+                    else None
+                )
+                if target_dtype and target_dtype == torch.float16:
+                    inputs = {
+                        k: v.to(florence_device).half()
+                        if torch.is_tensor(v) and v.dtype == torch.float32
+                        else v.to(florence_device)
+                        if torch.is_tensor(v)
+                        else v
+                        for k, v in inputs.items()
+                    }
+                else:
+                    inputs = {
+                        k: v.to(florence_device) if torch.is_tensor(v) else v
+                        for k, v in inputs.items()
+                    }
+                logger.debug(f"Inputs moved to {florence_device}")
+                with torch.inference_mode():
+                    generated_ids = self._florence_model.generate(
+                        input_ids=inputs["input_ids"],
+                        pixel_values=inputs["pixel_values"],
+                        max_new_tokens=self._florence_max_tokens,
+                        early_stopping=False,
+                        do_sample=False,
+                        num_beams=1,
+                        use_cache=False,
+                        pad_token_id=self._florence_processor.tokenizer.pad_token_id,
+                    )
+                generated_text = self._florence_processor.batch_decode(
+                    generated_ids, skip_special_tokens=False
+                )[0]
+                caption = generated_text.replace("<s>", "").replace("</s>", "").strip()
+                # Ensure caption ends at last sentence-ending punctuation
+                last_punct = max(
+                    [caption.rfind(p) for p in [".", "!", "?"]]
+                )
+                if last_punct != -1:
+                    caption = caption[: last_punct + 1].strip()
+                if caption:
+                    logger.info(f"Florence-2 caption: {caption}")
             # Insert character name if provided
-            if character_name:
-                # Find first mention of person-related words and insert "named CHARACTER_NAME" after
-                # Pattern: words like "woman", "man", "person", "girl", "boy", etc.
+            if caption and character_name:
                 person_pattern = r"\b(woman|man|person|girl|boy|lady|gentleman|individual|figure|character)\b"
                 match = re.search(person_pattern, caption, re.IGNORECASE)
                 if match:
-                    # Insert "named CHARACTER_NAME" right after the person mention
                     insert_pos = match.end()
                     caption = (
                         caption[:insert_pos]
@@ -335,10 +402,7 @@ class PictureTagger:
                         + caption[insert_pos:]
                     )
                 else:
-                    # Fallback: prepend character name if no person mention found
                     caption = f"{character_name}: {caption}"
-
-            logger.info(f"Florence-2 caption: {caption}")
             return caption
 
         except Exception as e:
@@ -744,21 +808,53 @@ class PictureTagger:
         ):
             try:
                 from pixlvault.picture_utils import PictureUtils
+                import os
 
-                face_crop = PictureUtils.load_and_crop_face_bbox(
-                    picture.file_path, picture.face_bbox
-                )
-                if face_crop is not None:
-                    # Preprocess for CLIP
-                    img_input = (
-                        self._clip_preprocess(face_crop)
-                        .unsqueeze(0)
-                        .to(self._clip_device)
-                    )
-                    with torch.no_grad():
-                        facial_features = (
-                            self._clip_model.encode_image(img_input).cpu().numpy()[0]
+                ext = os.path.splitext(picture.file_path)[1].lower()
+                video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv"}
+                if ext in video_exts:
+                    import cv2
+
+                    cap = cv2.VideoCapture(picture.file_path)
+                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    for idx in range(frame_count):
+                        ret, frame = cap.read()
+                        if not ret or frame is None:
+                            continue
+                        # Try to crop face from this frame
+                        face_crop = PictureUtils.load_and_crop_face_bbox(
+                            frame, picture.face_bbox
                         )
+                        if face_crop is not None:
+                            img_input = (
+                                self._clip_preprocess(face_crop)
+                                .unsqueeze(0)
+                                .to(self._clip_device)
+                            )
+                            with torch.no_grad():
+                                facial_features = (
+                                    self._clip_model.encode_image(img_input)
+                                    .cpu()
+                                    .numpy()[0]
+                                )
+                            break
+                    cap.release()
+                else:
+                    face_crop = PictureUtils.load_and_crop_face_bbox(
+                        picture.file_path, picture.face_bbox
+                    )
+                    if face_crop is not None:
+                        img_input = (
+                            self._clip_preprocess(face_crop)
+                            .unsqueeze(0)
+                            .to(self._clip_device)
+                        )
+                        with torch.no_grad():
+                            facial_features = (
+                                self._clip_model.encode_image(img_input)
+                                .cpu()
+                                .numpy()[0]
+                            )
             except RuntimeError as e:
                 if (
                     ("CUDA out of memory" in str(e))

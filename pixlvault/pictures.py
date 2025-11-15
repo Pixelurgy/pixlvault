@@ -310,7 +310,7 @@ class Pictures:
                         cursor = thread_conn.cursor()
                         cursor.executemany(
                             """
-                            INSERT INTO picture_likeness (
+                            INSERT OR IGNORE INTO picture_likeness (
                                 picture_id_a, picture_id_b, likeness, metric
                             ) VALUES (?, ?, ?, ?)
                             """,
