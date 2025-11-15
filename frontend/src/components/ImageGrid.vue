@@ -82,6 +82,10 @@
             >mdi-star</v-icon>
           </div>
         </div>
+        <!-- Date display under thumbnail when date sorting -->
+        <div v-if="props.selectedSort && props.selectedSort.includes('created_at')" class="thumbnail-info">
+          <span v-if="img.date">{{ formatDate(img.date) }}</span>
+        </div>
       </v-card>
     </div>
   </div>
@@ -105,19 +109,13 @@ const emit = defineEmits(["open-overlay", "select-image", "clear-selection"]);
 const imageImporterRef = ref(null);
 // Handle images-uploaded event from ImageImporter
 async function handleImagesUploaded(newIds) {
-  console.log('[IMPORT] Import finished event received.');
-  console.log('[IMPORT] Fetching sorted image IDs from backend...');
-  await fetchAllPictureIds();
-  console.log('[IMPORT] Updated images:', images.value);
+  await fetchPictureMetadata();
   // Do NOT clear thumbnails; keep existing ones
-  console.log('[IMPORT] Preserving existing thumbnails.');
   // Reset loadedRanges so new thumbnails can be fetched
   loadedRanges.value = [];
-  console.log('[IMPORT] Reset loadedRanges.');
   // Recalculate visible indices and fetch thumbnails for visible images
   nextTick(() => {
     if (gridContainer.value) {
-      console.log('[IMPORT] Recalculating visible indices and fetching thumbnails for visible images.');
       onGridScroll({ target: gridContainer.value });
     }
   });
@@ -351,46 +349,78 @@ function buildPictureIdsQueryParams() {
   return params.toString();
 }
 
-async function fetchAllPictureIds() {
-  imagesLoading.value = true;
-  imagesError.value = null;
-  try {
-    let url = null;
-    if (
-      false &&
-      props.selectedSet !== null &&
-      typeof props.selectedSet !== "undefined"
-    ) {
-      url = `${props.backendUrl}/picture_sets/${props.selectedSet}`;
-    } else {
-      url = `${props.backendUrl}/picture_ids?${buildPictureIdsQueryParams()}`;
-    }
-    console.log("Fetching picture IDs from URL:", url);
+let gridRefreshStart = null;
+let gridRefreshEnd = null;
 
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("Failed to fetch picture ids");
-    const ids = await res.json();
-    // Populate images array with metadata fields
-    images.value = ids.map((id) => ({
-      id,
-      thumbnail: null,
-      score: null,
-      date: null,
-      sharpness: null,
-      edge_density: null,
-      noise_level: null,
-    }));
-    console.log('[GRID] images.value:', images.value);
+function logGridRefreshTiming() {
+  if (gridRefreshStart && gridRefreshEnd) {
+    const elapsed = gridRefreshEnd - gridRefreshStart;
+    console.log(`[GRID TIMING] Refresh took ${elapsed / 1000}s (${elapsed} ms)`);
+    gridRefreshStart = null;
+    gridRefreshEnd = null;
+  }
+}
+
+async function fetchPictureMetadata() {
+  gridRefreshStart = performance.now();
+
+  images.value = [];
+
+  const params = new URLSearchParams();
+  // Add filters
+  if (props.selectedCharacter && props.selectedCharacter !== "__all__") {
+    if (props.selectedCharacter === "__unassigned__") {
+      params.append("primary_character_id", "");
+    } else {
+      params.append("primary_character_id", props.selectedCharacter);
+    }
+  }
+  if (props.selectedSet !== null && typeof props.selectedSet !== "undefined") {
+    params.append("set_id", props.selectedSet);
+  }
+  if (props.searchQuery && props.searchQuery.trim()) {
+    params.append("query", props.searchQuery.trim());
+  }
+  if (props.selectedSort && props.selectedSort.trim()) {
+    params.append("sort", props.selectedSort.trim());
+  }
+  params.append("info", "true");
+  console.log("Fetching picture metadata with params:", params.toString());
+
+  try {
+    const url = `${props.backendUrl}/pictures?${params.toString()}`;
+    console.log("Fetching picture metadata from:", url);
+    const res = await fetch(url);    
+    if (res.ok) {      
+      const metaImages = await res.json();
+      console.log("Got metadata for ", metaImages.length, "images");
+      for (const meta of metaImages) {
+        if (meta.id) {
+          images.value.push({
+            id: meta.id,
+            thumbnail: null, // To be filled in later
+            score: meta.score ?? null,
+            date: meta.created_at ?? null,
+            sharpness: meta.sharpness ?? null,
+            edge_density: meta.edge_density ?? null,
+            noise_level: meta.noise_level ?? null,
+          });
+        }
+      }
+      nextTick(() => {
+        // Initial visible range
+        if (gridContainer.value) {
+          onGridScroll({ target: gridContainer.value });
+        }
+      });
+    }
   } catch (e) {
     imagesError.value = e.message;
     images.value = [];
-  } finally {
-    imagesLoading.value = false;
   }
 }
 
 onMounted(() => {
-  fetchAllPictureIds();
 });
 
 watch(
@@ -402,7 +432,8 @@ watch(
   ],
   () => {
     loadedRanges.value = [];
-    fetchAllPictureIds();
+    console.log("Filters changed, refetching picture metadata");
+    fetchPictureMetadata();
   }
 );
 
@@ -422,76 +453,47 @@ const allGridImages = computed(() => {
     ...img,
     idx,
   }));
-  console.log('[GRID] allGridImages:', gridImages);
+  //console.log('[GRID] allGridImages:', gridImages);
   return gridImages;
 });
 
 // Batch fetch metadata (including thumbnail) for visible range
 async function fetchThumbnailsBatch(start, end) {
+  console.log("Images available:", images.value.length);
+  start = Math.max(0, start);
+  end = Math.min(images.value.length, end);
+  console.log("Loading thumbnails for indices:", start, "to", end);
   // Check if this batch range is already loaded
   for (const range of loadedRanges.value) {
     if (start >= range[0] && end <= range[1]) {
+      console.log("Already loaded");
       return; // Already loaded
     }
   }
-  // Only fetch for IDs not already loaded
-  const idsToFetch = [];
-  for (let i = start; i < end; i++) {
-    const img = images.value[i];
-    const id = img && img.id;
-    if (id && img.thumbnail === null) {
-      idsToFetch.push(id);
-    }
-  }
-  if (!idsToFetch.length) {
-    loadedRanges.value.push([start, end]);
-    return;
-  }
-  // Use /pictures?info=true&offset=...&limit=...
-  const offset = start;
-  const limit = end - start;
-  const params = new URLSearchParams();
-  params.append("info", "true");
-  params.append("offset", offset);
-  params.append("limit", limit);
-  // Add filters
-  if (props.selectedCharacter && props.selectedCharacter !== "__all__") {
-    if (props.selectedCharacter === "__unassigned__") {
-      params.append("primary_character_id", "");
-    } else {
-      params.append("primary_character_id", props.selectedCharacter);
-    }
-  }
-  if (props.selectedSet !== null && typeof props.selectedSet !== "undefined") {
-    params.append("set_id", props.selectedSet);
-  }
-  if (props.searchQuery && props.searchQuery.trim()) {
-    params.append("query", props.searchQuery.trim());
-  }
-  if (props.selectedSort && props.selectedSort.trim()) {
-    params.append("sort", props.selectedSort.trim());
-  }
   try {
-    const url = `${props.backendUrl}/pictures?${params.toString()}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const metaImages = await res.json();
-      for (const meta of metaImages) {
-        if (meta.id) {
-          const idx = images.value.findIndex((img) => img.id === meta.id);
-          if (idx !== -1) {
-            const img = images.value[idx];
-            img.thumbnail = meta.thumbnail ? `${props.backendUrl}/thumbnails/${meta.id}` : null;
-            img.score = meta.score ?? null;
-            img.date = meta.date ?? null;
-            img.sharpness = meta.sharpness ?? null;
-            img.edge_density = meta.edge_density ?? null;
-            img.noise_level = meta.noise_level ?? null;
+    console.log("Starting download for:", start, "to", end);
+    const totalToLoad = end - start;
+    let loadedCount = 0;
+    for (let i = start; i < end; i++) {
+      const img = images.value[i];
+      const id = img && img.id;
+      
+      img.thumbnail = `${props.backendUrl}/thumbnails/${id}`;
+      // Instrument thumbnail load
+      if (img.thumbnail) {
+        const imageObj = new window.Image();
+        imageObj.onload = () => {
+          loadedCount++;
+          // When all thumbnails in batch are loaded, record end time
+          if (loadedCount === totalToLoad) {
+            gridRefreshEnd = performance.now();
+            logGridRefreshTiming();
           }
-        }
+        };
+        imageObj.src = img.thumbnail;
       }
-      loadedRanges.value.push([start, end]);
     }
+    loadedRanges.value.push([start, end]);
   } catch {
     // Ignore errors for now
   }
@@ -611,6 +613,13 @@ const handleGridBackgroundClick = (e) => {};
 function formatLikenessScore(score) {
   if (typeof score !== "number") return "";
   return `Likeness: ${(score * 100).toFixed(2)}%`;
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 const gridContainer = ref(null);
@@ -774,11 +783,22 @@ onMounted(() => {
   min-width: none;
 }
 .thumbnail-info {
-  font-size: 0.85em;
-  color: #666;
+  font-size: 1.0em;
+  color: #000;
   margin-top: 2px;
+  margin-bottom: 2px;
   text-align: center;
   word-break: break-all;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  width: 100%;
+  border: none;
+  position: relative;
+  bottom: 0;
+  left: 0;
+  z-index: 100;
 }
 .thumbnail-container {
   width: 100%;
@@ -798,29 +818,7 @@ onMounted(() => {
   left: 0;
   transition: transform 0.18s cubic-bezier(0.4, 2, 0.6, 1), box-shadow 0.18s;
 }
-/* Spinner for thumbnail loading */
-.thumbnail-loading {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 40px;
-  height: 40px;
-  border: 4px solid #eee;
-  border-top: 4px solid #1976d2;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  z-index: 10;
-}
 
-@keyframes spin {
-  0% {
-    transform: translate(-50%, -50%) rotate(0deg);
-  }
-  100% {
-    transform: translate(-50%, -50%) rotate(360deg);
-  }
-}
 .thumbnail-container:hover .thumbnail-img,
 .thumbnail-container:focus-within .thumbnail-img {
   transform: scale(1.02);
