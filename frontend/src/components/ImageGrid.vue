@@ -70,6 +70,17 @@
               <span> Image #{{ String(idx + 1).padStart(5, "0") }} </span>
             </div>
           </template>
+          <!-- Score overlay -->
+          <div v-if="props.showStars" class="star-overlay">
+            <v-icon
+              v-for="n in 5"
+              :key="n"
+              large
+              :color="n <= (img.score || 0) ? 'orange' : 'grey darken-2'"
+              style="cursor: pointer"
+              @click.stop="setScore(img, n)"
+            >mdi-star</v-icon>
+          </div>
         </div>
       </v-card>
     </div>
