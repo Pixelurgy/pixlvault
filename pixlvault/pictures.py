@@ -7,6 +7,7 @@ import os
 import cv2
 import threading
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 from typing import Union, List, Tuple
 
@@ -179,9 +180,7 @@ class Pictures:
         if self._text_embedding_worker:
             self._text_embedding_worker.join(timeout=10)
 
-    def start_likeness_worker(self, batch_size=131072, interval=5):
-        import threading
-
+    def start_likeness_worker(self, batch_size=200000, interval=5):
         if (
             hasattr(self, "_likeness_worker")
             and self._likeness_worker
@@ -203,74 +202,91 @@ class Pictures:
 
     def _likeness_loop(self, batch_size, interval):
         num_threads = 4
+
         while not self._likeness_worker_stop.is_set():
             data_updated = False
             start = time.time()
             logger.debug("[LIKENESS] Starting iteration...")
-            with self._db.threaded_connection as thread_conn:
-                cursor = thread_conn.cursor()
-                cursor.execute(
-                    "SELECT COUNT(*) FROM pictures WHERE facial_features IS NOT NULL"
-                )
-                n_total = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM picture_likeness")
-                likeness_count = cursor.fetchone()[0]
-
-            total_pairs = n_total * (n_total - 1)
-            total_pairs_remaining = total_pairs - likeness_count
-            if total_pairs_remaining == 0:
-                logger.info(
-                    "[LIKENESS] Iteration done after %.2f seconds."
-                    % (time.time() - start)
-                )
-                self._likeness_worker_stop.wait(interval)
-                continue
-            logger.info(
-                f"Likeness worker: {total_pairs_remaining} pairwise likenesses remain to be calculated."
-            )
+            pending_pairs = []
 
             with self._db.threaded_connection as thread_conn:
                 cursor = thread_conn.cursor()
+                # Bulk cleanup: remove already-calculated pairs from work queue
                 cursor.execute(
-                    f"SELECT * FROM pictures WHERE facial_features IS NOT NULL LIMIT ({num_threads * batch_size})"
+                    """
+                    DELETE FROM likeness_work_queue
+                    WHERE EXISTS (
+                        SELECT 1 FROM picture_likeness
+                        WHERE picture_likeness.picture_id_a = likeness_work_queue.picture_id_a
+                          AND picture_likeness.picture_id_b = likeness_work_queue.picture_id_b
+                    )
+                    """
+                )
+                thread_conn.commit()
+                time_after_cleanup = time.time()
+                logger.debug(
+                    f"[LIKENESS] DELETING existing items from likeness_work_queue took {time_after_cleanup - start:.2f} seconds."
+                )
+            with self._db.threaded_connection as thread_conn:
+                cursor = thread_conn.cursor()
+                # Select pending pairs from likeness_work_queue only
+                cursor.execute(
+                    "SELECT picture_id_a, picture_id_b FROM likeness_work_queue ORDER BY rowid LIMIT ?",
+                    (batch_size,),
                 )
                 rows = cursor.fetchall()
-            with self._db.threaded_connection as thread_conn:
-                cursor = thread_conn.cursor()
-                cursor.execute(
-                    "SELECT picture_id_a, picture_id_b FROM picture_likeness LIMIT (?)",
-                    (num_threads * batch_size,),
+                cursor.execute("SELECT COUNT(*) FROM likeness_work_queue")
+                total_pending = cursor.fetchone()[0]
+                logger.debug(
+                    f"[LIKENESS] Fetched {len(rows)} rows from likeness_work_queue out of {total_pending}."
                 )
-                existing_pairs = set((row[0], row[1]) for row in cursor.fetchall())
+                # Batch fetch all required pictures
+                all_ids = set()
+                for row in rows:
+                    all_ids.add(row[0])
+                    all_ids.add(row[1])
+                if all_ids:
+                    placeholders = ",".join(["?"] * len(all_ids))
+                    cursor.execute(
+                        f"SELECT * FROM pictures WHERE id IN ({placeholders})",
+                        tuple(all_ids),
+                    )
+                    pic_rows = cursor.fetchall()
+                    pic_dict = {
+                        row["id"]
+                        if isinstance(row, dict)
+                        else row[0]: PictureModel.from_dict(row)
+                        for row in pic_rows
+                    }
+                    for row in rows:
+                        pic_a_id, pic_b_id = row[0], row[1]
+                        pic_a = pic_dict.get(pic_a_id)
+                        pic_b = pic_dict.get(pic_b_id)
+                        if not pic_a or not pic_b:
+                            continue
+                        # Only process if both have facial features
+                        if not pic_a.facial_features or not pic_b.facial_features:
+                            continue
+                        pending_pairs.append((pic_a_id, pic_b_id, pic_a, pic_b))
 
-            pending_pairs = []
-            all_pics = [PictureModel.from_dict(row) for row in rows]
-            for i, pic_a in enumerate(all_pics):
-                for j, pic_b in enumerate(all_pics):
-                    if i == j:
-                        continue
-                    if (pic_a.id, pic_b.id) in existing_pairs:
-                        continue
-                    if not getattr(pic_a, "facial_features", None) or not getattr(
-                        pic_b, "facial_features", None
-                    ):
-                        continue
-                    pending_pairs.append((pic_a, pic_b))
-
+            logger.debug(
+                "[LIKENESS] Got %d pending likeness pairs to process from work queue."
+                % (len(pending_pairs))
+            )
             if pending_pairs:
-                # Print total pairs to process
-                total_to_process = batch_size * num_threads
-
                 batches = [
-                    pending_pairs[i : i + batch_size]
-                    for i in range(0, total_to_process, batch_size)
+                    pending_pairs[i * batch_size : (i + 1) * batch_size]
+                    for i in range(
+                        min(
+                            num_threads,
+                            (len(pending_pairs) + batch_size - 1) // batch_size,
+                        )
+                    )
                 ]
 
-                import concurrent.futures
-
-                def process_batch(batch, batch_idx, processed_so_far):
-                    pic_a_list = [pic_a for pic_a, _ in batch]
-                    pic_b_list = [pic_b for _, pic_b in batch]
+                def process_batch(batch):
+                    pic_a_list = [item[2] for item in batch]
+                    pic_b_list = [item[3] for item in batch]
                     features_a = [
                         np.frombuffer(pic.facial_features, dtype=np.float32)
                         for pic in pic_a_list
@@ -283,28 +299,33 @@ class Pictures:
                         features_a, features_b
                     )
                     likeness_scores = [
-                        (pic_a.id, pic_b.id, float(likeness), "cosine")
-                        for (pic_a, pic_b), likeness in zip(batch, likeness_values)
+                        (item[0], item[1], float(likeness), "cosine")
+                        for item, likeness in zip(batch, likeness_values)
                     ]
-                    return likeness_scores
+                    # Remove processed pairs from work queue
+                    queue_pairs = [(item[0], item[1]) for item in batch]
+                    return likeness_scores, queue_pairs
 
                 # Run batches in thread pool and join
                 processed_total = 0
                 all_likeness_scores = []
-                with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=len(batches)
-                ) as executor:
+                all_processed_pairs = []
+                with ThreadPoolExecutor(max_workers=len(batches)) as executor:
                     futures = [
-                        executor.submit(process_batch, batch, idx, processed_total)
-                        for idx, batch in enumerate(batches)
+                        executor.submit(process_batch, batch)
+                        for batch in batches
                         if batch
                     ]
-                    for future in concurrent.futures.as_completed(futures):
-                        batch_scores = future.result()
+                    for future in as_completed(futures):
+                        batch_scores, processed_pairs = future.result()
                         all_likeness_scores.extend(batch_scores)
+                        all_processed_pairs.extend(processed_pairs)
                         processed_total += len(batch_scores)
 
-                # Bulk insert all likeness scores in one transaction
+                logger.debug(
+                    f"[LIKENESS] Processed {processed_total} likeness scores in this iteration."
+                )
+                # Bulk insert all likeness scores and remove processed pairs
                 if all_likeness_scores:
                     with self._db.threaded_connection as thread_conn:
                         cursor = thread_conn.cursor()
@@ -316,15 +337,23 @@ class Pictures:
                             """,
                             all_likeness_scores,
                         )
+                        # Remove processed pairs from work queue
+                        cursor.executemany(
+                            "DELETE FROM likeness_work_queue WHERE picture_id_a = ? AND picture_id_b = ?",
+                            all_processed_pairs,
+                        )
                         thread_conn.commit()
-                    logger.info(
-                        f"[LIKENESS] Bulk inserted {len(all_likeness_scores)} likeness scores."
+                    logger.debug(
+                        f"[LIKENESS] Bulk inserted {len(all_likeness_scores)} likeness scores and removed {len(all_processed_pairs)} processed pairs from work queue."
                     )
-                data_updated = True
+                    data_updated = True
 
-            logger.info(
-                "[LIKENESS] Iteration done after %.2f seconds." % (time.time() - start)
-            )
+            timing = time.time() - start
+            if timing > 0.5:
+                logger.info(
+                    "[LIKENESS] Calculated and updated %d likeness scores in %.2f seconds."
+                    % (len(all_likeness_scores), time.time() - start)
+                )
             if not data_updated:
                 self._likeness_worker_stop.wait(interval)
         logger.info("[LIKENESS] Likeness worker stopped.")
@@ -338,15 +367,22 @@ class Pictures:
                 # 1. Calculate face bboxes
                 logger.debug("[FACIAL_FEATURES] Starting iteration...")
                 pics_needing_face_bboxes = self._find_pics_needing_face_bbox()
-                logger.info(
-                    "[FACIAL_FEATURES] It took %.2f seconds to fetch pictures needing face bboxes."
-                    % (time.time() - start)
+                time_after_fetch = time.time()
+
+                logger.debug(
+                    "[FACIAL_FEATURES] It took %.2f seconds to fetch %d pictures needing face bboxes."
+                    % (time_after_fetch - start, len(pics_needing_face_bboxes))
                 )
                 logger.debug(
                     f"Found {len(pics_needing_face_bboxes)} pictures needing face bboxes. Doing {MAX_CONCURRENT_IMAGES} at a time."
                 )
                 insightface_ok, bboxes_updated = self._calculate_face_bboxes(
                     pics_needing_face_bboxes[:MAX_CONCURRENT_IMAGES]
+                )
+                time_after_calculate = time.time()
+                logger.debug(
+                    "[FACIAL_FEATURES] It took %.2f seconds to calculate face bboxes."
+                    % (time_after_calculate - time_after_fetch)
                 )
                 if not insightface_ok:
                     logger.warning(
@@ -359,16 +395,15 @@ class Pictures:
                 if self._facial_features_worker_stop.is_set():
                     break
 
-                start_facial_features_fetch = time.time()
                 # 2. Generate facial features for pictures missing them
                 missing_facial_features = []
                 with self._db.threaded_connection as thread_conn:
                     missing_facial_features = self._fetch_missing_facial_features(
                         thread_conn
                     )
-                logger.info(
-                    "[FACIAL_FEATURES] It took %.2f seconds to fetch pictures needing facial features."
-                    % (time.time() - start_facial_features_fetch)
+                logger.debug(
+                    "[FACIAL_FEATURES] It took %.2f seconds to fetch %d pictures needing facial features."
+                    % (time.time() - time_after_calculate, len(missing_facial_features))
                 )
                 if missing_facial_features:
                     logger.debug(
@@ -383,9 +418,10 @@ class Pictures:
                         )
                     data_updated |= features_updated
 
-                logger.info(
-                    "[FACIAL_FEATURES] Done after %.2f seconds." % (time.time() - start)
-                )
+                timing = time.time() - start
+
+                if timing > 0.5:
+                    logger.info("[FACIAL_FEATURES] Done after %.2f seconds." % timing)
                 if not data_updated:
                     # Wait for the specified interval before checking again
                     self._facial_features_worker_stop.wait(interval)
@@ -413,7 +449,7 @@ class Pictures:
                 if self._text_embedding_worker_stop.is_set():
                     break
 
-                logger.info(
+                logger.debug(
                     "[TEXT_EMBEDDING] It took %.2f seconds to fetch missing descriptions."
                     % (time.time() - start)
                 )
@@ -444,7 +480,7 @@ class Pictures:
                 with self._db.threaded_connection as thread_conn:
                     missing_tags = self._fetch_missing_tags(thread_conn)
 
-                logger.info(
+                logger.debug(
                     "[TEXT_EMBEDDING] It took %.2f seconds to fetch missing tags."
                     % (time.time() - tag_start)
                 )
@@ -471,7 +507,7 @@ class Pictures:
                 with self._db.threaded_connection as thread_conn:
                     pictures_to_embed = self._fetch_missing_text_embeddings(thread_conn)
 
-                logger.info(
+                logger.debug(
                     "[TEXT_EMBEDDING] It took %.2f seconds to fetch missing text embeddings."
                     % (time.time() - embed_start)
                 )
@@ -491,9 +527,9 @@ class Pictures:
                         )
                     data_updated = True
 
-                logger.info(
-                    "[TEXT_EMBEDDING] Done after %.2f seconds." % (time.time() - start)
-                )
+                timing = time.time() - start
+                if timing > 0.5:
+                    logger.info("[TEXT_EMBEDDING] Done after %.2f seconds." % timing)
                 if not data_updated:
                     self._text_embedding_worker_stop.wait(interval)
             except (sqlite3.OperationalError, OSError) as e:
@@ -585,7 +621,7 @@ class Pictures:
             FROM pictures p
             WHERE p.face_bbox IS NOT NULL
               AND p.face_bbox != ''
-              AND (p.facial_features IS NULL OR p.facial_features = '')
+              AND p.facial_features IS NULL
             GROUP BY p.id
             """
         )
@@ -640,7 +676,7 @@ class Pictures:
                     batch = group[:BATCH_SIZE]
                     if batch:
                         size = PictureUtils.load_metadata(batch[0].file_path)
-                        logger.info(
+                        logger.debug(
                             f"Processing batch of {len(batch)} images of size {size} out of a total of {len(group)}."
                         )
                         quality_updates = self._calculate_quality(batch)
@@ -687,7 +723,7 @@ class Pictures:
                             w = int(round((x2 - x1) / 64.0) * 64)
                             h = int(round((y2 - y1) / 64.0) * 64)
                             bbox_size = (h, w, 3)
-                        logger.info(
+                        logger.debug(
                             f"Processing face batch of {len(batch)} images of bbox size {bbox_size}."
                         )
                         quality_updates = self._calculate_quality(batch, True)
@@ -709,7 +745,9 @@ class Pictures:
             except Exception as e:
                 logger.error(f"Quality worker error: {e}")
 
-            logger.info("[QUALITY] Done after %.2f seconds." % (time.time() - start))
+            timing = time.time() - start
+            if timing > 0.5:
+                logger.info("[QUALITY] Done after %.2f seconds." % timing)
             if quality_updates == 0:
                 self._quality_worker_stop.wait(interval)
 
@@ -779,7 +817,7 @@ class Pictures:
                 all_groups.update(image_groups)
         if video_groups:
             for vkey, vgroup in video_groups.items():
-                logger.info(f"Video batch for {vkey}: {len(vgroup)} video(s).")
+                logger.debug(f"Video batch for {vkey}: {len(vgroup)} video(s).")
         return all_groups
 
     def _calculate_quality(
@@ -980,7 +1018,7 @@ class Pictures:
                     # Use Florence description to correct tags
                     try:
                         corrected_tags = picture_tagger.correct_tags_with_florence(
-                            pic.file_path, tags
+                            pic.description, tags
                         )
                         if corrected_tags:
                             tags = corrected_tags
@@ -1090,6 +1128,7 @@ class Pictures:
                     logger.warning(
                         f"No face found in {file_path} for picture {pic.id}."
                     )
+                    pic.face_bbox = bytes()
                     continue
                 else:
                     logger.debug(
@@ -1160,13 +1199,24 @@ class Pictures:
                 logger.error(
                     f"Failed to extract/store face bbox for picture {pic.id}: {e}"
                 )
+                pic.face_bbox = bytes()
         logger.debug("Done extracting face bboxes for current batch.")
 
-        with self._db.threaded_connection as thread_conn:
-            logger.info(
-                f"Storing {bboxes_updated} updated face bboxes and thumbnails to database."
-            )
-            self._update_attributes(thread_conn, pics, ["face_bbox", "thumbnail"])
+        NUM_RETRIES = 5
+        for i in range(NUM_RETRIES):
+            try:
+                with self._db.threaded_connection as thread_conn:
+                    logger.debug(
+                        f"Storing {bboxes_updated} updated face bboxes and thumbnails to database."
+                    )
+                    self._update_attributes(
+                        thread_conn, pics, ["face_bbox", "thumbnail"]
+                    )
+                    break
+            except Exception:
+                logger.warning(
+                    f"Database write failed. Trying again shortly. Attempt {i + 1}/{NUM_RETRIES}"
+                )
 
         return True, bboxes_updated
 
@@ -1413,11 +1463,17 @@ class Pictures:
 
         # Batch insert
         picture_dicts, list_of_tag_dicts = self.to_batch_of_db_dicts(pictures)
+        new_picture_ids = []
         if picture_dicts:
             columns = ", ".join(picture_dicts[0].keys())
             placeholders = ", ".join([f":{k}" for k in picture_dicts[0].keys()])
             sql = f"INSERT INTO pictures ({columns}) VALUES ({placeholders})"
             self._db.executemany(sql, picture_dicts, commit=True)
+            # Collect new picture IDs (assume 'id' is present in dict)
+            new_picture_ids = [
+                pic_dict["id"] for pic_dict in picture_dicts if "id" in pic_dict
+            ]
+
         # Flatten tag dicts for batch insert
         all_tag_dicts = [
             tag_dict for tag_dicts in list_of_tag_dicts for tag_dict in tag_dicts
@@ -1431,6 +1487,34 @@ class Pictures:
                 ],
                 commit=True,
             )
+
+        # Insert likeness pairs into likeness_work_queue
+        if new_picture_ids:
+            # Get all existing picture IDs (excluding new ones)
+            existing_ids = [
+                row["id"]
+                for row in self._db.query(
+                    f"SELECT id FROM pictures WHERE id NOT IN ({','.join(['?'] * len(new_picture_ids))})",
+                    tuple(new_picture_ids),
+                )
+            ]
+            # Prepare all pairs (new_id, existing_id) and (existing_id, new_id)
+            queue_pairs = []
+            for new_id in new_picture_ids:
+                for existing_id in existing_ids:
+                    queue_pairs.append((new_id, existing_id))
+                    queue_pairs.append((existing_id, new_id))
+            # Also add (new_id, new_id) pairs for all new pictures (if needed)
+            for i in range(len(new_picture_ids)):
+                for j in range(len(new_picture_ids)):
+                    if i != j:
+                        queue_pairs.append((new_picture_ids[i], new_picture_ids[j]))
+            if queue_pairs:
+                self._db.executemany(
+                    "INSERT OR IGNORE INTO likeness_work_queue (picture_id_a, picture_id_b) VALUES (?, ?)",
+                    queue_pairs,
+                    commit=True,
+                )
 
     def update(self, pictures: Union[PictureModel, List[PictureModel]]):
         """Update one or more pictures. Supports both single picture and batch operations."""
@@ -1557,6 +1641,8 @@ class Pictures:
                 if features is not None:
                     pic.facial_features = features
                     updated += 1
+                else:
+                    pic.facial_features = bytes()
             except Exception as e:
                 logger.error(f"Failed to generate facial features for {pic.id}: {e}")
         return updated

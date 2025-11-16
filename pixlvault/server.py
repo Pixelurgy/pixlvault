@@ -904,15 +904,12 @@ class Server:
         @self.api.get("/characters")
         async def get_characters(name: str = Query(None)):
             """List all characters or filter by name."""
-            start = time.time()
             chars = (
                 self.vault.characters.find(name=name)
                 if name
                 else self.vault.characters.find()
             )
             dicts = [c.__dict__ for c in chars]
-            elapsed = time.time() - start
-            logger.warning(f"[SERVER] get_characters took {elapsed:.4f} seconds")
             logger.info(f"Returning characters: {dicts}")
             return dicts
 
@@ -969,21 +966,23 @@ class Server:
             response.headers["Access-Control-Allow-Origin"] = "*"
             return response
 
-        @self.api.get("/thumbnails")
-        async def get_thumbnails(ids: str = Query(...)):
-            try:
-                ids = ids.split(",")
-                results = {}
-                for id in ids:
+        @self.api.post("/thumbnails")
+        async def get_thumbnails(payload: dict = Body(...)):
+            ids = payload.get("ids", [])
+            if not isinstance(ids, list):
+                raise HTTPException(status_code=400, detail="'ids' must be a list")
+            results = {}
+            for id in ids:
+                try:
                     pic = self.vault.pictures[id]
                     thumbnail_bytes = pic.thumbnail
                     results[id] = base64.b64encode(thumbnail_bytes).decode("utf-8")
-                response = JSONResponse(results)
-                response.headers["Access-Control-Allow-Origin"] = "*"
-                return response
-            except KeyError:
-                logger.error(f"Picture not found for id={id} (thumbnail request)")
-                raise HTTPException(status_code=404, detail="Picture not found")
+                except KeyError:
+                    logger.error(f"Picture not found for id={id} (thumbnail request)")
+                    results[id] = None
+            response = JSONResponse(results)
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            return response
 
         @self.api.patch("/pictures/{id}")
         async def patch_picture(id: str, request: Request):
@@ -1140,13 +1139,13 @@ class Server:
         ):
             from pixlvault.pictures import SortMechanism
 
-            start = time.time()
             query_params = dict(request.query_params)
             query_params.pop("info", None)
             query_params.pop("sort", None)
             query_params.pop("offset", None)
             query_params.pop("limit", None)
             query_params.pop("query", None)
+            count = query_params.pop("count", None)
             # Convert tags to list if present
             if "tags" in query_params and isinstance(query_params["tags"], str):
                 try:
@@ -1158,17 +1157,26 @@ class Server:
             if sort == SortMechanism.SEARCH_LIKENESS.value and query:
                 # Use semantic search, return top-N (limit) results
                 if limit == sys.maxsize:
-                    pics = self.vault.pictures.find_by_text(query, top_n=sys.maxsize)
+                    pics = self.vault.pictures.find_by_text(
+                        query, count=count, top_n=sys.maxsize
+                    )
                 else:
-                    pics = self.vault.pictures.find_by_text(query, top_n=offset + limit)
+                    pics = self.vault.pictures.find_by_text(
+                        query, count=count, top_n=offset + limit
+                    )
                     pics = pics[offset : offset + limit]
             else:
                 pics = self.vault.pictures.find(
-                    sort=sort, offset=offset, limit=limit, info=info, **query_params
+                    sort=sort,
+                    offset=offset,
+                    limit=limit,
+                    info=info,
+                    count=count,
+                    **query_params,
                 )
+            if count:
+                return {"count": pics}
             dicts = [pic.to_dict() for pic in pics]
-            elapsed = time.time() - start
-            logger.info(f"GET /pictures completed in {elapsed:.3f} seconds")
             return dicts
 
         @self.api.get("/export/zip")
