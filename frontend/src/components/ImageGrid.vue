@@ -417,6 +417,10 @@ const allGridImages = ref([]);
 
 // Batch fetch metadata (including thumbnail) for visible range
 async function fetchThumbnailsBatch(start, end) {
+  start = Math.max(0, start);
+  end = Math.max(start, end);
+
+  console.debug(`[BATCH REQUEST] start=${start}, end=${end}, loadedRanges=${JSON.stringify(loadedRanges.value)}`);
   // Check if this batch range is already loaded
   for (const range of loadedRanges.value) {
     if (start >= range[0] && end <= range[1]) {
@@ -426,12 +430,12 @@ async function fetchThumbnailsBatch(start, end) {
   // Fetch batch metadata for visible range
   try {
     const params = buildPictureIdsQueryParams();
-    const url = `${props.backendUrl}/pictures?info=true&offset=${start}&limit=${
-      end - start
-    }&${params}`;
+    const url = `${props.backendUrl}/pictures?info=true&offset=${start}&limit=${end-start}&${params}`;
+    console.debug(`[BATCH FETCH] Requesting: ${url}`);
     const res = await fetch(url);
     if (res.ok) {
       const images = await res.json();
+      console.debug(`[BATCH RESPONSE] Received ${images.length} images:`, images.map(img => img.id));
       // Prepare grid image objects
       const gridImages = images.map((img, idx) => ({
         ...img,
@@ -439,18 +443,16 @@ async function fetchThumbnailsBatch(start, end) {
         thumbnail: null,
       }));
       // Now fetch thumbnails for these IDs
-      const ids = images.map((img) => img.id);
+      const ids = images.map(img => img.id);
       if (ids.length) {
-        // Send as POST with JSON body: { ids: [...] }
         const thumbRes = await fetch(`${props.backendUrl}/thumbnails`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids }),
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids })
         });
         if (thumbRes.ok) {
           const thumbData = await thumbRes.json();
           for (const gridImg of gridImages) {
-            //            console.debug('[THUMBNAIL FETCH] Setting thumbnail for image ID:', gridImg.id);
             gridImg.thumbnail = thumbData[gridImg.id]
               ? `data:image/png;base64,${thumbData[gridImg.id]}`
               : null;
@@ -463,23 +465,25 @@ async function fetchThumbnailsBatch(start, end) {
       }
       // Ensure allGridImages.value is sized to totalImageCount
       if (allGridImages.value.length < totalImageCount.value) {
-        for (
-          let i = allGridImages.value.length;
-          i < totalImageCount.value;
-          i++
-        ) {
+        for (let i = allGridImages.value.length; i < totalImageCount.value; i++) {
           allGridImages.value[i] = { id: null, thumbnail: null, idx: i };
         }
       }
       // Insert/update images at their correct indices
       for (let i = 0; i < gridImages.length; i++) {
         const img = gridImages[i];
+        console.debug(`[ASSIGN] allGridImages[${start + i}] <- ${img.id}`);
         allGridImages.value[start + i] = img;
       }
       loadedRanges.value.push([start, end]);
+      // Log current visible IDs
+      const startVis = Math.max(0, visibleStart.value);
+      const endVis = Math.min(allGridImages.value.length, visibleEnd.value);
+      const visibleIds = allGridImages.value.slice(startVis, endVis).map(img => img.id);
+      console.debug(`[VISIBLE RANGE] ${startVis}-${endVis}:`, visibleIds);
     }
-  } catch {
-    // Ignore errors for now
+  } catch (err) {
+    console.error('[BATCH ERROR]', err);
   }
 }
 
