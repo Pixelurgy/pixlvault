@@ -127,12 +127,12 @@ class Vault:
         if add_tagger_test_images:
             # Add all pictures/TaggerTest*.png
             for file in os.listdir(
-                os.path.join(os.path.dirname(os.path.dirname(__file__)), "../pictures")
+                os.path.join(os.path.dirname(os.path.dirname(__file__)), "pictures")
             ):
                 if file.startswith("TaggerTest") and file.endswith(".png"):
                     src_path = os.path.join(
                         os.path.dirname(os.path.dirname(__file__)),
-                        "TaggerTestImages",
+                        "pictures",
                         file,
                     )
                     pic = PictureUtils.create_picture_from_file(

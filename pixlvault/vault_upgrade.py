@@ -160,9 +160,6 @@ class VaultUpgrade:
             )
         """)
         self.connection.execute("""
-            ALTER TABLE pictures ADD COLUMN facial_features BLOB
-        """)
-        self.connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_reference_picture_likeness_reference_picture_id ON reference_picture_likeness(reference_picture_id)
         """)
         self.connection.execute("""

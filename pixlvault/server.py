@@ -33,6 +33,36 @@ logger = get_logger(__name__)
 
 
 class Server:
+    @staticmethod
+    def create_config(**kwargs):
+        """
+        Create a config dict from provided keys in kwargs, using defaults for missing keys.
+        """
+        config_dir = kwargs.get("config_dir")
+        if not config_dir:
+            config_dir = os.path.expanduser("~/.pixlvault")
+        default_image_root = os.path.join(config_dir, "images")
+        defaults = {
+            "image_roots": [default_image_root],
+            "selected_image_root": default_image_root,
+            "description": DEFAULT_DESCRIPTION,
+            "sort": "ORDER BY created_at DESC",
+            "thumbnail": "default",
+            "thumbnail_size": "default",
+            "show_stars": True,
+            "openai_host": "localhost",
+            "openai_port": 8000,
+            "openai_model": "gpt-3.5-turbo",
+            "default_device": "cpu",
+        }
+        config = defaults.copy()
+        config.update({k: v for k, v in kwargs.items() if v is not None})
+        # Ensure image_roots and selected_image_root are valid
+        if not config.get("image_roots") or len(config["image_roots"]) == 0:
+            config["image_roots"] = [default_image_root]
+        if not config.get("selected_image_root"):
+            config["selected_image_root"] = config["image_roots"][0]
+        return config
     def __enter__(self):
         # Allow use as a context manager for robust cleanup
         return self
@@ -145,55 +175,29 @@ class Server:
             self.vault.close()
 
     @staticmethod
-    def init_config(
-        config_path,
-    ):
+    def init_config(config_path):
         """
         Initialize and load the server configuration from file, creating defaults if necessary.
-
         Returns:
             dict: Configuration dictionary.
         """
         config_dir = os.path.dirname(config_path)
         os.makedirs(config_dir, exist_ok=True)
-
-        default_image_root = os.path.join(config_dir, "images")
-
-        config = {}
         if not os.path.exists(config_path):
-            config = {
-                "image_roots": [default_image_root],
-                "selected_image_root": default_image_root,
-                "description": DEFAULT_DESCRIPTION,
-                "sort": "ORDER BY created_at DES",
-                "thumbnail": "default",
-                "show_stars": True,
-                "openai_host": "localhost",
-                "openai_port": 8000,
-                "openai_model": "gpt-3.5-turbo",
-            }
+            config = Server.create_config(config_dir=config_dir)
         else:
             with open(config_path, "r") as f:
                 config = json.load(f)
-                # Ensure new config options exist
-
-                if "sort" not in config:
-                    config["sort"] = "ORDER BY created_at DESC"
-                if "thumbnail_size" not in config:
-                    config["thumbnail_size"] = "default"
-                if "show_stars" not in config:
-                    config["show_stars"] = True
-                if "openai_host" not in config:
-                    config["openai_host"] = "localhost"
-                if "openai_port" not in config:
-                    config["openai_port"] = 8000
-                if "openai_model" not in config:
-                    config["openai_model"] = "gpt-3.5-turbo"
-                if "image_roots" not in config or len(config["image_roots"]) == 0:
-                    config["image_roots"] = [default_image_root]
-                if "selected_image_root" not in config:
-                    config["selected_image_root"] = config["image_roots"][0]
-
+            # Fill in missing keys with defaults
+            defaults = Server.create_config(config_dir=config_dir)
+            for k, v in defaults.items():
+                if k not in config:
+                    config[k] = v
+        # Ensure image_roots and selected_image_root are valid
+        if not config.get("image_roots") or len(config["image_roots"]) == 0:
+            config["image_roots"] = [os.path.join(config_dir, "images")]
+        if not config.get("selected_image_root"):
+            config["selected_image_root"] = config["image_roots"][0]
         return config
 
     @staticmethod

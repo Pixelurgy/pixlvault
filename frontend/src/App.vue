@@ -55,6 +55,7 @@ const config = reactive({
   openai_host: "localhost",
   openai_port: 8000,
   openai_model: "",
+  default_device: "cpu", // Add default_device to config
 });
 const openaiModels = ref([]);
 const openaiModelFetchError = ref("");
@@ -157,6 +158,7 @@ async function fetchConfig() {
     config.openai_host = data.openai_host || "localhost";
     config.openai_port = data.openai_port || 8000;
     config.openai_model = data.openai_model || "";
+    config.default_device = data.default_device || "cpu";
   } catch (e) {
     console.error("Error fetching /config:", e);
   }
@@ -211,6 +213,7 @@ async function patchConfigUIOptions(opts = {}) {
     openai_host: config.openai_host,
     openai_port: config.openai_port,
     openai_model: config.openai_model,
+    default_device: config.default_device,
     ...opts,
   };
   Object.assign(config, patch);
@@ -323,6 +326,13 @@ watch(
   () => config.openai_model,
   (val) => {
     patchConfigUIOptions({ openai_model: val });
+  }
+);
+// Watch for default_device changes
+watch(
+  () => config.default_device,
+  (val) => {
+    patchConfigUIOptions({ default_device: val });
   }
 );
 

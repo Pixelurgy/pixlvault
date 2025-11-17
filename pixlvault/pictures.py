@@ -72,14 +72,15 @@ def get_sort_mechanisms():
 class Pictures:
     INSIGHTFACE_CLEANUP_TIMEOUT = 20  # seconds
 
-    def __init__(self, db, characters=None):
+    def __init__(self, db, characters=None, device=None):
         self._db = db
         self._skip_pictures = set()
         self._last_time_insightface_was_needed = None
         self._characters = characters  # Should be a Characters manager or None
-        # Let PictureTagger auto-detect device (will use GPU if available, CPU otherwise)
-        self._picture_tagger = PictureTagger()
-        logger.info("Initialized PictureTagger for Pictures manager.")
+        # Pass device to PictureTagger (default: None lets PictureTagger auto-detect)
+        self._device = device
+        self._picture_tagger = PictureTagger(device=device)
+        logger.info(f"Initialized PictureTagger for Pictures manager with device={device!r}.")
 
         self._facial_features_worker = None
         self._facial_features_worker_stop = None
