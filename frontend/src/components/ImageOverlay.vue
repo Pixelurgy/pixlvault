@@ -2,9 +2,13 @@
   <div v-if="open" class="image-overlay" @click.self="emit('close')">
     <div class="overlay-content overlay-grid">
       <!-- Title Row -->
-      <button class="overlay-close" @click="emit('close')" aria-label="Close">&times;</button>
+      <button class="overlay-close" @click="emit('close')" aria-label="Close">
+        &times;
+      </button>
       <div class="overlay-title-row">
-        <span class="overlay-title-desc">{{ image?.description || 'No description' }}</span>
+        <span class="overlay-title-desc">{{
+          image?.description || "No description"
+        }}</span>
       </div>
       <!-- Image Row -->
       <div class="overlay-img-row">
@@ -42,19 +46,40 @@
         </div>
       </div>
       <!-- Navigation Buttons (fixed, outside grid) -->
-      <button class="overlay-nav overlay-nav-left" @click.stop="showPrevImage" aria-label="Previous">
+      <button
+        class="overlay-nav overlay-nav-left"
+        @click.stop="showPrevImage"
+        aria-label="Previous"
+      >
         <v-icon>mdi-skip-previous</v-icon>
       </button>
-      <button class="overlay-nav overlay-nav-right" @click.stop="showNextImage" aria-label="Next">
+      <button
+        class="overlay-nav overlay-nav-right"
+        @click.stop="showNextImage"
+        aria-label="Next"
+      >
         <v-icon>mdi-skip-next</v-icon>
       </button>
       <!-- Tag Row -->
       <div v-if="hasTags" class="overlay-tags-row">
         <span v-for="tag in image?.tags || []" :key="tag" class="overlay-tag">
           {{ tag }}
-          <button class="tag-delete-btn" @click.stop="emit('remove-tag', tag)" title="Remove tag">×</button>
+          <button
+            class="tag-delete-btn"
+            @click.stop="emit('remove-tag', tag)"
+            title="Remove tag"
+          >
+            ×
+          </button>
         </span>
-        <button v-if="image" class="tag-add-btn" @click.stop="beginAddTag" title="Add tag">+</button>
+        <button
+          v-if="image"
+          class="tag-add-btn"
+          @click.stop="beginAddTag"
+          title="Add tag"
+        >
+          +
+        </button>
         <input
           v-if="addingTag"
           ref="tagInputRef"
@@ -62,7 +87,15 @@
           @keydown.enter.prevent="confirmAddTag"
           @blur="cancelAddTag"
           class="tag-add-input"
-          style="margin-left: 8px; font-size: 1.1em; border-radius: 8px; border: 1px solid #bbb; padding: 2px 8px; min-width: 80px; outline: none;"
+          style="
+            margin-left: 8px;
+            font-size: 1.1em;
+            border-radius: 8px;
+            border: 1px solid #bbb;
+            padding: 2px 8px;
+            min-width: 80px;
+            outline: none;
+          "
           placeholder="New tag"
           autofocus
         />
@@ -74,10 +107,7 @@
 <script setup>
 import { onMounted, onUnmounted } from "vue";
 import { computed, nextTick, ref, toRefs, watch } from "vue";
-import {
-  isSupportedVideoFile,
-  getOverlayFormat,
-} from "../utils/media.js";
+import { isSupportedVideoFile, getOverlayFormat } from "../utils/media.js";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -86,7 +116,7 @@ const props = defineProps({
   backendUrl: { type: String, required: true },
 });
 
-const { open, initialImage, allImages, backendUrl} = toRefs(props);
+const { open, initialImage, allImages, backendUrl } = toRefs(props);
 
 const image = ref(null);
 
@@ -221,7 +251,6 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
 }
-
 
 .overlay-content {
   position: relative;
@@ -446,7 +475,7 @@ onUnmounted(() => {
   font-size: 3rem;
   color: #eee;
   background: none;
-  max-width: 64px;  
+  max-width: 64px;
   max-height: 64px;
   display: flex;
   align-items: center;

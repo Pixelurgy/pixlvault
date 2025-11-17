@@ -23,6 +23,8 @@ const UNASSIGNED_PICTURES_ID = "__unassigned__";
 
 // --- Template & Component Refs ---
 const gridContainer = ref(null);
+const selectedImageIds = ref([]);
+let lastSelectedIndex = null;
 const currentView = ref("grid"); // or 'likeness'
 const sidebarRef = ref(null);
 
