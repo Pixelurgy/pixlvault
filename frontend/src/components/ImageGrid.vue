@@ -15,26 +15,36 @@
     :unassignedPicturesId="'__unassigned__'"
     @import-finished="handleImagesUploaded"
   />
-  <div
-    class="image-grid"
-    :style="{
-      gridTemplateColumns: `repeat(${columns}, 1fr)`,
-      position: 'relative',
-    }"
-    ref="gridContainer"
-    @dragenter.prevent="handleGridDragEnter"
-    @dragover.prevent="handleGridDragOver"
-    @dragleave.prevent="handleGridDragLeave"
-    @drop.prevent="handleGridDrop"
-    @scroll="onGridScroll"
-    @click="handleGridBackgroundClick"
-  >
+    <div class="grid-scroll-wrapper" ref="scrollWrapper" @scroll="onGridScroll">
+      <div
+        class="image-grid"
+        :style="{
+          gridTemplateColumns: `repeat(${columns}, 1fr)`,
+          position: 'relative',
+        }"
+        ref="gridContainer"
+        @dragenter.prevent="handleGridDragEnter"
+        @dragover.prevent="handleGridDragOver"
+        @dragleave.prevent="handleGridDragLeave"
+        @drop.prevent="handleGridDrop"
+        @click="handleGridBackgroundClick"
+      >
+    <!-- Top spacer for virtual scroll alignment -->
+    <div
+      v-if="topSpacerHeight > 0"
+      :style="{
+        gridColumn: '1 / -1',
+        height: `${topSpacerHeight}px`,
+        border: '2px solid blue',
+      }"
+    ></div>
+    <!-- Drag overlay -->
     <div v-if="dragOverlayVisible" class="drag-overlay">
       <div class="drag-overlay-message">{{ dragOverlayMessage }}</div>
     </div>
     <div
-      v-for="(img, idx) in allGridImages"
-      :key="img.id || idx"
+      v-for="(img, idx) in gridImagesToRender"
+      :key="img.id ? `img-${img.id}` : `placeholder-${img.idx}`"
       class="image-card"
       :draggable="isImageSelected(img.id)"
       @dragstart="onImageDragStart(img, idx, $event)"
@@ -46,7 +56,7 @@
       >
         <div class="thumbnail-container">
           <template v-if="img.thumbnail">
-            <img :src="img.thumbnail" class="thumbnail-img"/>
+            <img :src="img.thumbnail" class="thumbnail-img" />
             <div
               class="thumbnail-index-overlay"
               :style="{
@@ -60,7 +70,7 @@
                 zIndex: 20,
               }"
             >
-              {{ idx}}
+              {{ idx }}
             </div>
           </template>
           <template v-else>
@@ -81,7 +91,7 @@
                 left: 0,
               }"
             >
-              <span> Image #{{ String(idx + 1).padStart(5, "0") }} </span>
+              <span> Image #{{ String(img.idx).padStart(5, "0") }} </span>
             </div>
           </template>
           <!-- Score overlay -->
@@ -100,6 +110,17 @@
       </v-card>
       <div v-if="isImageSelected(img.id)" class="selection-overlay"></div>
     </div>
+        <!-- Bottom spacer -->
+    <div
+      v-if="bottomSpacerHeight > 0"
+      :style="{
+        gridColumn: '1 / -1',
+        height: `${bottomSpacerHeight}px`,
+        border: '2px solid green',
+      }"
+    ></div>
+
+  </div>
   </div>
 </template>
 
@@ -125,12 +146,6 @@ async function handleImagesUploaded(newIds) {
   // Do NOT clear thumbnails; keep existing ones
   // Reset loadedRanges so new thumbnails can be fetched
   loadedRanges.value = [];
-  // Recalculate visible indices and fetch thumbnails for visible images
-  nextTick(() => {
-    if (gridContainer.value) {
-      onGridScroll({ target: gridContainer.value });
-    }
-  });
 }
 // Props
 const props = defineProps({
@@ -144,7 +159,10 @@ const props = defineProps({
   showStars: Boolean,
 });
 
-const LAZY_THUMB_WINDOW = 40;
+const LAZY_THUMB_WINDOW = 100;
+
+const isLoadingThumbnails = ref(false);
+const hasMoreImages = ref(true);
 
 // Image overlay
 const overlayOpen = ref(false);
@@ -328,19 +346,21 @@ function handleGridDrop(e) {
 
 // Method to handle global key presses from App.vue
 function onGlobalKeyPress(key, event) {
-  if (gridContainer.value) {
+  if (scrollWrapper.value) {
+    let newScrollTop = scrollWrapper.value.scrollTop;
+    const maxScroll = scrollWrapper.value.scrollHeight - scrollWrapper.value.clientHeight;
     if (key === "Home") {
-      gridContainer.value.scrollTop = 0;
-      onGridScroll({ target: gridContainer.value });
+      newScrollTop = 0;
     } else if (key === "End") {
-      gridContainer.value.scrollTop = gridContainer.value.scrollHeight;
-      onGridScroll({ target: gridContainer.value });
+      newScrollTop = maxScroll;
     } else if (key === "PageUp") {
-      gridContainer.value.scrollTop -= gridContainer.value.clientHeight;
-      onGridScroll({ target: gridContainer.value });
+      newScrollTop = Math.max(0, newScrollTop - scrollWrapper.value.clientHeight);
     } else if (key === "PageDown") {
-      gridContainer.value.scrollTop += gridContainer.value.clientHeight;
-      onGridScroll({ target: gridContainer.value });
+      newScrollTop = Math.min(maxScroll, newScrollTop + scrollWrapper.value.clientHeight);
+    }
+    // Only update if changed
+    if (scrollWrapper.value.scrollTop !== newScrollTop) {
+      scrollWrapper.value.scrollTop = newScrollTop;
     }
   }
 }
@@ -385,6 +405,14 @@ async function fetchTotalImageCount() {
       "[IMAGE COUNT] Total images for current filters:",
       totalImageCount.value
     );
+    // Always fill allGridImages with placeholders up to totalImageCount
+    if (allGridImages.value.length < totalImageCount.value) {
+      for (let i = allGridImages.value.length; i < totalImageCount.value; i++) {
+        allGridImages.value[i] = { id: null, thumbnail: null, idx: i };
+      }
+    } else if (allGridImages.value.length > totalImageCount.value) {
+      allGridImages.value.length = totalImageCount.value;
+    }
   } catch (e) {
     imagesError.value = e.message;
     totalImageCount.value = 0;
@@ -408,13 +436,7 @@ watch(
     // Reset loaded ranges and thumbnails when filters change
     loadedRanges.value = [];
     allGridImages.value = [];
-    fetchTotalImageCount().then(() => {
-      nextTick(() => {
-        if (gridContainer.value) {
-          onGridScroll({ target: gridContainer.value });
-        }
-      });
-    });
+    fetchTotalImageCount();
   }
 );
 
@@ -424,18 +446,79 @@ const loadedRanges = ref([]);
 let thumbFetchTimeout = null;
 
 // Track which indices are visible in the grid
+
 const visibleStart = ref(0);
 const visibleEnd = ref(0);
+
+const rowHeight = ref(props.thumbnailSize + 24);
+
+const renderStart = computed(() => {
+  const cols = columns.value;
+  let start = Math.max(0, visibleStart.value - LAZY_THUMB_WINDOW);
+  return start;
+});
+
+const renderEnd = computed(() => {
+  const cols = columns.value;
+  let end = Math.min(
+    allGridImages.value.length,
+    visibleEnd.value + LAZY_THUMB_WINDOW
+  );
+  return end;
+});
+
+const topSpacerHeight = computed(() => {
+  const cols = columns.value;
+  const rowsAbove = Math.floor(renderStart.value / cols);
+  const height = rowsAbove > 0 ? rowsAbove * rowHeight.value : 1;
+  console.log("topSpacerHeight:", height);
+  return height;
+});
+
+const bottomSpacerHeight = computed(() => {
+  // rowsBelow = total rows - last rendered row
+  const cols = columns.value;
+  const lastRenderedRow = Math.ceil(renderEnd.value / cols);
+  console.log("lastRenderedRow:", lastRenderedRow);
+  const totalRows = Math.ceil(totalImageCount.value / cols);
+  const rowsBelow = totalRows - lastRenderedRow;
+  console.log("Row height", rowHeight.value);
+  const height = rowsBelow > 0 ? rowsBelow * rowHeight.value /2 : 0;
+  console.log("bottomSpacerHeight:", height);
+  return height;
+});
 
 // Compute grid images (id, idx, thumbnail)
 const allGridImages = ref([]);
 
+const gridImagesToRender = computed(() => {
+  // Only render a window of placeholders/images for performance
+  console.log(
+    "Rendering images from",
+    renderStart.value,
+    "to",
+    renderEnd.value
+  );
+  // Always fill allGridImages with placeholders up to totalImageCount
+  if (allGridImages.value.length < totalImageCount.value) {
+    for (let i = allGridImages.value.length; i < totalImageCount.value; i++) {
+      allGridImages.value[i] = { id: null, thumbnail: null, idx: i };
+    }
+  }
+  // Slice the buffer window and assign a unique key for each item
+  return allGridImages.value.slice(renderStart.value, renderEnd.value);
+});
+
 // Batch fetch metadata (including thumbnail) for visible range
 async function fetchThumbnailsBatch(start, end) {
-  start = Math.max(0, start);
-  end = Math.max(start, end);
+  start = renderStart.value;
+  end = renderEnd.value;
 
-  console.debug(`[BATCH REQUEST] start=${start}, end=${end}, loadedRanges=${JSON.stringify(loadedRanges.value)}`);
+  console.debug(
+    `[BATCH REQUEST] start=${start}, end=${end}, loadedRanges=${JSON.stringify(
+      loadedRanges.value
+    )}`
+  );
   // Check if this batch range is already loaded
   for (const range of loadedRanges.value) {
     if (start >= range[0] && end <= range[1]) {
@@ -445,25 +528,30 @@ async function fetchThumbnailsBatch(start, end) {
   // Fetch batch metadata for visible range
   try {
     const params = buildPictureIdsQueryParams();
-    const url = `${props.backendUrl}/pictures?info=true&offset=${start}&limit=${end-start}&${params}`;
+    const url = `${props.backendUrl}/pictures?info=true&offset=${start}&limit=${
+      end - start
+    }&${params}`;
     console.debug(`[BATCH FETCH] Requesting: ${url}`);
     const res = await fetch(url);
     if (res.ok) {
       const images = await res.json();
-      console.debug(`[BATCH RESPONSE] Received ${images.length} images:`, images.map(img => img.id));
+      console.debug(
+        `[BATCH RESPONSE] Received ${images.length} images:`,
+        images.map((img) => img.id)
+      );
       // Prepare grid image objects
       const gridImages = images.map((img, idx) => ({
         ...img,
-        idx,
+        idx: start + idx, // Ensure idx is global index
         thumbnail: null,
       }));
       // Now fetch thumbnails for these IDs
-      const ids = images.map(img => img.id);
+      const ids = images.map((img) => img.id);
       if (ids.length) {
         const thumbRes = await fetch(`${props.backendUrl}/thumbnails`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids })
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids }),
         });
         if (thumbRes.ok) {
           const thumbData = await thumbRes.json();
@@ -480,71 +568,64 @@ async function fetchThumbnailsBatch(start, end) {
       }
       // Ensure allGridImages.value is sized to totalImageCount
       if (allGridImages.value.length < totalImageCount.value) {
-        for (let i = allGridImages.value.length; i < totalImageCount.value; i++) {
+        for (
+          let i = allGridImages.value.length;
+          i < totalImageCount.value;
+          i++
+        ) {
           allGridImages.value[i] = { id: null, thumbnail: null, idx: i };
         }
       }
       // Insert/update images at their correct indices
       for (let i = 0; i < gridImages.length; i++) {
         const img = gridImages[i];
+        img.idx = start + i; // Redundant but explicit for safety
         allGridImages.value[start + i] = img;
       }
       loadedRanges.value.push([start, end]);
-      // Log current visible IDs
-      const startVis = Math.max(0, visibleStart.value);
-      const endVis = Math.min(allGridImages.value.length, visibleEnd.value);
-      const visibleIds = allGridImages.value.slice(startVis, endVis).map(img => img.id);
     }
   } catch (err) {
-    console.error('[BATCH ERROR]', err);
+    console.error("[BATCH ERROR]", err);
   }
 }
 
 function updateVisibleThumbnails() {
   let start = Math.max(0, visibleStart.value - LAZY_THUMB_WINDOW);
-  let end = Math.min(totalImageCount.value, visibleEnd.value + LAZY_THUMB_WINDOW);
+  let end = Math.min(
+    totalImageCount.value,
+    visibleEnd.value + LAZY_THUMB_WINDOW
+  );
   console.log("Fetch range: ", start, "to", end);
 
   // Debounce fetches to avoid excessive requests
   if (thumbFetchTimeout) clearTimeout(thumbFetchTimeout);
-  thumbFetchTimeout = setTimeout(() => {
-    fetchThumbnailsBatch(start, end);
+
+  thumbFetchTimeout = setTimeout(async () => {
+    await fetchThumbnailsBatch(start, end);
   }, 80);
 }
 
-// Update visible indices on scroll
 function onGridScroll(e) {
-  nextTick(() => {
-  const gridEl = gridContainer.value;
-  const gridRect = gridEl.getBoundingClientRect();
-  const cards = gridEl.querySelectorAll('.image-card');
-  let visibleIndices = [];
-  cards.forEach((card, idx) => {
-    const rect = card.getBoundingClientRect();
-    if (rect.bottom > gridRect.top && rect.top < gridRect.bottom) {
-      visibleIndices.push(idx);
-    }
-  });
-  if (visibleIndices.length) {
-    visibleStart.value = Math.min(...visibleIndices);
-    visibleEnd.value = Math.max(...visibleIndices) + 1;
-  } else {
-    visibleStart.value = 0;
-    visibleEnd.value = 0;
-  }
-  console.debug("Visible indices:", visibleStart.value, visibleEnd.value);
+  const el = scrollWrapper.value;
+  if (!el) return;
+  
+  let cardHeight = rowHeight.value;
+  const scrollTop = el.scrollTop;
+  const cols = columns.value;
+  // First visible row (may be partially visible)
+  const firstVisibleRow = scrollTop / cardHeight;
+  // Last visible row (may be partially visible)
+  const lastVisibleRow = (scrollTop + el.clientHeight - 1) / cardHeight;
 
-  updateVisibleThumbnails();
-});
+  const newVisibleStart = Math.floor(firstVisibleRow) * cols;
+  const newVisibleEnd = Math.ceil(lastVisibleRow) * cols;
+
+  // Now update refs atomically
+  visibleStart.value = newVisibleStart;
+  visibleEnd.value = newVisibleEnd;
+
+  console.debug("[SCROLL] visibleStart:", visibleStart.value, "visibleEnd:", visibleEnd.value, "Client Height: ", el.clientHeight);
 }
-
-watch(totalImageCount, () => {
-  nextTick(() => {
-    if (gridContainer.value) {
-      onGridScroll({ target: gridContainer.value });
-    }
-  });
-});
 
 // Internal columns state
 const columns = ref(1);
@@ -631,10 +712,22 @@ function formatLikenessScore(score) {
 }
 
 const gridContainer = ref(null);
+const scrollWrapper = ref(null);
 
 function updateColumns() {
   nextTick(() => {
-    const el = gridContainer.value?.$el || gridContainer.value;
+    function measureRowHeight(retries = 0) {
+      const firstCard = gridContainer.value?.querySelector(".image-card");
+      if (firstCard) {
+        const rect = firstCard.getBoundingClientRect();
+        rowHeight.value = rect.height;
+      } else if (retries < 5) {
+        setTimeout(() => measureRowHeight(retries + 1), 60);
+      }
+    }
+    measureRowHeight();
+
+    const el = scrollWrapper.value?.$el || scrollWrapper.value;
     if (!el) return;
     const containerWidth = el.offsetWidth;
     columns.value = Math.max(
@@ -661,26 +754,7 @@ onUnmounted(() => {
 });
 
 // Expose the grid DOM node to parent
-defineExpose({ gridEl: gridContainer, onGlobalKeyPress });
-
-onMounted(() => {
-  if (gridContainer.value) {
-    gridContainer.value.addEventListener("scroll", onGridScroll);
-  }
-});
-
-watch(
-  () => allGridImages.value.length,
-  (len) => {
-    if (len > 0 && gridContainer.value) {      
-      nextTick(() => {
-        onGridScroll({ target: gridContainer.value });
-      });
-    }
-  }
-);
-
-
+defineExpose({ gridEl: scrollWrapper, onGlobalKeyPress });
 </script>
 <style scoped>
 .drag-overlay {
@@ -700,29 +774,33 @@ watch(
   font-size: 3em;
   font-weight: bold;
 }
+.grid-scroll-wrapper {
+  height: 100vh; /* or calc(100vh - headerHeight) if you have a header */
+  overflow-y: auto;
+  width: 100%;
+  scrollbar-width: 16px !important;
+  scrollbar-color: orange #ddd;
+  border: 5px solid red;
+}
 .image-grid {
+  height: 100%;
   display: grid;
   gap: 0;
   width: 100%;
   box-sizing: border-box;
   flex: 1 1 0%;
-  min-height: 0;
-  overflow-y: auto;
   padding: 2px 2px 2px 2px !important;
-  overflow: auto;
-  scrollbar-width: 16px !important;
-  scrollbar-color: orange #ddd;
   align-content: start;
   justify-content: start;
 }
-.image-grid::-webkit-scrollbar {
+.grid-scroll-wrapper::-webkit-scrollbar {
   width: 8px;
 }
-.image-grid::-webkit-scrollbar-thumb {
+.grid-scroll-wrapper::-webkit-scrollbar-thumb {
   background: orange;
   border-radius: 8px;
 }
-.image-grid::-webkit-scrollbar-track {
+.grid-scroll-wrapper::-webkit-scrollbar-track {
   background: #ddd;
 }
 .image-card {
