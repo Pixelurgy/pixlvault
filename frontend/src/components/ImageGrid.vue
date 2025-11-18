@@ -606,25 +606,35 @@ function updateVisibleThumbnails() {
 }
 
 function onGridScroll(e) {
-  const el = scrollWrapper.value;
-  if (!el) return;
-  
-  let cardHeight = rowHeight.value;
-  const scrollTop = el.scrollTop;
-  const cols = columns.value;
-  // First visible row (may be partially visible)
-  const firstVisibleRow = scrollTop / cardHeight;
-  // Last visible row (may be partially visible)
-  const lastVisibleRow = (scrollTop + el.clientHeight - 1) / cardHeight;
+  // Debounce scroll handler to prevent runaway feedback
+  if (!window._scrollDebounceTimeout) window._scrollDebounceTimeout = null;
+  if (window._scrollDebounceTimeout) clearTimeout(window._scrollDebounceTimeout);
+  window._scrollDebounceTimeout = setTimeout(() => {
+    const el = scrollWrapper.value;
+    if (!el) return;
+    let cardHeight = rowHeight.value;
+    const scrollTop = el.scrollTop;
+    const cols = columns.value;
+    // First visible row (may be partially visible)
+    const firstVisibleRow = scrollTop / cardHeight;
+    // Last visible row (may be partially visible)
+    const lastVisibleRow = (scrollTop + el.clientHeight - 1) / cardHeight;
 
-  const newVisibleStart = Math.floor(firstVisibleRow) * cols;
-  const newVisibleEnd = Math.ceil(lastVisibleRow) * cols;
+    const newVisibleStart = Math.floor(firstVisibleRow) * cols;
+    const newVisibleEnd = Math.ceil(lastVisibleRow) * cols;
 
-  // Now update refs atomically
-  visibleStart.value = newVisibleStart;
-  visibleEnd.value = newVisibleEnd;
-
-  console.debug("[SCROLL] visibleStart:", visibleStart.value, "visibleEnd:", visibleEnd.value, "Client Height: ", el.clientHeight);
+    // Only update if changed
+    if (visibleStart.value !== newVisibleStart || visibleEnd.value !== newVisibleEnd) {
+      visibleStart.value = newVisibleStart;
+      visibleEnd.value = newVisibleEnd;
+      console.debug("[SCROLL] visibleStart:", visibleStart.value, "visibleEnd:", visibleEnd.value, "Client Height: ", el.clientHeight);
+      // Only trigger buffer expansion/fetch if user is near buffer end
+      const bufferThreshold = LAZY_THUMB_WINDOW * 0.7;
+      if (visibleEnd.value >= renderEnd.value - bufferThreshold && renderEnd.value < totalImageCount.value) {
+        updateVisibleThumbnails();
+      }
+    }
+  }, 50);
 }
 
 // Internal columns state
