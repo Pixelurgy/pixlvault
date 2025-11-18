@@ -1516,7 +1516,7 @@ class Pictures:
             conn.commit()
 
         for pic_dict, tag_dicts in zip(picture_dicts, list_of_tag_dicts):
-            self._db.execute_write(update_picture_and_tag, pic_dict, tag_dicts)
+            self._db.submit_write(update_picture_and_tag, pic_dict, tag_dicts)
 
     def fetch_by_shas(self, shas: list[str]) -> list[PictureModel]:
         if not shas:
