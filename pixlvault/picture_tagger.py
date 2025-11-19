@@ -32,6 +32,7 @@ MAX_CONCURRENT_IMAGES = 8
 GENERAL_THRESHOLD = 0.4
 UNDESIRED_TAGS = "solo, general, male_focus, meme, blurry, sensitive, realistic"
 CAPTION_SEPARATOR = ", "
+FLORENCE_REVISION = "5ca5edf5bd017b9919c05d08aebef5e4c7ac3bac"
 
 
 class PictureTagger:
@@ -173,7 +174,9 @@ class PictureTagger:
             device = torch.device(device)
 
         self._florence_processor = AutoProcessor.from_pretrained(
-            self._florence_model_name, trust_remote_code=True
+            self._florence_model_name,
+            revision=FLORENCE_REVISION,
+            trust_remote_code=True,
         )
 
         # Try SDPA first, fall back to eager if not supported
@@ -182,6 +185,7 @@ class PictureTagger:
             self._florence_model = AutoModelForCausalLM.from_pretrained(
                 self._florence_model_name,
                 trust_remote_code=True,
+                revision=FLORENCE_REVISION,
                 dtype=dtype,
                 attn_implementation=attn_impl,
             ).to(device)
@@ -191,12 +195,12 @@ class PictureTagger:
             self._florence_model = AutoModelForCausalLM.from_pretrained(
                 self._florence_model_name,
                 trust_remote_code=True,
+                revision=FLORENCE_REVISION,
                 dtype=dtype,
                 attn_implementation=attn_impl,
             ).to(device)
 
         self._florence_model.eval()
-        logger.debug(f"Florence-2 loaded with {attn_impl} attention")
 
         # Try to compile the model for better performance (PyTorch 2.0+)
         try:
