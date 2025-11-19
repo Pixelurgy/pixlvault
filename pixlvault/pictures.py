@@ -206,6 +206,7 @@ class Pictures:
 
         while not self._likeness_worker_stop.is_set():
             data_updated = False
+            likeness_score_count = 0
             start = time.time()
             logger.debug("[LIKENESS] Starting iteration...")
             pending_pairs = []
@@ -357,13 +358,14 @@ class Pictures:
                     logger.debug(
                         f"[LIKENESS] Bulk inserted {len(all_likeness_scores)} likeness scores and removed {len(all_processed_pairs)} processed pairs from work queue."
                     )
+                    likeness_score_count = len(all_likeness_scores)
                     data_updated = True
 
             timing = time.time() - start
             if timing > 0.5:
                 logger.info(
                     "[LIKENESS] Calculated and updated %d likeness scores in %.2f seconds."
-                    % (len(all_likeness_scores), time.time() - start)
+                    % (len(likeness_score_count), time.time() - start)
                 )
             if not data_updated:
                 self._likeness_worker_stop.wait(interval)
