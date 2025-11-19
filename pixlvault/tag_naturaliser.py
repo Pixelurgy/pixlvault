@@ -2,11 +2,12 @@ from .logging import get_logger
 
 logger = get_logger(__name__)
 
+
 def pipeline_call(*args, **kwargs):
     from transformers import pipeline
-    return pipeline(
-        "text2text-generation", model="google/flan-t5-base", device=-1
-    )
+
+    return pipeline("text2text-generation", model="google/flan-t5-base", device=-1)
+
 
 def capture_fd_stderr(callable, *args, **kwargs):
     import os
@@ -30,7 +31,6 @@ def capture_fd_stderr(callable, *args, **kwargs):
         output += chunk
     os.close(r)
     return result, output.decode(errors="replace")
-
 
 
 class TagNaturaliser:
@@ -8695,7 +8695,8 @@ class TagNaturaliser:
         try:
             self._tag_to_sentence_pipeline, error = capture_fd_stderr(pipeline_call)
             error = error.replace("Device set to use cpu\n", "")
-            print("Received error: '" + error + "'")
+            if len(error) > 0:
+                logger.error("Received error in transformer pipeline: '" + error + "'")
         except ImportError:
             self._tag_to_sentence_pipeline = None
 
