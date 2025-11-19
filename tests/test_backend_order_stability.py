@@ -1,3 +1,4 @@
+import gc
 import json
 import pytest
 import random
@@ -51,3 +52,4 @@ def test_order_stability(params):
                     assert ids == first_ids, (
                         f"Order not stable for params {params}: {ids} != {first_ids}"
                     )
+    gc.collect()
