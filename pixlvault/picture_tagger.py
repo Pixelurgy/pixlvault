@@ -85,7 +85,7 @@ class PictureTagger:
         self._tag_naturaliser = TagNaturaliser()
 
         # Initialize Florence-2 for captioning
-        logger.debug("Initializing Florence-2 for captioning...")
+        logger.debug("initialising Florence-2 for captioning...")
         self._florence_model = None
         self._florence_processor = None
 
@@ -441,13 +441,13 @@ class PictureTagger:
 
         # Use CPU-only when device is set to "cpu" to coexist with LLMs and diffusion models
         if self._device == "cpu":
-            logger.debug("Initializing WD14 tagger with CPUExecutionProvider")
+            logger.debug("initialising WD14 tagger with CPUExecutionProvider")
             self.ort_sess = ort.InferenceSession(
                 onnx_path, providers=["CPUExecutionProvider"]
             )
         else:
             # Allow GPU providers when not explicitly set to CPU
-            logger.debug(f"Initializing WD14 tagger with device: {self._device}")
+            logger.debug(f"initialising WD14 tagger with device: {self._device}")
             if "OpenVINOExecutionProvider" in ort.get_available_providers():
                 self.ort_sess = ort.InferenceSession(
                     onnx_path,

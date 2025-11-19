@@ -92,7 +92,6 @@ class Server:
             config_path (str): Path to the image roots config file.
             server_config_path (str): Path to the server-only config file.
         """
-        print(f"Initializing PixlVault server with config: {config_path}")
         self._config_path = config_path
 
         self._config = self.init_config(config_path)
@@ -112,9 +111,6 @@ class Server:
             + str(self._config["selected_image_root"])
         )
 
-        print(
-            f"Creating Vault instance with image root: {self._config['selected_image_root']}"
-        )
         self.vault = Vault(
             image_root=self._config["selected_image_root"],
             description=self._config.get("description"),

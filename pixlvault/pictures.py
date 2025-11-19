@@ -1078,7 +1078,7 @@ class Pictures:
 
         # Initialize InsightFace only once
         if not hasattr(self, "_insightface_app"):
-            logger.info("Initializing InsightFace with CPU only (ctx_id=-1)")
+            logger.debug("initialising InsightFace with CPU only (ctx_id=-1)")
             self._insightface_app = FaceAnalysis()
             self._insightface_app.prepare(ctx_id=-1)  # -1 = CPU only
 
