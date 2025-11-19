@@ -70,7 +70,7 @@
                 zIndex: 20,
               }"
             >
-              {{ idx }}
+              {{ img.idx }}
             </div>
           </template>
           <template v-else>
