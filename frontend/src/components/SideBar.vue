@@ -25,6 +25,7 @@ const emit = defineEmits([
   "import-finished",
   "set-error",
   "set-loading",
+  "images-assigned-to-character",
 ]);
 
 const dragOverSet = ref(null);
@@ -53,8 +54,6 @@ const sections = ref({
 });
 const dragOverCharacter = ref(null);
 const nextCharacterNumber = ref(1);
-const editingCharacterId = ref(null);
-const editingCharacterName = ref("");
 
 // --- Picture Sets State ---
 const pictureSets = ref([]);
@@ -111,11 +110,6 @@ const referenceSetInfoByCharacter = computed(() => {
   return map;
 });
 
-const editingNameModel = computed({
-  get: () => editingCharacterName.value,
-  set: (value) => emit("update:editing-character-name", value ?? ""),
-});
-
 const sortModel = computed({
   get: () => props.selectedSort,
   set: (value) => emit("update:selected-sort", value ?? ""),
@@ -157,20 +151,49 @@ function selectCharacter(id) {
   emit("select-character", id);
 }
 
-function deleteCharacter() {
-  emit("delete-character");
-}
-
-function createCharacter() {
-  emit("create-character");
-}
-
 function searchImages(query) {
   emit("search-images", query);
 }
 
 function selectSet(setId) {
   emit("select-set", setId);
+}
+
+async function deleteCharacter() {
+  if (!props.selectedCharacter) return;
+  if (!window.confirm("Delete this character?")) return;
+  try {
+    const res = await fetch(
+      `${props.backendUrl}/characters/${props.selectedCharacter}`,
+      {
+        method: "DELETE",
+      }
+    );
+    if (!res.ok) throw new Error("Failed to delete character");
+    await fetchCharacters(); // Refresh sidebar
+  } catch (e) {
+    setError(e.message);
+  }
+}
+
+function createCharacter() {
+  // Find the next available unique name in the format "Character 0001"
+  const existingNames = new Set(characters.value.map((c) => c.name));
+  let num = 1;
+  let name;
+  do {
+    name = `Character ${num.toString().padStart(4, "0")}`;
+    num++;
+  } while (existingNames.has(name));
+  // Open the editor with default values
+  openCharacterEditor({
+    id: null,
+    name: name,
+    description: "",
+    original_prompt: "",
+    original_seed: null,
+    loras: [],
+  });
 }
 
 function createSet() {
@@ -395,76 +418,6 @@ async function handleDeleteSet() {
   }
 }
 
-async function removeSelectedFromSet() {
-  handleSwitchToGrid();
-  if (!selectedSet.value || selectedImageIds.value.length === 0) return;
-
-  const setToUpdate = pictureSets.value.find((s) => s.id === selectedSet.value);
-  if (!setToUpdate) return;
-
-  try {
-    // Remove each selected image from the set
-    const removePromises = selectedImageIds.value.map(async (picId) => {
-      const res = await fetch(
-        `${props.backendUrl}/picture_sets/${selectedSet.value}/pictures/${picId}`,
-        { method: "DELETE" }
-      );
-      if (!res.ok) throw new Error(`Failed to remove image ${picId}`);
-    });
-
-    await Promise.all(removePromises);
-
-    // No longer remove from local images array
-    selectedImageIds.value = [];
-
-    // Refresh the picture sets to update counts
-    await fetchPictureSets();
-  } catch (e) {
-    alert("Failed to remove images from set: " + (e.message || e));
-    // Refresh the view to ensure consistency
-    handleSelectSet(selectedSet.value);
-  }
-}
-
-async function removeSelectedFromCharacter() {
-  //handleSwitchToGrid();
-  if (!props.selectedCharacter || selectedImageIds.value.length === 0) return;
-  if (
-    props.selectedCharacter === props.allPicturesId ||
-    props.selectedCharacter === props.unassignedPicturesId
-  )
-    return;
-
-  const character = characters.value.find(
-    (c) => c.id === props.selectedCharacter
-  );
-  if (!character) return;
-
-  try {
-    // Update each selected image to clear primary_character_id
-    const updatePromises = selectedImageIds.value.map(async (picId) => {
-      const res = await fetch(`${props.backendUrl}/pictures/${picId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ primary_character_id: null }),
-      });
-      if (!res.ok)
-        throw new Error(`Failed to update image ${picId}: ${res.status}`);
-    });
-
-    await Promise.all(updatePromises);
-
-    // No longer remove from local images array
-    selectedImageIds.value = [];
-
-    // Refresh character counts
-    await fetchSidebarCounts();
-  } catch (e) {
-    console.error("Error removing images:", e);
-    alert("Failed to remove images from character: " + (e.message || e));
-  }
-}
-
 async function handleDropOnSet({ setId, event }) {
   // Get the dragged image IDs from the drag event
   let draggedIds = [];
@@ -520,6 +473,51 @@ function handleDragLeaveCharacter() {
   dragOverCharacter.value = null;
 }
 
+async function onCharacterDrop(characterId, event) {
+  // Get the dragged image IDs from the drag event
+  let draggedIds = [];
+  try {
+    const data = JSON.parse(event.dataTransfer.getData("application/json"));
+    if (data.imageIds && Array.isArray(data.imageIds)) {
+      draggedIds = data.imageIds;
+    }
+  } catch (e) {
+    console.error("Could not parse drag data:", e);
+    return;
+  }
+
+  if (draggedIds.length === 0) {
+    console.log("No images found in drag data");
+    return;
+  }
+
+  try {
+    // PATCH each image to assign primary_character_id
+    const patchPromises = draggedIds.map(async (picId) => {
+      const res = await fetch(`${props.backendUrl}/pictures/${picId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ primary_character_id: characterId }),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to assign image ${picId} to character`);
+      }
+    });
+    await Promise.all(patchPromises);
+    // Optionally refresh sidebar counts
+    await fetchSidebarCounts();
+    // Refresh the character's thumbnail
+    await fetchCharacterThumbnail(characterId);
+    // Emit signal to App.vue to trigger ImageGrid refresh
+    emit("images-assigned-to-character", { characterId, imageIds: draggedIds });
+    console.log(
+      `Assigned ${draggedIds.length} image(s) to character ${characterId}`
+    );
+  } catch (e) {
+    alert("Failed to assign images to character: " + (e.message || e));
+  }
+}
+
 function handleDropOnCharacter(payload) {
   if (!payload || !payload.characterId) return;
   onCharacterDrop(payload.characterId, payload.event);
@@ -570,48 +568,14 @@ function confirmDeleteCharacter() {
   }
 }
 
-function updateEditingCharacterName(value) {
-  editingCharacterName.value = typeof value === "string" ? value : "";
-}
-
-function startEditingCharacter(char) {
-  editingCharacterId.value = char.id;
-  editingCharacterName.value = char.name;
-  nextTick(() => {
-    const input = document.querySelector(".edit-character-input");
-    if (input) {
-      input.focus();
-      input.select();
-    }
-  });
-}
-
-function saveEditingCharacter(char) {
-  const newName = editingCharacterName.value.trim();
-  if (newName && newName !== char.name) {
-    fetch(`${props.backendUrl}/characters/${char.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newName }),
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error("Failed to update character");
-        const data = await res.json();
-        if (data && data.character) {
-          char.name = data.character.name;
-        }
-      })
-      .catch((e) => {
-        alert("Failed to update character: " + (e.message || e));
-      });
+function characterSaved() {
+  if (characterEditorCharacter.value && !characterEditorCharacter.value.id) {
+    characters.value.push(characterEditorCharacter.value);
+    // New character was created, increment nextCharacterNumber
+    nextCharacterNumber.value++;
   }
-  editingCharacterId.value = null;
-  editingCharacterName.value = "";
-}
-
-function cancelEditingCharacter() {
-  editingCharacterId.value = null;
-  editingCharacterName.value = "";
+  fetchCharacters();
+  closeCharacterEditor();
 }
 
 onMounted(() => {
@@ -635,6 +599,7 @@ onMounted(() => {
     :character="characterEditorCharacter"
     :backendUrl="props.backendUrl"
     @close="closeCharacterEditor"
+    @saved="characterSaved"
   />
   <PictureSetEditor :open="setEditorOpen" :set="setEditorSet" />
 
@@ -766,41 +731,14 @@ onMounted(() => {
               />
             </span>
             <span class="sidebar-list-label">
-              <template v-if="editingCharacterId === char.id">
-                <input
-                  v-model="editingNameModel"
-                  class="edit-character-input"
-                  @keydown.enter="saveEditingCharacter(char)"
-                  @keydown.esc="cancelEditingCharacter"
-                  @blur="saveEditingCharacter(char)"
-                  style="
-                    width: 90%;
-                    font-size: 1em;
-                    background: #fff;
-                    color: #222;
-                    border-radius: 4px;
-                    border: 1px solid #bbb;
-                    padding: 2px 6px;
-                    outline: none;
-                  "
-                />
-              </template>
-              <template v-else>
-                <v-tooltip location="top">
-                  <template #activator="{ props }">
-                    <span
-                      v-bind="props"
-                      @dblclick.stop="startEditingCharacter(char)"
-                      class="sidebar-list-label-text"
-                    >
-                      {{
-                        char.name.charAt(0).toUpperCase() + char.name.slice(1)
-                      }}
-                    </span>
-                  </template>
-                  <span>{{ char.name }}</span>
-                </v-tooltip>
-              </template>
+              <v-tooltip location="top">
+                <template #activator="{ props }">
+                  <span v-bind="props" class="sidebar-list-label-text">
+                    {{ char.name.charAt(0).toUpperCase() + char.name.slice(1) }}
+                  </span>
+                </template>
+                <span>{{ char.name }}</span>
+              </v-tooltip>
             </span>
             <button
               class="character-edit-btn"

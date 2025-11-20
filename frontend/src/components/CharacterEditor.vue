@@ -113,7 +113,7 @@ const props = defineProps({
   backendUrl: { type: String, required: true },
 });
 
-const emit = defineEmits(["close"]);
+const emit = defineEmits(["close", "saved"]);
 
 const localCharacter = ref({
   id: null,
@@ -203,6 +203,7 @@ function save() {
     ...localCharacter.value,
     loras: cleanedLoras,
   });
+  emit("saved");
 }
 
 // Keyboard shortcuts

@@ -37,7 +37,7 @@ class PictureSets:
             conn.commit()
             return cursor.lastrowid
 
-        picture_set.id = self._db.execute_write(
+        picture_set.id = self._db.submit_write(
             insert_picture_set, picture_set
         ).result()
         logger.info(f"Created picture set: {picture_set.name} (id={picture_set.id})")
@@ -86,7 +86,7 @@ class PictureSets:
             conn.commit()
             return cursor.rowcount
 
-        updated_rows = self._db.execute_write(update_picture_set, picture_set).result()
+        updated_rows = self._db.submit_write(update_picture_set, picture_set).result()
         if updated_rows == 0:
             return False
 
@@ -113,7 +113,7 @@ class PictureSets:
             cursor.execute("DELETE FROM picture_sets WHERE id = ?", (set_id,))
             conn.commit()
 
-        self._db.execute_write(delete_set, set_id).result()
+        self._db.submit_write(delete_set, set_id).result()
         logger.info(f"Deleted picture set id={set_id}")
         return True
 

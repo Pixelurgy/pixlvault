@@ -248,6 +248,7 @@
         @select-character="handleSelectCharacter"
         @select-set="handleSelectSet"
         @switch-to-likeness="handleSwitchToLikeness"
+        @images-assigned-to-character="handleImagesAssignedToCharacter"
         @update:selected-sort="handleUpdateSelectedSort"
         @update:search-query="handleUpdateSearchQuery"
         @update:set-error="error = $event"
@@ -276,6 +277,7 @@
                 :searchQuery="searchQuery"
                 :selectedSort="selectedSort"
                 :showStars="showStars"
+                :gridVersion="gridVersion"
                 @refresh-sidebar="refreshSidebar"
               />
             </template>

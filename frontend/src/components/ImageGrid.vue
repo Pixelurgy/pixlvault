@@ -15,21 +15,26 @@
     :unassignedPicturesId="'__unassigned__'"
     @import-finished="handleImagesUploaded"
   />
-  <div style="position: relative;">
-          <SelectionBar
-        v-if="selectedImageIds.length > 0"
-        :selectedCount="selectedImageIds.length"
-        :selectedCharacter="String(props.selectedCharacter)"
-        :selectedSet="String(props.selectedSet)"
-        :selectedGroupName="selectedGroupName"
-        :visible="selectedImageIds.length > 0"
-        @clear-selection="clearSelection"
-        @remove-from-group="removeFromGroup"
-        @delete-selected="deleteSelected"
-        style="position:absolute;top:0;left:0;width:100%;z-index:100;"
-      />
+  <div style="position: relative">
+    <SelectionBar
+      v-if="selectedImageIds.length > 0"
+      :selectedCount="selectedImageIds.length"
+      :selectedCharacter="String(props.selectedCharacter)"
+      :selectedSet="String(props.selectedSet)"
+      :selectedGroupName="selectedGroupName"
+      :visible="selectedImageIds.length > 0"
+      @clear-selection="clearSelection"
+      @remove-from-group="removeFromGroup"
+      @delete-selected="deleteSelected"
+      style="position: absolute; top: 0; left: 0; width: 100%; z-index: 100"
+    />
 
-    <div class="grid-scroll-wrapper" ref="scrollWrapper" @scroll="onGridScroll" style="position:relative;">
+    <div
+      class="grid-scroll-wrapper"
+      ref="scrollWrapper"
+      @scroll="onGridScroll"
+      style="position: relative"
+    >
       <div
         class="image-grid"
         :style="{
@@ -43,98 +48,98 @@
         @drop.prevent="handleGridDrop"
         @click="handleGridBackgroundClick"
       >
-    <!-- Top spacer for virtual scroll alignment -->
-    <div
-      v-if="topSpacerHeight > 0"
-      :style="{
-        gridColumn: '1 / -1',
-        height: `${topSpacerHeight}px`,
-        border: '0px solid blue',
-      }"
-    ></div>
-    <!-- Drag overlay -->
-    <div v-if="dragOverlayVisible" class="drag-overlay">
-      <div class="drag-overlay-message">{{ dragOverlayMessage }}</div>
-    </div>
-    <div
-      v-for="(img, idx) in gridImagesToRender"
-      :key="img.id ? `img-${img.id}` : `placeholder-${img.idx}`"
-      class="image-card"
-      :draggable="isImageSelected(img.id)"
-      @dragstart="onImageDragStart(img, idx, $event)"
-      @click="handleImageCardClick(img, idx, $event)"
-    >
-      <v-card
-        class="thumbnail-card"
-        @click.stop="handleThumbnailClick(img, idx, $event)"
-      >
-        <div class="thumbnail-container">
-          <template v-if="img.thumbnail">
-            <img :src="img.thumbnail" class="thumbnail-img" />
-            <div
-              class="thumbnail-index-overlay"
-              :style="{
-                position: 'absolute',
-                top: '6px',
-                left: '10px',
-                color: 'red',
-                fontWeight: 'bold',
-                fontSize: '1.2em',
-                textShadow: '0 0 2px #fff',
-                zIndex: 20,
-              }"
-            >
-              {{ img.idx }}
-            </div>
-          </template>
-          <template v-else>
-            <div
-              class="thumbnail-placeholder"
-              :style="{
-                width: '100%',
-                height: '100%',
-                background: '#e0e0e0',
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '1.5em',
-                color: '#aaa',
-                position: 'absolute',
-                top: 0,
-                left: 0,
-              }"
-            >
-              <span> Image #{{ String(img.idx).padStart(5, "0") }} </span>
-            </div>
-          </template>
-          <!-- Score overlay -->
-          <div v-if="props.showStars" class="star-overlay">
-            <v-icon
-              v-for="n in 5"
-              :key="n"
-              large
-              :color="n <= (img.score || 0) ? 'orange' : 'grey darken-2'"
-              style="cursor: pointer"
-              @click.stop="setScore(img, n)"
-              >mdi-star</v-icon
-            >
-          </div>
+        <!-- Top spacer for virtual scroll alignment -->
+        <div
+          v-if="topSpacerHeight > 0"
+          :style="{
+            gridColumn: '1 / -1',
+            height: `${topSpacerHeight}px`,
+            border: '0px solid blue',
+          }"
+        ></div>
+        <!-- Drag overlay -->
+        <div v-if="dragOverlayVisible" class="drag-overlay">
+          <div class="drag-overlay-message">{{ dragOverlayMessage }}</div>
         </div>
-      </v-card>
-      <div v-if="isImageSelected(img.id)" class="selection-overlay"></div>
-    </div>
+        <div
+          v-for="(img, idx) in gridImagesToRender"
+          :key="img.id ? `img-${img.id}` : `placeholder-${img.idx}`"
+          class="image-card"
+          :draggable="isImageSelected(img.id)"
+          @dragstart="onImageDragStart(img, idx, $event)"
+          @click="handleImageCardClick(img, idx, $event)"
+        >
+          <v-card
+            class="thumbnail-card"
+            @click.stop="handleThumbnailClick(img, idx, $event)"
+          >
+            <div class="thumbnail-container">
+              <template v-if="img.thumbnail">
+                <img :src="img.thumbnail" class="thumbnail-img" />
+                <div
+                  class="thumbnail-index-overlay"
+                  :style="{
+                    position: 'absolute',
+                    top: '6px',
+                    left: '10px',
+                    color: 'red',
+                    fontWeight: 'bold',
+                    fontSize: '1.2em',
+                    textShadow: '0 0 2px #fff',
+                    zIndex: 20,
+                  }"
+                >
+                  {{ img.idx }}
+                </div>
+              </template>
+              <template v-else>
+                <div
+                  class="thumbnail-placeholder"
+                  :style="{
+                    width: '100%',
+                    height: '100%',
+                    background: '#e0e0e0',
+                    borderRadius: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '1.5em',
+                    color: '#aaa',
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                  }"
+                >
+                  <span> Image #{{ String(img.idx).padStart(5, "0") }} </span>
+                </div>
+              </template>
+              <!-- Score overlay -->
+              <div v-if="props.showStars" class="star-overlay">
+                <v-icon
+                  v-for="n in 5"
+                  :key="n"
+                  large
+                  :color="n <= (img.score || 0) ? 'orange' : 'grey darken-2'"
+                  style="cursor: pointer"
+                  @click.stop="setScore(img, n)"
+                  >mdi-star</v-icon
+                >
+              </div>
+            </div>
+          </v-card>
+          <div v-if="isImageSelected(img.id)" class="selection-overlay"></div>
+        </div>
         <!-- Bottom spacer -->
-    <div
-      v-if="bottomSpacerHeight > 0"
-      :style="{
-        gridColumn: '1 / -1',
-        height: `${bottomSpacerHeight}px`,
-        border: '0px solid green'}"
-    ></div>
-
-  </div>
-  </div>
+        <div
+          v-if="bottomSpacerHeight > 0"
+          :style="{
+            gridColumn: '1 / -1',
+            height: `${bottomSpacerHeight}px`,
+            border: '0px solid green',
+          }"
+        ></div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -168,22 +173,27 @@ function removeFromGroup() {
     props.selectedCharacter !== "__unassigned__"
   ) {
     Promise.all(
-      selectedImageIds.value.map(id =>
+      selectedImageIds.value.map((id) =>
         fetch(`${backendUrl}/pictures/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ primary_character_id: null })
+          body: JSON.stringify({ primary_character_id: null }),
         })
-        .then(res => {
-          if (!res.ok) throw new Error(`Failed to unassign character for image ${id}`);
-        })
-        .catch(err => {
-          alert(`Error unassigning character for image ${id}: ${err.message}`);
-        })
+          .then((res) => {
+            if (!res.ok)
+              throw new Error(`Failed to unassign character for image ${id}`);
+          })
+          .catch((err) => {
+            alert(
+              `Error unassigning character for image ${id}: ${err.message}`
+            );
+          })
       )
     ).then(() => {
       // Remove affected images from grid immediately
-      allGridImages.value = allGridImages.value.filter(img => !selectedImageIds.value.includes(img.id));
+      allGridImages.value = allGridImages.value.filter(
+        (img) => !selectedImageIds.value.includes(img.id)
+      );
       selectedImageIds.value = [];
       lastSelectedIndex = null;
       fetchTotalImageCount().then(() => {
@@ -200,20 +210,26 @@ function removeFromGroup() {
     props.selectedSet !== "__unassigned__"
   ) {
     Promise.all(
-      selectedImageIds.value.map(id =>
-        fetch(`${backendUrl}/picture_sets/${props.selectedSet}/pictures/${id}`, {
-          method: "DELETE"
-        })
-        .then(res => {
-          if (!res.ok) throw new Error(`Failed to remove image ${id} from set`);
-        })
-        .catch(err => {
-          alert(`Error removing image ${id} from set: ${err.message}`);
-        })
+      selectedImageIds.value.map((id) =>
+        fetch(
+          `${backendUrl}/picture_sets/${props.selectedSet}/pictures/${id}`,
+          {
+            method: "DELETE",
+          }
+        )
+          .then((res) => {
+            if (!res.ok)
+              throw new Error(`Failed to remove image ${id} from set`);
+          })
+          .catch((err) => {
+            alert(`Error removing image ${id} from set: ${err.message}`);
+          })
       )
     ).then(() => {
       // Remove affected images from grid immediately
-      allGridImages.value = allGridImages.value.filter(img => !selectedImageIds.value.includes(img.id));
+      allGridImages.value = allGridImages.value.filter(
+        (img) => !selectedImageIds.value.includes(img.id)
+      );
       selectedImageIds.value = [];
       lastSelectedIndex = null;
       fetchTotalImageCount().then(() => {
@@ -226,21 +242,28 @@ function removeFromGroup() {
 
 function deleteSelected() {
   if (!selectedImageIds.value.length) return;
-  if (!confirm(`Delete ${selectedImageIds.value.length} selected image(s)? This cannot be undone.`)) return;
+  if (
+    !confirm(
+      `Delete ${selectedImageIds.value.length} selected image(s)? This cannot be undone.`
+    )
+  )
+    return;
   const backendUrl = props.backendUrl;
   Promise.all(
-    selectedImageIds.value.map(id =>
+    selectedImageIds.value.map((id) =>
       fetch(`${backendUrl}/pictures/${id}`, { method: "DELETE" })
-        .then(res => {
+        .then((res) => {
           if (!res.ok) throw new Error(`Failed to delete image ${id}`);
         })
-        .catch(err => {
+        .catch((err) => {
           alert(`Error deleting image ${id}: ${err.message}`);
         })
     )
   ).then(() => {
     // Remove deleted images from grid and clear selection
-    allGridImages.value = allGridImages.value.filter(img => !selectedImageIds.value.includes(img.id));
+    allGridImages.value = allGridImages.value.filter(
+      (img) => !selectedImageIds.value.includes(img.id)
+    );
     selectedImageIds.value = [];
     lastSelectedIndex = null;
     fetchTotalImageCount().then(() => {
@@ -264,11 +287,27 @@ const props = defineProps({
   sidebarVisible: Boolean,
   backendUrl: String,
   selectedCharacter: { type: [String, Number, null], default: null },
-  selectedSet: { type: [String, Number, null], default: null },
+  selectedSet: { type: [Number, String, null], default: null },
   searchQuery: String,
   selectedSort: String,
   showStars: Boolean,
+  gridVersion: { type: Number, default: 0 },
 });
+
+watch(
+  () => props.gridVersion,
+  () => {
+    // Full grid data refresh
+    console.log("Grid version changed, refreshing all thumbnails");
+    loadedRanges.value = [];
+    allGridImages.value = [];
+    selectedImageIds.value = [];
+    lastSelectedIndex = null;
+    fetchTotalImageCount().then(() => {
+      updateVisibleThumbnails();
+    });
+  }
+);
 
 const VIEW_WINDOW = 100;
 
@@ -299,7 +338,9 @@ async function updateSelectedGroupName() {
     props.selectedCharacter !== "__unassigned__"
   ) {
     try {
-      const res = await fetch(`${props.backendUrl}/characters/${props.selectedCharacter}`);
+      const res = await fetch(
+        `${props.backendUrl}/characters/${props.selectedCharacter}`
+      );
       if (res.ok) {
         const char = await res.json();
         name = char.name || "";
@@ -325,12 +366,13 @@ async function updateSelectedGroupName() {
   selectedGroupName.value = name;
 }
 
-watch([
-  () => props.selectedCharacter,
-  () => props.selectedSet
-], () => {
-  updateSelectedGroupName();
-}, { immediate: true });
+watch(
+  [() => props.selectedCharacter, () => props.selectedSet],
+  () => {
+    updateSelectedGroupName();
+  },
+  { immediate: true }
+);
 
 // --- Multi-selection state ---
 // Local selection state (mirrors parent prop)
@@ -438,7 +480,9 @@ async function handleGridDragEnter(e) {
     props.selectedCharacter !== "__all__" &&
     props.selectedCharacter !== "__unassigned__"
   ) {
-    const groupLabel = selectedGroupName.value ? "for " + selectedGroupName.value : "";
+    const groupLabel = selectedGroupName.value
+      ? "for " + selectedGroupName.value
+      : "";
     dragOverlayMessage.value = `Drop files here to import ${itemCount} file(s) ${groupLabel}`;
   } else {
     dragOverlayMessage.value = `Drop files here to import ${itemCount} file(s)`;
@@ -495,15 +539,22 @@ function handleGridDrop(e) {
 function onGlobalKeyPress(key, event) {
   if (scrollWrapper.value) {
     let newScrollTop = scrollWrapper.value.scrollTop;
-    const maxScroll = scrollWrapper.value.scrollHeight - scrollWrapper.value.clientHeight;
+    const maxScroll =
+      scrollWrapper.value.scrollHeight - scrollWrapper.value.clientHeight;
     if (key === "Home") {
       newScrollTop = 0;
     } else if (key === "End") {
       newScrollTop = maxScroll;
     } else if (key === "PageUp") {
-      newScrollTop = Math.max(0, newScrollTop - scrollWrapper.value.clientHeight);
+      newScrollTop = Math.max(
+        0,
+        newScrollTop - scrollWrapper.value.clientHeight
+      );
     } else if (key === "PageDown") {
-      newScrollTop = Math.min(maxScroll, newScrollTop + scrollWrapper.value.clientHeight);
+      newScrollTop = Math.min(
+        maxScroll,
+        newScrollTop + scrollWrapper.value.clientHeight
+      );
     }
     // Only update if changed
     if (scrollWrapper.value.scrollTop !== newScrollTop) {
@@ -543,26 +594,26 @@ async function fetchTotalImageCount() {
   imagesError.value = null;
   try {
     const params = buildPictureIdsQueryParams();
-    const url = `${props.backendUrl}/pictures?count=true&${params}`;
+    // Fetch all image metadata (IDs) for current filters
+    const url = `${props.backendUrl}/pictures?info=true&offset=0&limit=10000&${params}`;
     const res = await fetch(url);
-    if (!res.ok) throw new Error("Failed to fetch image count");
-    const data = await res.json();
-    totalImageCount.value = data.count || 0;
+    if (!res.ok) throw new Error("Failed to fetch image info for all images");
+    const images = await res.json();
+    totalImageCount.value = images.length;
     console.debug(
       "[IMAGE COUNT] Total images for current filters:",
       totalImageCount.value
     );
-    // Always fill allGridImages with placeholders up to totalImageCount
-    if (allGridImages.value.length < totalImageCount.value) {
-      for (let i = allGridImages.value.length; i < totalImageCount.value; i++) {
-        allGridImages.value[i] = { id: null, thumbnail: null, idx: i };
-      }
-    } else if (allGridImages.value.length > totalImageCount.value) {
-      allGridImages.value.length = totalImageCount.value;
-    }
+    // Fill allGridImages with real image objects (IDs, idx, no thumbnail yet)
+    allGridImages.value = images.map((img, i) => ({
+      ...img,
+      idx: i,
+      thumbnail: null,
+    }));
   } catch (e) {
     imagesError.value = e.message;
     totalImageCount.value = 0;
+    allGridImages.value = [];
   } finally {
     imagesLoading.value = false;
   }
@@ -745,7 +796,17 @@ function updateVisibleThumbnails() {
     totalImageCount.value,
     visibleEnd.value + divisibleViewWindow.value
   );
-  console.log("Fetch range: ", start, "to", end, "Visible:", visibleStart.value, visibleEnd.value, "Total:", totalImageCount.value);
+  console.log(
+    "Fetch range: ",
+    start,
+    "to",
+    end,
+    "Visible:",
+    visibleStart.value,
+    visibleEnd.value,
+    "Total:",
+    totalImageCount.value
+  );
 
   // Debounce fetches to avoid excessive requests
   if (thumbFetchTimeout) clearTimeout(thumbFetchTimeout);
@@ -758,7 +819,8 @@ function updateVisibleThumbnails() {
 function onGridScroll(e) {
   // Debounce scroll handler to prevent runaway feedback
   if (!window._scrollDebounceTimeout) window._scrollDebounceTimeout = null;
-  if (window._scrollDebounceTimeout) clearTimeout(window._scrollDebounceTimeout);
+  if (window._scrollDebounceTimeout)
+    clearTimeout(window._scrollDebounceTimeout);
   window._scrollDebounceTimeout = setTimeout(() => {
     const el = scrollWrapper.value;
     if (!el) return;
@@ -774,10 +836,20 @@ function onGridScroll(e) {
     const newVisibleEnd = Math.ceil(lastVisibleRow) * cols;
 
     // Only update if changed
-    if (visibleStart.value !== newVisibleStart || visibleEnd.value !== newVisibleEnd) {
+    if (
+      visibleStart.value !== newVisibleStart ||
+      visibleEnd.value !== newVisibleEnd
+    ) {
       visibleStart.value = newVisibleStart;
       visibleEnd.value = newVisibleEnd;
-      console.debug("[SCROLL] visibleStart:", visibleStart.value, "visibleEnd:", visibleEnd.value, "Client Height: ", el.clientHeight);
+      console.debug(
+        "[SCROLL] visibleStart:",
+        visibleStart.value,
+        "visibleEnd:",
+        visibleEnd.value,
+        "Client Height: ",
+        el.clientHeight
+      );
       // Only trigger buffer expansion/fetch if user is near buffer end
       // Always fetch thumbnails for the current visible window
       updateVisibleThumbnails();
@@ -839,7 +911,6 @@ function handleImageCardClick(img, idx, event) {
   }
   selectedImageIds.value = newSelection;
   console.log("New selection:", newSelection);
-  emit("select-image", newSelection);
 }
 
 function handleThumbnailClick(img, idx, event) {
@@ -859,7 +930,6 @@ function handleGridBackgroundClick(e) {
     console.log("Clearing selection");
     selectedImageIds.value = [];
     lastSelectedIndex = null;
-    emit("clear-selection");
   }
 }
 
@@ -906,14 +976,29 @@ function handleKeyDown(event) {
   if (event.key === "Escape") {
     selectedImageIds.value = [];
     lastSelectedIndex = null;
-    emit("clear-selection");
   } else if (event.key === "Delete" || event.key === "Backspace") {
     if (selectedImageIds.value.length > 0) {
       deleteSelected();
     }
+  } else if ((event.ctrlKey || event.metaKey) && event.key === "a") {
+    event.preventDefault();
+    // Instrumentation: log allGridImages and selection
+    console.log("[CTRL+A] allGridImages length:", allGridImages.value.length);
+    const ids = allGridImages.value.map((img) => img && img.id);
+    const validIds = ids.filter((id) => !!id);
+    const placeholderCount = ids.length - validIds.length;
+    console.log("[CTRL+A] valid image IDs count:", validIds.length);
+    console.log("[CTRL+A] placeholder count:", placeholderCount);
+    console.log("[CTRL+A] allGridImages IDs:", ids);
+    // Select all images with valid IDs from allGridImages (not just visible)
+    const allIds = allGridImages.value
+      .filter((img) => img && img.id)
+      .map((img) => img.id);
+    selectedImageIds.value = Array.from(allIds);
+    console.log("[CTRL+A] selectedImageIds:", selectedImageIds.value);
+    lastSelectedIndex = null;
   }
 }
-
 
 watch(
   () => props.thumbnailSize,
@@ -928,7 +1013,11 @@ onUnmounted(() => {
 });
 
 // Expose the grid DOM node to parent
-defineExpose({ gridEl: scrollWrapper, onGlobalKeyPress });
+defineExpose({
+  gridEl: scrollWrapper,
+  onGlobalKeyPress,
+  updateVisibleThumbnails,
+});
 </script>
 <style scoped>
 .drag-overlay {

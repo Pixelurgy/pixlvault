@@ -10,10 +10,7 @@ import {
 } from "vue";
 
 import SideBar from "./components/SideBar.vue";
-import ChatWindow from "./components/ChatWindow.vue";
 import ImageGrid from "./components/ImageGrid.vue";
-import CharacterEditor from "./components/CharacterEditor.vue";
-import PictureSetEditor from "./components/PictureSetEditor.vue";
 import LikenessRows from "./components/LikenessRows.vue";
 
 // --- Backend Constants & Identifiers ---
@@ -44,6 +41,12 @@ const sidebarVisible = ref(true);
 // --- Chat Overlay State ---
 const chatOpen = ref(false);
 
+const gridVersion = ref(0);
+
+function refreshGridVersion() {
+  gridVersion.value++;
+}
+
 // --- Config Dialog State ---
 const settingsDialog = ref(false);
 const config = reactive({
@@ -68,8 +71,6 @@ const error = ref(null);
 function refreshSidebar() {
   sidebarRef.value?.refreshSidebar();
 }
-
-function refreshGrid() {}
 
 function refreshLikeness() {}
 
@@ -199,7 +200,7 @@ async function updateSelectedRoot() {
   selectedSet.value = null;
   refreshSidebar();
   if (currentView.value === "grid") {
-    refreshGrid();
+    refreshGridVersion();
   } else if (currentView.value === "likeness") {
     refreshLikeness();
   }
@@ -279,6 +280,10 @@ function handleGlobalKeydown(e) {
   }
 }
 
+async function handleImagesAssignedToCharacter({ characterId, imageIds }) {
+  refreshGridVersion();
+}
+
 // --- Watchers ---
 // Scroll to bottom after END loads last page
 // (Removed watch on images)
@@ -290,7 +295,7 @@ watch(searchQuery, (newVal, oldVal) => {
     if (previousSort.value && previousSort.value !== selectedSort.value) {
       selectedSort.value = previousSort.value;
     }
-    refreshGrid();
+    refreshGridVersion();
   }
 });
 
