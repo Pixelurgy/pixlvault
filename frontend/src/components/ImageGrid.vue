@@ -5,7 +5,7 @@
     :allImages="allGridImages"
     :backendUrl="props.backendUrl"
     @close="closeOverlay"
-    @set-score="setScore"
+    @apply-score="applyScore"
   />
   <ImageImporter
     ref="imageImporterRef"
@@ -235,7 +235,11 @@ function removeFromGroup() {
       await fetchTotalImageCount();
       updateVisibleThumbnails();
       // Ensure sidebar counts are refreshed after drag-out
-      if (typeof window !== "undefined" && window.app && window.app.fetchPictureSets) {
+      if (
+        typeof window !== "undefined" &&
+        window.app &&
+        window.app.fetchPictureSets
+      ) {
         await window.app.fetchPictureSets();
       } else {
         // Fallback: emit refresh-sidebar to parent
@@ -415,6 +419,11 @@ function closeOverlay() {
 
 async function setScore(img, n) {
   const newScore = (img.score || 0) === n ? 0 : n;
+  applyScore(img, newScore);
+}
+
+async function applyScore(img, newScore) {
+  console.debug("Applying score:", newScore);
   const imageId = img.id || (overlayImage.value && overlayImage.value.id);
   if (!imageId) {
     alert("Failed to set score: image id is missing.");
@@ -427,12 +436,12 @@ async function setScore(img, n) {
       { method: "PATCH" }
     );
     if (!res.ok) throw new Error(`Failed to set score for image ${imageId}`);
-    // Fetch latest info after score update
-    const latestInfo = await fetchImageInfo(imageId);
-    if (overlayImage.value && overlayImage.value.id === imageId) {
-      overlayImage.value = { ...overlayImage.value, ...latestInfo };
+    const gridImg = allGridImages.value.find((i) => i.id === imageId);
+    if (gridImg) {
+      gridImg.score = newScore;
     }
-    // ...existing code for sorting and updating images array...
+
+    // Overlay image is not refreshed here; grid stays in sync
     if (
       props.selectedSort.value === "score_desc" ||
       props.selectedSort.value === "score_asc"
@@ -771,9 +780,9 @@ async function fetchThumbnailsBatch(start, end) {
       }
     } else {
       const params = buildPictureIdsQueryParams();
-      const url = `${props.backendUrl}/pictures?info=true&offset=${start}&limit=${
-        end - start
-      }&${params}`;
+      const url = `${
+        props.backendUrl
+      }/pictures?info=true&offset=${start}&limit=${end - start}&${params}`;
       const res = await fetch(url);
       if (res.ok) {
         images = await res.json();
@@ -787,6 +796,7 @@ async function fetchThumbnailsBatch(start, end) {
     // Prepare grid image objects
     const gridImages = images.map((img, idx) => ({
       ...img,
+      score: img.score ?? 0,
       idx: start + idx, // Ensure idx is global index
       thumbnail: null,
     }));
@@ -812,11 +822,7 @@ async function fetchThumbnailsBatch(start, end) {
     }
     // Ensure allGridImages.value is sized to totalImageCount
     if (allGridImages.value.length < totalImageCount.value) {
-      for (
-        let i = allGridImages.value.length;
-        i < totalImageCount.value;
-        i++
-      ) {
+      for (let i = allGridImages.value.length; i < totalImageCount.value; i++) {
         allGridImages.value[i] = { id: null, thumbnail: null, idx: i };
       }
     }

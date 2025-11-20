@@ -38,7 +38,7 @@
                 large
                 :color="n <= (image?.score || 0) ? 'orange' : 'grey darken-2'"
                 style="cursor: pointer"
-                @click.stop="emit('set-score', image, n)"
+                @click.stop="setScore(n)"
                 >mdi-star</v-icon
               >
             </div>
@@ -133,7 +133,7 @@ const emit = defineEmits([
   "close",
   "prev",
   "next",
-  "set-score",
+  "apply-score",
   "remove-tag",
   "add-tag",
 ]);
@@ -198,6 +198,12 @@ function confirmAddTag() {
   resetTagInput();
 }
 
+function setScore(n) {
+  if (!image.value) return;
+  image.value.score = (image.value.score || 0) === n ? 0 : n;
+  emit("apply-score", image.value, image.value.score);
+}
+
 function showPrevImage() {
   const sorted = allImages.value;
   if (!image.value || !sorted.length) return;
@@ -226,7 +232,7 @@ function handleKeydown(e) {
     showNextImage();
   } else if (["1", "2", "3", "4", "5"].includes(e.key)) {
     const score = parseInt(e.key, 10);
-    if (image.value) emit("set-score", image.value, score);
+    if (image.value) setScore(score);
   }
 }
 
