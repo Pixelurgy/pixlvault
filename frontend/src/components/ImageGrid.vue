@@ -62,16 +62,16 @@
           <div class="drag-overlay-message">{{ dragOverlayMessage }}</div>
         </div>
         <div
-          v-for="(img, idx) in gridImagesToRender"
+          v-for="img in gridImagesToRender"
           :key="img.id ? `img-${img.id}` : `placeholder-${img.idx}`"
           class="image-card"
           :draggable="isImageSelected(img.id)"
-          @dragstart="onImageDragStart(img, idx, $event)"
-          @click="handleImageCardClick(img, idx, $event)"
+          @dragstart="onImageDragStart(img, img.idx, $event)"
+          @click="handleImageCardClick(img, img.idx, $event)"
         >
           <v-card
             class="thumbnail-card"
-            @click.stop="handleThumbnailClick(img, idx, $event)"
+            @click.stop="handleThumbnailClick(img, img.idx, $event)"
           >
             <div class="thumbnail-container">
               <template v-if="img.thumbnail">
@@ -884,9 +884,10 @@ function handleImageCardClick(img, idx, event) {
   if (!img.id) return;
   const isCtrl = event.ctrlKey || event.metaKey;
   const isShift = event.shiftKey;
-  let newSelection = [...selectedImageIds.value];
+  let newSelection = [];
   if (isCtrl) {
     // Toggle selection
+    newSelection = [...selectedImageIds.value];
     if (newSelection.includes(img.id)) {
       console.debug("Deselecting image ID:", img.id);
       newSelection = newSelection.filter((id) => id !== img.id);
@@ -896,14 +897,14 @@ function handleImageCardClick(img, idx, event) {
     }
     lastSelectedIndex = idx;
   } else if (isShift && lastSelectedIndex !== null) {
-    // Range select
+    // Range select: select only the contiguous range between anchor and clicked item
     const start = Math.min(lastSelectedIndex, idx);
     const end = Math.max(lastSelectedIndex, idx);
-    const idsInRange = allGridImages.value
+    newSelection = allGridImages.value
       .slice(start, end + 1)
       .map((i) => i.id)
       .filter(Boolean);
-    newSelection = Array.from(new Set([...newSelection, ...idsInRange]));
+    // Do NOT merge with previous selection; replace it
   } else {
     // Single select
     newSelection = [img.id];
