@@ -225,16 +225,22 @@ function removeFromGroup() {
             alert(`Error removing image ${id} from set: ${err.message}`);
           })
       )
-    ).then(() => {
+    ).then(async () => {
       // Remove affected images from grid immediately
       allGridImages.value = allGridImages.value.filter(
         (img) => !selectedImageIds.value.includes(img.id)
       );
       selectedImageIds.value = [];
       lastSelectedIndex = null;
-      fetchTotalImageCount().then(() => {
-        updateVisibleThumbnails();
-      });
+      await fetchTotalImageCount();
+      updateVisibleThumbnails();
+      // Ensure sidebar counts are refreshed after drag-out
+      if (typeof window !== "undefined" && window.app && window.app.fetchPictureSets) {
+        await window.app.fetchPictureSets();
+      } else {
+        // Fallback: emit refresh-sidebar to parent
+        emit("refresh-sidebar");
+      }
     });
     return;
   }
@@ -600,18 +606,30 @@ async function fetchTotalImageCount() {
   imagesLoading.value = true;
   imagesError.value = null;
   try {
-    const params = buildPictureIdsQueryParams();
-    // Fetch all image metadata (IDs) for current filters
-    const url = `${props.backendUrl}/pictures?info=true&offset=0&limit=10000&${params}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("Failed to fetch image info for all images");
-    const images = await res.json();
+    let images = [];
+    // If a set is selected, use /picture_sets/{id}
+    if (
+      props.selectedSet &&
+      props.selectedSet !== "__all__" &&
+      props.selectedSet !== "__unassigned__"
+    ) {
+      const url = `${props.backendUrl}/picture_sets/${props.selectedSet}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Failed to fetch images for set");
+      const data = await res.json();
+      images = data.pictures || [];
+    } else {
+      const params = buildPictureIdsQueryParams();
+      const url = `${props.backendUrl}/pictures?info=true&offset=0&limit=10000&${params}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Failed to fetch image info for all images");
+      images = await res.json();
+    }
     totalImageCount.value = images.length;
     console.debug(
       "[IMAGE COUNT] Total images for current filters:",
       totalImageCount.value
     );
-    // Fill allGridImages with real image objects (IDs, idx, no thumbnail yet)
     allGridImages.value = images.map((img, i) => ({
       ...img,
       idx: i,
@@ -736,63 +754,79 @@ async function fetchThumbnailsBatch(start, end) {
   }
   // Fetch batch metadata for visible range
   try {
-    const params = buildPictureIdsQueryParams();
-    const url = `${props.backendUrl}/pictures?info=true&offset=${start}&limit=${
-      end - start
-    }&${params}`;
-    console.debug(`[BATCH FETCH] Requesting: ${url}`);
-    const res = await fetch(url);
-    if (res.ok) {
-      const images = await res.json();
-      console.debug(
-        `[BATCH RESPONSE] Received ${images.length} images:`,
-        images.map((img) => img.id)
-      );
-      // Prepare grid image objects
-      const gridImages = images.map((img, idx) => ({
-        ...img,
-        idx: start + idx, // Ensure idx is global index
-        thumbnail: null,
-      }));
-      // Now fetch thumbnails for these IDs
-      const ids = images.map((img) => img.id);
-      if (ids.length) {
-        const thumbRes = await fetch(`${props.backendUrl}/thumbnails`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids }),
-        });
-        if (thumbRes.ok) {
-          const thumbData = await thumbRes.json();
-          for (const gridImg of gridImages) {
-            gridImg.thumbnail = thumbData[gridImg.id]
-              ? `data:image/png;base64,${thumbData[gridImg.id]}`
-              : null;
-          }
-        } else {
-          for (const gridImg of gridImages) {
-            gridImg.thumbnail = null;
-          }
-        }
+    let images = [];
+    let ids = [];
+    // If a set is selected, use /picture_sets/{id}
+    if (
+      props.selectedSet &&
+      props.selectedSet !== "__all__" &&
+      props.selectedSet !== "__unassigned__"
+    ) {
+      const url = `${props.backendUrl}/picture_sets/${props.selectedSet}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        images = data.pictures ? data.pictures.slice(start, end) : [];
+        ids = images.map((img) => img.id);
       }
-      // Ensure allGridImages.value is sized to totalImageCount
-      if (allGridImages.value.length < totalImageCount.value) {
-        for (
-          let i = allGridImages.value.length;
-          i < totalImageCount.value;
-          i++
-        ) {
-          allGridImages.value[i] = { id: null, thumbnail: null, idx: i };
-        }
+    } else {
+      const params = buildPictureIdsQueryParams();
+      const url = `${props.backendUrl}/pictures?info=true&offset=${start}&limit=${
+        end - start
+      }&${params}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        images = await res.json();
+        ids = images.map((img) => img.id);
       }
-      // Insert/update images at their correct indices
-      for (let i = 0; i < gridImages.length; i++) {
-        const img = gridImages[i];
-        img.idx = start + i; // Redundant but explicit for safety
-        allGridImages.value[start + i] = img;
-      }
-      loadedRanges.value.push([start, end]);
     }
+    console.debug(
+      `[BATCH RESPONSE] Received ${images.length} images:`,
+      images.map((img) => img.id)
+    );
+    // Prepare grid image objects
+    const gridImages = images.map((img, idx) => ({
+      ...img,
+      idx: start + idx, // Ensure idx is global index
+      thumbnail: null,
+    }));
+    // Now fetch thumbnails for these IDs
+    if (ids.length) {
+      const thumbRes = await fetch(`${props.backendUrl}/thumbnails`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (thumbRes.ok) {
+        const thumbData = await thumbRes.json();
+        for (const gridImg of gridImages) {
+          gridImg.thumbnail = thumbData[gridImg.id]
+            ? `data:image/png;base64,${thumbData[gridImg.id]}`
+            : null;
+        }
+      } else {
+        for (const gridImg of gridImages) {
+          gridImg.thumbnail = null;
+        }
+      }
+    }
+    // Ensure allGridImages.value is sized to totalImageCount
+    if (allGridImages.value.length < totalImageCount.value) {
+      for (
+        let i = allGridImages.value.length;
+        i < totalImageCount.value;
+        i++
+      ) {
+        allGridImages.value[i] = { id: null, thumbnail: null, idx: i };
+      }
+    }
+    // Insert/update images at their correct indices
+    for (let i = 0; i < gridImages.length; i++) {
+      const img = gridImages[i];
+      img.idx = start + i; // Redundant but explicit for safety
+      allGridImages.value[start + i] = img;
+    }
+    loadedRanges.value.push([start, end]);
   } catch (err) {
     console.error("[BATCH ERROR]", err);
   }
