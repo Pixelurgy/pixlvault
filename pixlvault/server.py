@@ -733,20 +733,27 @@ class Server:
                 char = self.vault.characters[id]
             except KeyError:
                 raise HTTPException(status_code=404, detail="Character not found")
+
             updated = False
-            if name is not None and name != char.name:
-                char.name = name
-                updated = True
+
+            if (
+                name is not None
+                and name != char.name
+                or description is not None
+                and description != char.description
+            ):
                 # Drop embeddings for all pictures with this primary_character_id
                 pics = self.vault.pictures.find(primary_character_id=id)
                 for pic in pics:
                     pic.description = None
                     pic.text_embedding = None
-
                 self.vault.pictures.update(pics)
-            if description is not None and description != char.description:
-                char.description = description
-                updated = True
+
+            for key, value in data.items():
+                if hasattr(char, key) and value != getattr(char, key):
+                    setattr(char, key, value)
+                    updated = True
+
             if updated:
                 self.vault.characters.update(char)
             return {"status": "success", "character": char.__dict__}
@@ -841,7 +848,6 @@ class Server:
                 raise HTTPException(status_code=404, detail="Picture set not found")
 
             return {"status": "success", "deleted_id": id}
-
 
         @self.api.get("/characters")
         async def get_characters(name: str = Query(None)):
