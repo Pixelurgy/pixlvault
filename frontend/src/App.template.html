@@ -259,45 +259,40 @@
           :class="['main-content', selectedCharacter ? 'accent-border' : '']"
           style="margin-top: 0; padding-top: 0"
         >
-          <template v-if="selectedCharacter || selectedSet !== null">
-            <template v-if="currentView === 'likeness'">
-              <LikenessRows :backendUrl="BACKEND_URL" :likenessRows="[]" />
-              <v-btn style="margin-top: 16px" @click="handleSwitchToGrid"
-                >Back to Grid View</v-btn
-              >
-            </template>
-            <template v-else>
-              <ImageGrid
-                ref="gridContainer"
-                :thumbnailSize="thumbnailSize"
-                :sidebarVisible="sidebarVisible"
-                :backendUrl="BACKEND_URL"
-                :selectedCharacter="selectedCharacter"
-                :selectedSet="selectedSet"
-                :searchQuery="searchQuery"
-                :selectedSort="selectedSort"
-                :showStars="showStars"
-                :gridVersion="gridVersion"
-                @refresh-sidebar="refreshSidebar"
-              />
-            </template>
-
-            <ChatWindow
-              v-if="chatOpen"
-              ref="chatWindowRef"
-              :open="chatOpen"
-              :title="selectedCharacterObj ? `Chat with ${selectedCharacterObj.name}` : 'AI Chat'"
-              :selected-character="selectedCharacterObj"
-              :config="config"
-              :extract-keywords="extractKeywords"
-              :backend-url="BACKEND_URL"
-              @close="closeChatOverlay"
+          <template v-if="currentView === 'likeness'">
+            <LikenessRows :backendUrl="BACKEND_URL" :likenessRows="[]" />
+            <v-btn style="margin-top: 16px" @click="handleSwitchToGrid"
+              >Back to Grid View</v-btn
+            >
+          </template>
+          <template v-else-if="selectedCharacter || selectedSet !== null">
+            <ImageGrid
+              ref="gridContainer"
+              :thumbnailSize="thumbnailSize"
+              :sidebarVisible="sidebarVisible"
+              :backendUrl="BACKEND_URL"
+              :selectedCharacter="selectedCharacter"
+              :selectedSet="selectedSet"
+              :searchQuery="searchQuery"
+              :selectedSort="selectedSort"
+              :showStars="showStars"
+              :gridVersion="gridVersion"
+              @refresh-sidebar="refreshSidebar"
             />
           </template>
           <template v-else>
             <!--  -->
             <div class="empty-state">Nothing to see here.</div>
           </template>
+          <ChatWindow
+            v-if="chatOpen"
+            ref="chatWindowRef"
+            :open="chatOpen"
+            :selected-character="String(selectedCharacter)"
+            :config="config"
+            :backend-url="BACKEND_URL"
+            @close="closeChatOverlay"
+          />
         </div>
       </main>
     </div>

@@ -12,6 +12,7 @@ import {
 import SideBar from "./components/SideBar.vue";
 import ImageGrid from "./components/ImageGrid.vue";
 import LikenessRows from "./components/LikenessRows.vue";
+import ChatWindow from "./components/ChatWindow.vue";
 
 // --- Backend Constants & Identifiers ---
 const BACKEND_URL = "http://localhost:9537";
@@ -261,9 +262,6 @@ function handleGridBackgroundClick(e) {
 // --- Chat Overlay ---
 function openChatOverlay() {
   chatOpen.value = true;
-  nextTick(() => {
-    if (chatWindowRef.value) chatWindowRef.value.focusInput();
-  });
 }
 
 function closeChatOverlay() {
