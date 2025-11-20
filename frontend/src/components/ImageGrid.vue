@@ -571,7 +571,14 @@ const imagesError = ref(null);
 
 function buildPictureIdsQueryParams() {
   const params = new URLSearchParams();
-  if (props.selectedCharacter && props.selectedCharacter !== "__all__") {
+  // If a set is selected, filter by set
+  if (
+    props.selectedSet &&
+    props.selectedSet !== "__all__" &&
+    props.selectedSet !== "__unassigned__"
+  ) {
+    params.append("set_id", props.selectedSet);
+  } else if (props.selectedCharacter && props.selectedCharacter !== "__all__") {
     if (props.selectedCharacter === "__unassigned__") {
       params.append("primary_character_id", "");
     } else {
@@ -635,6 +642,7 @@ watch(
   () => {
     // Reset loaded ranges and thumbnails when filters change
     loadedRanges.value = [];
+    console.log("Selected set: ", props.selectedSet);
     allGridImages.value = [];
     selectedImageIds.value = [];
     lastSelectedIndex = null;

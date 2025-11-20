@@ -65,6 +65,11 @@ const characterEditorCharacter = ref(null);
 const setEditorOpen = ref(false);
 const setEditorSet = ref(null);
 
+function createSet() {
+  setEditorSet.value = null;
+  setEditorOpen.value = true;
+}
+
 const sidebarError = ref(null);
 
 const sortedCharacters = computed(() => {
@@ -194,14 +199,6 @@ function createCharacter() {
     original_seed: null,
     loras: [],
   });
-}
-
-function createSet() {
-  emit("create-set");
-}
-
-function deleteSet() {
-  emit("delete-set");
 }
 
 function handleImportFinished() {
@@ -568,7 +565,7 @@ function confirmDeleteCharacter() {
   }
 }
 
-function characterSaved() {
+async function characterSaved() {
   if (characterEditorCharacter.value && !characterEditorCharacter.value.id) {
     characters.value.push(characterEditorCharacter.value);
     // New character was created, increment nextCharacterNumber
@@ -576,6 +573,19 @@ function characterSaved() {
   }
   fetchCharacters();
   closeCharacterEditor();
+}
+
+async function pictureSetSaved(setData) {
+  // If setData is a new set (no id in pictureSets), add it
+  if (
+    setData &&
+    setData.id &&
+    !pictureSets.value.some((s) => s.id === setData.id)
+  ) {
+    pictureSets.value.push(setData);
+  }
+  await fetchPictureSets();
+  closeSetEditor();
 }
 
 onMounted(() => {
@@ -601,7 +611,13 @@ onMounted(() => {
     @close="closeCharacterEditor"
     @saved="characterSaved"
   />
-  <PictureSetEditor :open="setEditorOpen" :set="setEditorSet" />
+  <PictureSetEditor
+    :open="setEditorOpen"
+    :set="setEditorSet"
+    :backendUrl="props.backendUrl"
+    @close="setEditorOpen = false"
+    @save="pictureSetSaved"
+  />
 
   <aside class="sidebar">
     <div class="sidebar-section-header" @click="toggleSection('pictures')">
