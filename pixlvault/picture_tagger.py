@@ -28,7 +28,8 @@ SUB_DIR_FILES = ["variables.data-00000-of-00001", "variables.index"]
 CSV_FILE = FILES[-1]
 MODEL_DIR = "wd14_tagger_model"
 BATCH_SIZE = 1
-MAX_CONCURRENT_IMAGES = 8
+MAX_CONCURRENT_IMAGES_GPU = 32
+MAX_CONCURRENT_IMAGES_CPU = 8
 GENERAL_THRESHOLD = 0.4
 UNDESIRED_TAGS = "solo, general, male_focus, meme, blurry, sensitive, realistic"
 CAPTION_SEPARATOR = ", "
@@ -112,6 +113,12 @@ class PictureTagger:
 
         gc.collect()
         logger.debug("PictureTagger.exit called, resources released.")
+
+    def max_concurrent_images(self):
+        if self._device == "cpu":
+            return MAX_CONCURRENT_IMAGES_CPU
+        else:
+            return MAX_CONCURRENT_IMAGES_GPU
 
     def _init_florence_captioning(self):
         """
@@ -654,8 +661,12 @@ class PictureTagger:
         logger.debug("Removing tags: " + ", ".join(undesired_tags))
 
         dataset = ImageLoadingDatasetPrepper(image_paths)
+        if self._device == "cpu":
+            max_concurrent = MAX_CONCURRENT_IMAGES_CPU
+        else:
+            max_concurrent = MAX_CONCURRENT_IMAGES_GPU
         worker_count = min(
-            MAX_CONCURRENT_IMAGES, os.cpu_count() // 2 or 1, len(image_paths)
+            max_concurrent, os.cpu_count() // 2 or 1, len(image_paths)
         )
         logger.debug(
             "Starting tagger dataloader with worker count: "

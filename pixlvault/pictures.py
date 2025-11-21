@@ -14,7 +14,7 @@ from typing import Union, List, Tuple
 from pixlvault.logging import get_logger
 from pixlvault.picture import PictureModel
 from pixlvault.picture_quality import PictureQuality
-from pixlvault.picture_tagger import PictureTagger, MAX_CONCURRENT_IMAGES
+from pixlvault.picture_tagger import PictureTagger
 from pixlvault.picture_utils import PictureUtils
 from pixlvault.database import DBPriority
 
@@ -424,10 +424,10 @@ class Pictures:
                     % (time_after_fetch - start, len(pics_needing_face_bboxes))
                 )
                 logger.debug(
-                    f"Found {len(pics_needing_face_bboxes)} pictures needing face bboxes. Doing {MAX_CONCURRENT_IMAGES} at a time."
+                    f"Found {len(pics_needing_face_bboxes)} pictures needing face bboxes. Doing {self._picture_tagger.max_concurrent_images()} at a time."
                 )
                 insightface_ok, bboxes_updated = self._calculate_face_bboxes(
-                    pics_needing_face_bboxes[:MAX_CONCURRENT_IMAGES]
+                    pics_needing_face_bboxes[:self._picture_tagger.max_concurrent_images()]
                 )
                 time_after_calculate = time.time()
                 logger.debug(
@@ -488,6 +488,7 @@ class Pictures:
 
                 # 1. Fetch missing descriptions
                 missing_descriptions = self._fetch_missing_descriptions()
+                logger.debug("Got %d pictures needing descriptions." % len(missing_descriptions))
 
                 if self._tagger_stop.is_set():
                     break
@@ -501,6 +502,7 @@ class Pictures:
                     self._picture_tagger, missing_descriptions
                 )
 
+                logger.debug("Generated descriptions for %d pictures." % len(descriptions_generated))
                 if self._tagger_stop.is_set():
                     break
 
@@ -1005,7 +1007,7 @@ class Pictures:
     def _tag_pictures(self, picture_tagger, missing_tags) -> int:
         """Tag all pictures missing tags."""
         assert missing_tags is not None
-        batch = missing_tags[:MAX_CONCURRENT_IMAGES]
+        batch = missing_tags[:picture_tagger.max_concurrent_images()]
         image_paths = []
         pic_by_path = {}
         for pic in batch:
@@ -1217,7 +1219,7 @@ class Pictures:
     def _generate_descriptions(self, picture_tagger, missing_descriptions) -> int:
         """Generate descriptions for pictures using PictureTagger."""
         assert missing_descriptions is not None
-        batch = missing_descriptions[:MAX_CONCURRENT_IMAGES]
+        batch = missing_descriptions[:picture_tagger.max_concurrent_images()]
 
         descriptions_generated = []
         for pic in batch:
@@ -1263,8 +1265,8 @@ class Pictures:
         set_clause = ", ".join([f"{attr}=?" for attr in attributes])
         query = f"UPDATE pictures SET {set_clause} WHERE id=?"
         return self._db.submit_write(
-            lambda conn: conn.execute(query, values), priority=DBPriority.LOW
-        )
+            lambda conn: conn.executemany(query, values), priority=DBPriority.LOW
+        ).result()
 
     def find(self, **kwargs):
         """
