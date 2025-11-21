@@ -273,21 +273,15 @@ class Server:
             Return groups (stacks) of near-identical pictures based on likeness threshold.
             Each stack contains picture dicts and preselection info.
             """
-            # Query all likeness pairs above threshold
-            db = self.vault.pictures._db
-            rows = db.query(
-                "SELECT picture_id_a, picture_id_b, likeness FROM picture_likeness WHERE likeness >= ?",
-                (threshold,),
-            )
-            # Build undirected graph of connections
             from collections import defaultdict, deque
 
+            # Query all likeness pairs above threshold
+            rows = self.vault.pictures.likeness_query(treshold=threshold)
+
             neighbors = defaultdict(set)
-            for row in rows:
-                a = row["picture_id_a"] if isinstance(row, dict) else row[0]
-                b = row["picture_id_b"] if isinstance(row, dict) else row[1]
-                neighbors[a].add(b)
-                neighbors[b].add(a)
+            for picture_id_a, picture_id_b, _ in rows:
+                neighbors[picture_id_a].add(picture_id_b)
+                neighbors[picture_id_b].add(picture_id_a)
             # Find connected components (groups)
             visited = set()
             groups = []

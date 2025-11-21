@@ -665,9 +665,7 @@ class PictureTagger:
             max_concurrent = MAX_CONCURRENT_IMAGES_CPU
         else:
             max_concurrent = MAX_CONCURRENT_IMAGES_GPU
-        worker_count = min(
-            max_concurrent, os.cpu_count() // 2 or 1, len(image_paths)
-        )
+        worker_count = min(max_concurrent, os.cpu_count() // 2 or 1, len(image_paths))
         logger.debug(
             "Starting tagger dataloader with worker count: "
             + str(worker_count)

@@ -14,6 +14,8 @@ import ImageGrid from "./components/ImageGrid.vue";
 import LikenessRows from "./components/LikenessRows.vue";
 import ChatWindow from "./components/ChatWindow.vue";
 
+const likenessRowsRef = ref(null);
+
 // --- Backend Constants & Identifiers ---
 const BACKEND_URL = "http://localhost:9537";
 const ALL_PICTURES_ID = "__all__";
@@ -69,14 +71,16 @@ const newImageRoot = ref("");
 const loading = ref(false);
 const error = ref(null);
 
+
 function refreshSidebar() {
   sidebarRef.value?.refreshSidebar();
 }
 
-function refreshLikeness() {}
-
-async function handleSwitchToLikeness() {
+function handleSwitchToLikeness() {
   currentView.value = "likeness";
+  nextTick(() => {
+    likenessRowsRef.value?.refreshLikeness();
+  });
 }
 
 async function handleSwitchToGrid() {
@@ -203,7 +207,7 @@ async function updateSelectedRoot() {
   if (currentView.value === "grid") {
     refreshGridVersion();
   } else if (currentView.value === "likeness") {
-    refreshLikeness();
+    likenessRowsRef.value?.refreshLikeness();
   }
 }
 

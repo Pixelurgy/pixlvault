@@ -25,7 +25,7 @@
         <v-slider
           v-model="thumbnailSize"
           :min="128"
-          :max="256"
+          :max="currentView === 'likeness' ? 384 : 256"
           :step="32"
           class="toolbar-slider"
           hide-details
@@ -268,7 +268,7 @@
           style="margin-top: 0; padding-top: 0"
         >
           <template v-if="currentView === 'likeness'">
-            <LikenessRows :backendUrl="BACKEND_URL" :likenessRows="[]" />
+            <LikenessRows ref="likenessRowsRef" :backendUrl="BACKEND_URL" :thumbnailSize="thumbnailSize" :showStars="showStars" />
             <v-btn style="margin-top: 16px" @click="handleSwitchToGrid"
               >Back to Grid View</v-btn
             >

@@ -8,6 +8,7 @@ import cv2
 import threading
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from enum import Enum
 from typing import Union, List, Tuple
 
@@ -427,7 +428,9 @@ class Pictures:
                     f"Found {len(pics_needing_face_bboxes)} pictures needing face bboxes. Doing {self._picture_tagger.max_concurrent_images()} at a time."
                 )
                 insightface_ok, bboxes_updated = self._calculate_face_bboxes(
-                    pics_needing_face_bboxes[:self._picture_tagger.max_concurrent_images()]
+                    pics_needing_face_bboxes[
+                        : self._picture_tagger.max_concurrent_images()
+                    ]
                 )
                 time_after_calculate = time.time()
                 logger.debug(
@@ -488,7 +491,9 @@ class Pictures:
 
                 # 1. Fetch missing descriptions
                 missing_descriptions = self._fetch_missing_descriptions()
-                logger.debug("Got %d pictures needing descriptions." % len(missing_descriptions))
+                logger.debug(
+                    "Got %d pictures needing descriptions." % len(missing_descriptions)
+                )
 
                 if self._tagger_stop.is_set():
                     break
@@ -502,7 +507,10 @@ class Pictures:
                     self._picture_tagger, missing_descriptions
                 )
 
-                logger.debug("Generated descriptions for %d pictures." % len(descriptions_generated))
+                logger.debug(
+                    "Generated descriptions for %d pictures."
+                    % len(descriptions_generated)
+                )
                 if self._tagger_stop.is_set():
                     break
 
@@ -1007,7 +1015,7 @@ class Pictures:
     def _tag_pictures(self, picture_tagger, missing_tags) -> int:
         """Tag all pictures missing tags."""
         assert missing_tags is not None
-        batch = missing_tags[:picture_tagger.max_concurrent_images()]
+        batch = missing_tags[: picture_tagger.max_concurrent_images()]
         image_paths = []
         pic_by_path = {}
         for pic in batch:
@@ -1219,7 +1227,7 @@ class Pictures:
     def _generate_descriptions(self, picture_tagger, missing_descriptions) -> int:
         """Generate descriptions for pictures using PictureTagger."""
         assert missing_descriptions is not None
-        batch = missing_descriptions[:picture_tagger.max_concurrent_images()]
+        batch = missing_descriptions[: picture_tagger.max_concurrent_images()]
 
         descriptions_generated = []
         for pic in batch:
@@ -1458,6 +1466,19 @@ class Pictures:
             conn.commit()
 
         self._db.submit_write(delete_pictures, picture_ids).result()
+
+    def likeness_query(self, treshold: float):
+        """Return pairs of picture IDs with a likeness score above threshold."""
+        rows = self._db.execute_read(
+            lambda conn: conn.execute(
+                "SELECT picture_id_a, picture_id_b, likeness FROM picture_likeness WHERE likeness >= ?",
+                (treshold,),
+            ).fetchall()
+        )
+        result = []
+        for row in rows:
+            result.append((row["picture_id_a"], row["picture_id_b"], row["likeness"]))
+        return result
 
     def add(self, pictures: Union[PictureModel, List[PictureModel]]):
         """Add one or more pictures. Supports both single picture and batch operations."""
