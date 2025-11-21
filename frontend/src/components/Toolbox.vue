@@ -26,7 +26,7 @@ const collapsed = ref(false);
   right: 0;
   width: 320px;
   height: calc(100vh - 60px);
-  background: #222;
+  background: #555555f5;
   color: #fff;
   box-shadow: -2px 0 8px rgba(0, 0, 0, 0.15);
   z-index: 100;

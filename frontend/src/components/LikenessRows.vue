@@ -91,35 +91,45 @@ border-radius: 6px; }
               <v-icon
                 v-for="n in 5"
                 :key="n"
-                :large="true"
+                large
                 :color="n <= (img.score || 0) ? 'orange' : 'grey darken-2'"
                 style="cursor: pointer"
                 @click.stop="setScore(img, n)"
                 >mdi-star</v-icon
               >
             </div>
+            <div
+              class="metadata-overlay"
+              v-if="
+                img.width &&
+                img.height &&
+                img.sharpness !== undefined &&
+                img.noise_level !== undefined
+              "
+            >
+              <span class="meta-icon">
+                <v-icon small>mdi-image</v-icon>
+                {{ img.width }}×{{ img.height }}
+              </span>
+              <span class="meta-icon">
+                Sharpness:
+                {{
+                  typeof img.sharpness === "number"
+                    ? img.sharpness.toFixed(2)
+                    : img.sharpness
+                }}
+              </span>
+              <span class="meta-icon">
+                Noise:
+                {{
+                  typeof img.noise_level === "number"
+                    ? img.noise_level.toFixed(2)
+                    : img.noise_level
+                }}
+              </span>
+            </div>
           </div>
-          <div class="likeness-metrics">
-            <span v-if="img.width && img.height" style="display: block"
-              >Resolution: {{ img.width }} x {{ img.height }}</span
-            >
-            <span v-if="img.sharpness" style="display: block"
-              >Sharpness:
-              {{
-                typeof img.sharpness === "number"
-                  ? img.sharpness.toFixed(2)
-                  : img.sharpness
-              }}</span
-            >
-            <span v-if="img.noise_level" style="display: block"
-              >Noise Level:
-              {{
-                typeof img.noise_level === "number"
-                  ? img.noise_level.toFixed(2)
-                  : img.noise_level
-              }}</span
-            >
-          </div>
+          <!-- Removed text metrics, now shown as icon overlay -->
           <div
             v-if="props.showStars"
             class="star-overlay"
@@ -134,15 +144,6 @@ border-radius: 6px; }
               @click.stop="setScore(img, n)"
               >mdi-star</v-icon
             >
-          </div>
-          <div class="likeness-toggle" style="margin-top: 8px">
-            <v-switch
-              v-model="toggleStates[rowIdx][img.id]"
-              :label="toggleStates[rowIdx][img.id] ? 'keep' : 'delete'"
-              :color="toggleStates[rowIdx][img.id] ? 'success' : 'red'"
-              inset
-              hide-details
-            />
           </div>
         </div>
       </div>
@@ -421,15 +422,26 @@ const loggedVisibleRows = computed(() => {
 }
 .star-overlay {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 4px;
+  top: 8px;
+  right: 8px;
+  left: auto;
+  bottom: auto;
+  z-index: 12;
   display: flex;
-  justify-content: center;
-  gap: 2px;
-  background: rgba(0, 0, 0, 0.18);
-  border-radius: 0 0 6px 6px;
-  padding: 2px 0;
+  flex-direction: row;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 4px;
+  box-shadow: none;
+  font-size: 0.85em;
+  margin: 4px 4px 4px 4px;
+}
+.star-overlay:hover {
+  background: rgba(255, 255, 255, 1);
+}
+.star-overlay .v-icon {
+  font-size: 20px !important;
+  width: 20px;
+  height: 20px;
 }
 .likeness-metrics {
   font-size: 0.85em;
@@ -441,5 +453,33 @@ const loggedVisibleRows = computed(() => {
   text-align: center;
   color: #1976d2;
   margin: 16px 0;
+}
+/* Metadata overlay for thumbnail hover */
+.metadata-overlay {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  background: rgba(40, 40, 40, 0.72);
+  color: #fff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s;
+  z-index: 20;
+}
+.likeness-img-wrapper:hover .metadata-overlay {
+  opacity: 1;
+  pointer-events: auto;
+}
+.meta-icon {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.8em;
 }
 </style>
