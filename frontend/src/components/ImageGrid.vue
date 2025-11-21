@@ -15,140 +15,175 @@
     :unassignedPicturesId="'__unassigned__'"
     @import-finished="handleImagesUploaded"
   />
-  <div style="position: relative">
-    <SelectionBar
-      v-if="selectedImageIds.length > 0"
-      :selectedCount="selectedImageIds.length"
-      :selectedCharacter="String(props.selectedCharacter)"
-      :selectedSet="String(props.selectedSet)"
-      :selectedGroupName="selectedGroupName"
-      :visible="selectedImageIds.length > 0"
-      @clear-selection="clearSelection"
-      @remove-from-group="removeFromGroup"
-      @delete-selected="deleteSelected"
-      style="position: absolute; top: 0; left: 0; width: 100%; z-index: 100"
-    />
-
-    <div
-      class="grid-scroll-wrapper"
-      ref="scrollWrapper"
-      @scroll="onGridScroll"
-      style="position: relative"
-    >
-      <div
-        class="image-grid"
-        :style="{
-          gridTemplateColumns: `repeat(${columns}, 1fr)`,
-          position: 'relative',
-        }"
-        ref="gridContainer"
-        @dragenter.prevent="handleGridDragEnter"
-        @dragover.prevent="handleGridDragOver"
-        @dragleave.prevent="handleGridDragLeave"
-        @drop.prevent="handleGridDrop"
-        @click="handleGridBackgroundClick"
-      >
-        <!-- Top spacer for virtual scroll alignment -->
+  <div style="position: relative; min-height: 100%; width: 100%">
+    <div>
+      <div style="position: relative">
         <div
-          v-if="topSpacerHeight > 0"
-          :style="{
-            gridColumn: '1 / -1',
-            height: `${topSpacerHeight}px`,
-            border: '0px solid blue',
-          }"
-        ></div>
-        <!-- Drag overlay -->
-        <div v-if="dragOverlayVisible" class="drag-overlay">
-          <div class="drag-overlay-message">{{ dragOverlayMessage }}</div>
-        </div>
-        <div
-          v-for="img in gridImagesToRender"
-          :key="img.id ? `img-${img.id}` : `placeholder-${img.idx}`"
-          class="image-card"
-          :draggable="isImageSelected(img.id)"
-          @dragstart="onImageDragStart(img, img.idx, $event)"
-          @click="handleImageCardClick(img, img.idx, $event)"
+          class="grid-scroll-wrapper"
+          ref="scrollWrapper"
+          @scroll="onGridScroll"
+          style="position: relative"
         >
-          <v-card
-            class="thumbnail-card"
-            @click.stop="handleThumbnailClick(img, img.idx, $event)"
+          <div
+            class="image-grid"
+            :style="{
+              gridTemplateColumns: `repeat(${columns}, 1fr)`,
+              position: 'relative',
+            }"
+            ref="gridContainer"
+            @dragenter.prevent="handleGridDragEnter"
+            @dragover.prevent="handleGridDragOver"
+            @dragleave.prevent="handleGridDragLeave"
+            @drop.prevent="handleGridDrop"
+            @click="handleGridBackgroundClick"
           >
-            <div class="thumbnail-container">
-              <template v-if="img.thumbnail">
-                <img :src="img.thumbnail" class="thumbnail-img" />
-                <div
-                  class="thumbnail-index-overlay"
-                  :style="{
-                    position: 'absolute',
-                    top: '6px',
-                    left: '10px',
-                    color: 'red',
-                    fontWeight: 'bold',
-                    fontSize: '1.2em',
-                    textShadow: '0 0 2px #fff',
-                    zIndex: 20,
-                  }"
-                >
-                  {{ img.idx }}
-                </div>
-              </template>
-              <template v-else>
-                <div
-                  class="thumbnail-placeholder"
-                  :style="{
-                    width: '100%',
-                    height: '100%',
-                    background: '#e0e0e0',
-                    borderRadius: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '1.5em',
-                    color: '#aaa',
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                  }"
-                >
-                  <span> Image #{{ String(img.idx).padStart(5, "0") }} </span>
-                </div>
-              </template>
-              <!-- Score overlay -->
-              <div v-if="props.showStars" class="star-overlay">
-                <v-icon
-                  v-for="n in 5"
-                  :key="n"
-                  large
-                  :color="n <= (img.score || 0) ? 'orange' : 'grey darken-2'"
-                  style="cursor: pointer"
-                  @click.stop="setScore(img, n)"
-                  >mdi-star</v-icon
-                >
-              </div>
-              <!-- Info row absolutely positioned below thumbnail -->
-              <div class="thumbnail-info-row" style="position: absolute; left: 0; right: 0; bottom: -1.6em; width: 100%; text-align: center;">
-                <div v-if="props.selectedSort === 'search_likeness' && img.likeness_score !== undefined" class="likeness-score">
-                  Likeness: {{ img.likeness_score.toFixed(2) }}
-                </div>
-                <div v-else-if="props.selectedSort.includes('created_at') && img.created_at" class="date-label">
-                  {{ new Date(img.created_at).toLocaleString() }}
-                </div>
-                <div v-else style="height: 1.2em;">asdasasdasd</div>
-              </div>
+            <!-- Top spacer for virtual scroll alignment -->
+            <div
+              v-if="topSpacerHeight > 0"
+              :style="{
+                gridColumn: '1 / -1',
+                height: `${topSpacerHeight}px`,
+                border: '0px solid blue',
+              }"
+            ></div>
+            <!-- Drag overlay -->
+            <div v-if="dragOverlayVisible" class="drag-overlay">
+              <div class="drag-overlay-message">{{ dragOverlayMessage }}</div>
             </div>
-          </v-card>
-          <div v-if="isImageSelected(img.id)" class="selection-overlay"></div>
+            <div
+              v-for="img in gridImagesToRender"
+              :key="img.id ? `img-${img.id}` : `placeholder-${img.idx}`"
+              class="image-card"
+              :draggable="isImageSelected(img.id)"
+              @dragstart="onImageDragStart(img, img.idx, $event)"
+              @click="handleImageCardClick(img, img.idx, $event)"
+            >
+              <v-card
+                class="thumbnail-card"
+                @click.stop="handleThumbnailClick(img, img.idx, $event)"
+              >
+                <div class="thumbnail-container">
+                  <template v-if="img.thumbnail">
+                    <img :src="img.thumbnail" class="thumbnail-img" />
+                    <div
+                      class="thumbnail-index-overlay"
+                      :style="{
+                        position: 'absolute',
+                        top: '6px',
+                        left: '10px',
+                        color: 'red',
+                        fontWeight: 'bold',
+                        fontSize: '1.2em',
+                        textShadow: '0 0 2px #fff',
+                        zIndex: 20,
+                      }"
+                    >
+                      {{ img.idx }}
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div
+                      class="thumbnail-placeholder"
+                      :style="{
+                        width: '100%',
+                        height: '100%',
+                        background: '#e0e0e0',
+                        borderRadius: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '1.5em',
+                        color: '#aaa',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                      }"
+                    >
+                      <span>
+                        Image #{{ String(img.idx).padStart(5, "0") }}
+                      </span>
+                    </div>
+                  </template>
+                  <!-- Score overlay -->
+                  <div v-if="props.showStars" class="star-overlay">
+                    <v-icon
+                      v-for="n in 5"
+                      :key="n"
+                      large
+                      :color="
+                        n <= (img.score || 0) ? 'orange' : 'grey darken-2'
+                      "
+                      style="cursor: pointer"
+                      @click.stop="setScore(img, n)"
+                      >mdi-star</v-icon
+                    >
+                  </div>
+                  <!-- Info row absolutely positioned below thumbnail -->
+                  <div
+                    class="thumbnail-info-row"
+                    style="
+                      position: absolute;
+                      left: 0;
+                      right: 0;
+                      bottom: -1.6em;
+                      width: 100%;
+                      text-align: center;
+                    "
+                  >
+                    <div
+                      v-if="
+                        props.selectedSort === 'search_likeness' &&
+                        img.likeness_score !== undefined
+                      "
+                      class="likeness-score"
+                    >
+                      Likeness: {{ img.likeness_score.toFixed(2) }}
+                    </div>
+                    <div
+                      v-else-if="
+                        props.selectedSort.includes('created_at') &&
+                        img.created_at
+                      "
+                      class="date-label"
+                    >
+                      {{ new Date(img.created_at).toLocaleString() }}
+                    </div>
+                    <div v-else style="height: 1.2em">asdasasdasd</div>
+                  </div>
+                </div>
+              </v-card>
+              <div
+                v-if="isImageSelected(img.id)"
+                class="selection-overlay"
+              ></div>
+            </div>
+            <!-- Bottom spacer -->
+            <div
+              v-if="bottomSpacerHeight > 0"
+              :style="{
+                gridColumn: '1 / -1',
+                height: `${bottomSpacerHeight}px`,
+                border: '0px solid green',
+              }"
+            ></div>
+          </div>
         </div>
-        <!-- Bottom spacer -->
-        <div
-          v-if="bottomSpacerHeight > 0"
-          :style="{
-            gridColumn: '1 / -1',
-            height: `${bottomSpacerHeight}px`,
-            border: '0px solid green',
-          }"
-        ></div>
       </div>
+    </div>
+    <div
+      style="position: absolute; left: 0; bottom: 0; width: 100%; z-index: 100"
+    >
+      <SelectionBar
+        v-if="selectedImageIds.length > 0"
+        :selectedCount="selectedImageIds.length"
+        :selectedCharacter="String(props.selectedCharacter)"
+        :selectedSet="String(props.selectedSet)"
+        :selectedGroupName="selectedGroupName"
+        :visible="selectedImageIds.length > 0"
+        @clear-selection="clearSelection"
+        @remove-from-group="removeFromGroup"
+        @delete-selected="deleteSelected"
+      />
     </div>
   </div>
 </template>
@@ -639,7 +674,9 @@ async function fetchTotalImageCount() {
       images = data.pictures || [];
     } else if (props.searchQuery && props.searchQuery.trim()) {
       // Use /search endpoint for text search
-      const url = `${props.backendUrl}/search?query=${encodeURIComponent(props.searchQuery.trim())}&top_n=10000`;
+      const url = `${props.backendUrl}/search?query=${encodeURIComponent(
+        props.searchQuery.trim()
+      )}&top_n=10000`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch search results");
       images = await res.json();
@@ -801,7 +838,9 @@ async function fetchThumbnailsBatch(start, end) {
       // If not enough images, fetch missing ones
       if (images.length < end - start) {
         const params = buildPictureIdsQueryParams();
-        const url = `${props.backendUrl}/pictures?offset=${start}&limit=${end - start}&${params}`;
+        const url = `${props.backendUrl}/pictures?offset=${start}&limit=${
+          end - start
+        }&${params}`;
         const res = await fetch(url);
         if (res.ok) {
           const fetched = await res.json();
@@ -1129,7 +1168,9 @@ async function exportCurrentViewToZip() {
     props.selectedSet !== "__all__" &&
     props.selectedSet !== "__unassigned__"
   ) {
-    url += params ? `&set_id=${props.selectedSet}` : `?set_id=${props.selectedSet}`;
+    url += params
+      ? `&set_id=${props.selectedSet}`
+      : `?set_id=${props.selectedSet}`;
   }
   try {
     const res = await fetch(url, { method: "GET" });

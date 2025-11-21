@@ -1,7 +1,4 @@
-/* Make horizontal scrollbar more visible */ .likeness-row::-webkit-scrollbar {
-height: 12px; } .likeness-row::-webkit-scrollbar-thumb { background: #888;
-border-radius: 6px; } .likeness-row::-webkit-scrollbar-track { background: #eee;
-border-radius: 6px; }
+<!--- TEMPLATE CODE GOES BELOW THE FOLLOWING LINE -->
 <template>
   <Toolbox>
     <div style="margin-bottom: 24px">
@@ -34,10 +31,7 @@ border-radius: 6px; }
       >
         <template #item="{ element, index }">
           <div class="criteria-item">
-            <v-icon
-              small
-              class="criteria-handle"
-              style="margin-right: 8px; vertical-align: middle"
+            <v-icon small class="criteria-handle" style="vertical-align: middle"
               >mdi-drag</v-icon
             >
             <span>{{ element.label }}</span>
@@ -63,98 +57,152 @@ border-radius: 6px; }
     @close="closeOverlay"
     @apply-score="applyScore"
   />
-  <div class="likeness-rows" ref="likenessRowsContainer">
-    <div
-      v-if="loggedVisibleRows.length === 0 && !loading"
-      class="empty-message"
-    >
-      <span>No likeness groups found (visibleRows is empty).</span>
-    </div>
-    <div v-else>
+  <div style="position: relative; min-height: 100%; width: 100%">
+    <div class="likeness-rows" ref="likenessRowsContainer">
       <div
-        v-for="(row, rowIdx) in loggedVisibleRows"
-        :key="rowIdx"
-        class="likeness-row"
+        v-if="loggedVisibleRows.length === 0 && !loading"
+        class="empty-message"
       >
-        <div v-for="img in row" :key="img.id" class="likeness-image-card">
-          <div class="likeness-img-wrapper">
-            <img
-              :src="`${backendUrl}/pictures/${img.id}`"
-              class="likeness-img"
-              :style="{
-                width: `${thumbnailSize}px`,
-                height: `${thumbnailSize}px`,
-              }"
-              @click="openOverlay(img, row)"
-            />
-            <div v-if="props.showStars" class="star-overlay">
+        <span>No likeness groups found (visibleRows is empty).</span>
+      </div>
+      <div v-else>
+        <div
+          v-for="(row, rowIdx) in loggedVisibleRows"
+          :key="rowIdx"
+          class="likeness-row"
+        >
+          <div
+            v-for="img in row"
+            :key="img.id"
+            class="likeness-image-card"
+            :class="{ selected: selectedImageIds.includes(img.id) }"
+            @click="onThumbnailClick(img, row, $event)"
+            :draggable="selectedImageIds.includes(img.id)"
+            @dragstart="onImageDragStart(img, $event)"
+            style="position: relative"
+          >
+            <div
+              v-if="selectedImageIds.includes(img.id)"
+              class="selection-overlay"
+            ></div>
+            <div class="likeness-img-wrapper">
+              <img
+                :src="`${backendUrl}/pictures/${img.id}`"
+                class="likeness-img"
+                :style="{
+                  width: `${thumbnailSize}px`,
+                  height: `${thumbnailSize}px`,
+                }"
+                @click.stop="onThumbnailClick(img, row, $event)"
+              />
+              <div
+                class="metadata-overlay"
+                v-if="
+                  img.width &&
+                  img.height &&
+                  img.sharpness !== undefined &&
+                  img.noise_level !== undefined
+                "
+              >
+                <span class="meta-icon">
+                  <v-icon small>mdi-image</v-icon>
+                  {{ img.width }}×{{ img.height }}
+                </span>
+                <span class="meta-icon">
+                  Sharpness:
+                  {{
+                    typeof img.sharpness === "number"
+                      ? img.sharpness.toFixed(2)
+                      : img.sharpness
+                  }}
+                </span>
+                <span class="meta-icon">
+                  Noise:
+                  {{
+                    typeof img.noise_level === "number"
+                      ? img.noise_level.toFixed(2)
+                      : img.noise_level
+                  }}
+                </span>
+              </div>
+            </div>
+            <!-- Removed text metrics, now shown as icon overlay -->
+            <div
+              v-if="props.showStars"
+              class="star-overlay"
+              style="margin-top: 2px"
+            >
               <v-icon
                 v-for="n in 5"
                 :key="n"
-                large
+                :large="true"
                 :color="n <= (img.score || 0) ? 'orange' : 'grey darken-2'"
                 style="cursor: pointer"
                 @click.stop="setScore(img, n)"
                 >mdi-star</v-icon
               >
             </div>
-            <div
-              class="metadata-overlay"
-              v-if="
-                img.width &&
-                img.height &&
-                img.sharpness !== undefined &&
-                img.noise_level !== undefined
-              "
-            >
-              <span class="meta-icon">
-                <v-icon small>mdi-image</v-icon>
-                {{ img.width }}×{{ img.height }}
-              </span>
-              <span class="meta-icon">
-                Sharpness:
-                {{
-                  typeof img.sharpness === "number"
-                    ? img.sharpness.toFixed(2)
-                    : img.sharpness
-                }}
-              </span>
-              <span class="meta-icon">
-                Noise:
-                {{
-                  typeof img.noise_level === "number"
-                    ? img.noise_level.toFixed(2)
-                    : img.noise_level
-                }}
-              </span>
-            </div>
-          </div>
-          <!-- Removed text metrics, now shown as icon overlay -->
-          <div
-            v-if="props.showStars"
-            class="star-overlay"
-            style="margin-top: 2px"
-          >
-            <v-icon
-              v-for="n in 5"
-              :key="n"
-              :large="true"
-              :color="n <= (img.score || 0) ? 'orange' : 'grey darken-2'"
-              style="cursor: pointer"
-              @click.stop="setScore(img, n)"
-              >mdi-star</v-icon
-            >
           </div>
         </div>
       </div>
+      <div v-if="loading" class="loading-indicator">Loading...</div>
     </div>
-    <div v-if="loading" class="loading-indicator">Loading...</div>
+    <div
+      style="position: absolute; left: 0; bottom: 0; width: 100%; z-index: 100"
+    >
+      <SelectionBar
+        v-if="selectedImageIds.length > 0"
+        :selectedCount="selectedImageIds.length"
+        :selectedCharacter="null"
+        :selectedSet="null"
+        :selectedGroupName="null"
+        :visible="selectedImageIds.length > 0"
+        @clear-selection="clearSelection"
+        @remove-from-group="() => {}"
+        @delete-selected="() => {}"
+      />
+    </div>
   </div>
 </template>
-
+<!--- TEMPLATE CODE GOES ABOVE THE PREVIOUS LINE -->
+<!--- JAVASCRIPT CODE GOES BELOW THE FOLLOWING LINE -->
 <script setup>
+// Selection and drag logic
+const selectedImageIds = ref([]);
+function handleImageCardClick(img, event) {
+  if (event.ctrlKey || event.metaKey) {
+    if (selectedImageIds.value.includes(img.id)) {
+      selectedImageIds.value = selectedImageIds.value.filter(
+        (id) => id !== img.id
+      );
+    } else {
+      selectedImageIds.value.push(img.id);
+    }
+  } else {
+    if (
+      selectedImageIds.value.length === 1 &&
+      selectedImageIds.value[0] === img.id
+    ) {
+      selectedImageIds.value = [];
+    } else {
+      selectedImageIds.value = [img.id];
+    }
+  }
+}
+function onImageDragStart(img, event) {
+  if (!selectedImageIds.value.includes(img.id)) {
+    event.preventDefault();
+    return;
+  }
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData(
+    "application/json",
+    JSON.stringify({ imageIds: selectedImageIds.value })
+  );
+}
 import Toolbox from "./Toolbox.vue";
 import Draggable from "vuedraggable";
+import SelectionBar from "./SelectionBar.vue";
 
 import { reactive, watch, watchEffect } from "vue";
 import { ref, onMounted, onBeforeUnmount, computed } from "vue";
@@ -356,9 +404,45 @@ const loggedVisibleRows = computed(() => {
   console.log("[LikenessRows.vue] Rendering visibleRows:", visibleRows.value);
   return visibleRows.value;
 });
-</script>
 
+function onThumbnailClick(img, row, event) {
+  // Always prevent default and stop propagation to avoid double triggers
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.ctrlKey || event.shiftKey || event.metaKey) {
+    handleImageCardClick(img, event);
+    return;
+  }
+  openOverlay(img, row);
+}
+
+// PATCH: JAVASCRIPT CODE GOES BELOW THE FOLLOWING LINE
+function clearSelection() {
+  selectedImageIds.value = [];
+}
+
+// ESC key handler to clear selection
+onMounted(() => {
+  window.addEventListener("keydown", onKeyDown);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKeyDown);
+});
+function onKeyDown(e) {
+  if (e.key === "Escape") {
+    clearSelection();
+  }
+}
+</script>
+<!--- JAVASCRIPT CODE GOES ABOVE THE PREVIOUS LINE --->
+<!--- CSS CODE GOES BELOW THE FOLLOWING LINE -->
 <style scoped>
+.likeness-image-card.selected {
+  /* Remove border and shadow for selection, use overlay instead */
+  box-shadow: none;
+  border: none;
+  z-index: auto;
+}
 /* Draggable criteria styling */
 .criteria-item {
   display: flex;
@@ -406,7 +490,7 @@ const loggedVisibleRows = computed(() => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   min-width: 128px;
   box-sizing: border-box;
-  margin-right: 8px;
+  margin-right: 0px;
 }
 .likeness-img {
   object-fit: cover;
@@ -482,4 +566,12 @@ const loggedVisibleRows = computed(() => {
   gap: 2px;
   font-size: 0.8em;
 }
+.selection-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(25, 118, 210, 0.62);
+  pointer-events: none;
+  z-index: 2;
+}
 </style>
+<!--- CSS CODE GOES ABOVE THE PREVIOUS LINE -->
