@@ -833,11 +833,16 @@ class PictureTagger:
                         ret, frame = cap.read()
                         if not ret or frame is None:
                             continue
-                        # Try to crop face from this frame
-                        face_crop = PictureUtils.load_and_crop_face_bbox(
+                        face_crop = PictureUtils.crop_face_from_frame(
                             frame, picture.face_bbox
                         )
                         if face_crop is not None:
+                            if isinstance(face_crop, np.ndarray):
+                                from PIL import Image
+
+                                face_crop = Image.fromarray(
+                                    cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
+                                )
                             img_input = (
                                 self._clip_preprocess(face_crop)
                                 .unsqueeze(0)
@@ -873,9 +878,6 @@ class PictureTagger:
                     or ("not compatible" in str(e))
                     or ("CUDA error" in str(e))
                 ):
-                    logger.warning(
-                        f"Facial feature extraction failed on CUDA: {e}. Falling back to CPU."
-                    )
                     self._clip_device = "cpu"
                     self._clip_model = self._clip_model.to(self._clip_device)
                     try:
@@ -891,17 +893,10 @@ class PictureTagger:
                                     .cpu()
                                     .numpy()[0]
                                 )
-                    except Exception as e2:
-                        logger.error(
-                            f"Failed to generate facial features on CPU for {getattr(picture, 'file_path', None)}: {e2}"
-                        )
+                    except Exception:
                         facial_features = None
                 else:
-                    logger.error(
-                        f"Failed to generate facial features for {getattr(picture, 'file_path', None)}: {e}"
-                    )
                     facial_features = None
-
         return facial_features
 
     def correct_tags_with_florence(self, florence_desc, current_tags=None):

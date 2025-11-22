@@ -249,6 +249,22 @@ class Pictures:
             logger.debug("[LIKENESS] Starting iteration...")
             pending_pairs = []
 
+            total_pending = self._db.execute_read(
+                lambda conn: conn.execute(
+                    "SELECT COUNT(*) FROM likeness_work_queue"
+                ).fetchone()
+            )[0]
+            logger.info(
+                "Got %d pending likeness pairs to process from work queue."
+                % (total_pending)
+            )
+            if total_pending == 0:
+                logger.info(
+                    "[LIKENESS] No pending pairs, sleeping and skipping any deletion..."
+                )
+                time.sleep(interval)
+                continue
+
             self._db.submit_write(
                 lambda conn: conn.execute(
                     """
@@ -279,7 +295,7 @@ class Pictures:
                     "SELECT COUNT(*) FROM likeness_work_queue"
                 ).fetchone()
             )[0]
-            logger.debug(
+            logger.info(
                 f"[LIKENESS] Fetched {len(rows)} rows from likeness_work_queue out of {total_pending}."
             )
             # Batch fetch all required pictures
@@ -295,6 +311,9 @@ class Pictures:
                         tuple(all_ids),
                     ).fetchall()
                 )
+                logger.info(
+                    "Got %d pictures for likeness calculation." % (len(pic_rows))
+                )
                 pic_dict = {
                     row["id"]
                     if isinstance(row, dict)
@@ -308,11 +327,19 @@ class Pictures:
                     if not pic_a or not pic_b:
                         continue
                     # Only process if both have facial features
+                    if not pic_a.facial_features:
+                        logger.warning(
+                            f"[LIKENESS] Picture id={pic_a_id} missing facial features, skipping pair."
+                        )
+                    if not pic_b.facial_features:
+                        logger.warning(
+                            f"[LIKENESS] Picture id={pic_b_id} missing facial features, skipping pair."
+                        )
                     if not pic_a.facial_features or not pic_b.facial_features:
                         continue
                     pending_pairs.append((pic_a_id, pic_b_id, pic_a, pic_b))
 
-            logger.debug(
+            logger.info(
                 "[LIKENESS] Got %d pending likeness pairs to process from work queue."
                 % (len(pending_pairs))
             )
@@ -455,7 +482,7 @@ class Pictures:
                     % (time.time() - time_after_calculate, len(missing_facial_features))
                 )
                 if missing_facial_features:
-                    logger.debug(
+                    logger.info(
                         f"Generating facial features for {len(missing_facial_features)} pictures."
                     )
                     features_updated = self._generate_facial_features(
@@ -464,6 +491,78 @@ class Pictures:
                     self._update_attributes(
                         missing_facial_features, ["facial_features"]
                     )
+                    # Add new likeness work queue entries for all pairs involving these pictures
+                    new_ids = [
+                        pic.id
+                        for pic in missing_facial_features
+                        if pic.facial_features is not None
+                    ]
+                    logger.info(
+                        "Adding %d new pictures to likeness work queue."
+                        % (len(new_ids))
+                    )
+                    if new_ids:
+
+                        def insert_likeness_work_queue(conn, new_ids):
+                            cursor = conn.cursor()
+                            placeholders = ",".join(["?"] * len(new_ids))
+                            other_rows = cursor.execute(
+                                f"SELECT id FROM pictures WHERE facial_features IS NOT NULL AND facial_features !='' AND id NOT IN ({placeholders})",
+                                tuple(new_ids),
+                            ).fetchall()
+                            other_ids = [
+                                row[0] if isinstance(row, tuple) else row["id"]
+                                for row in other_rows
+                            ]
+                            # Always enforce sorted order for all pairs
+                            pairs = set()
+                            for new_id in new_ids:
+                                for other_id in other_ids:
+                                    a, b = (new_id, other_id)
+                                    if a != b:
+                                        pair = (min(a, b), max(a, b))
+                                        pairs.add(pair)
+                            # Also insert all pairs among new_ids themselves
+                            for i in range(len(new_ids)):
+                                for j in range(i + 1, len(new_ids)):
+                                    a, b = new_ids[i], new_ids[j]
+                                    pair = (min(a, b), max(a, b))
+                                    pairs.add(pair)
+                            logger.info(
+                                "Adding %d new picture pairs to likeness work queue."
+                                % (len(pairs))
+                            )
+                            # Log a sample of the pairs and their IDs
+                            sample_pairs = list(pairs)[:10]
+                            logger.info(f"Sample pairs to insert: {sample_pairs}")
+                            if pairs:
+                                for item in pairs:
+                                    logger.debug(f"Pair to insert: {item}")
+                                    # First delete any existing entries for these pairs to avoid duplicates
+                                    cursor.execute(
+                                        "DELETE FROM picture_likeness WHERE (picture_id_a = ? AND picture_id_b = ?)",
+                                        (item[0], item[1]),
+                                    )
+                                logger.info(
+                                    "Deleted existing entries for new pairs to avoid duplicates."
+                                )
+                                cursor.executemany(
+                                    "INSERT OR IGNORE INTO likeness_work_queue (picture_id_a, picture_id_b) VALUES (?, ?)",
+                                    list(pairs),
+                                )
+                                conn.commit()
+                                # Log the number of rows in likeness_work_queue after insertion
+                                cursor.execute(
+                                    "SELECT COUNT(*) FROM likeness_work_queue"
+                                )
+                                count = cursor.fetchone()[0]
+                                logger.info(
+                                    f"likeness_work_queue now contains {count} rows after insertion."
+                                )
+
+                        self._db.submit_write(
+                            insert_likeness_work_queue, new_ids, priority=DBPriority.LOW
+                        ).result()
                     data_updated |= features_updated
 
                 timing = time.time() - start
@@ -1090,7 +1189,7 @@ class Pictures:
         if not hasattr(self, "_insightface_app"):
             logger.debug("initialising InsightFace with CPU only (ctx_id=-1)")
             self._insightface_app = FaceAnalysis()
-            self._insightface_app.prepare(ctx_id=-1)  # -1 = CPU only
+            self._insightface_app.prepare(ctx_id=-1, det_thresh=0.25)  # -1 = CPU only
 
         self._last_time_insightface_was_needed = time.time()
 
@@ -1118,12 +1217,9 @@ class Pictures:
                         logger.warning(f"No frames found in video: {file_path}")
                         cap.release()
                     else:
-                        frame_indices = [0]
-                        if frame_count > 2:
-                            frame_indices.append(frame_count // 2)
-                        if frame_count > 1:
-                            frame_indices.append(frame_count - 1)
-                        for idx in frame_indices:
+                        step = max(1, frame_count // 10)
+                        found = False
+                        for idx in range(0, frame_count, step):
                             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
                             ret, frame = cap.read()
                             if not ret or frame is None:
@@ -1131,10 +1227,39 @@ class Pictures:
                                     f"Could not read frame {idx} from video: {file_path}"
                                 )
                                 continue
-                            frame_faces = self._insightface_app.get(frame)
+                            # Upscale frame by 2x using LANCZOS
+                            upscaled = cv2.resize(
+                                frame,
+                                (frame.shape[1] * 2, frame.shape[0] * 2),
+                                interpolation=cv2.INTER_LANCZOS4,
+                            )
+                            frame_faces = self._insightface_app.get(upscaled)
                             if frame_faces:
-                                faces.extend(frame_faces)
+                                # Use the largest face in this frame
+                                def face_area(f):
+                                    x1, y1, x2, y2 = f.bbox
+                                    return max(0, x2 - x1) * max(0, y2 - y1)
+
+                                face = max(frame_faces, key=face_area)
+                                # Scale bbox back to original frame coordinates
+                                x1, y1, x2, y2 = [float(v) / 2.0 for v in face.bbox]
+                                w = x2 - x1
+                                h = y2 - y1
+                                # Sensible size threshold (e.g., 32x32 in original scale)
+                                if w >= 32 and h >= 32:
+                                    # Store the scaled-down bbox in the face object for downstream use
+                                    face.bbox = [x1, y1, x2, y2]
+                                    faces = [face]
+                                    found = True
+                                    logger.info(
+                                        f"Selected frame {idx} for face bbox in video {file_path} (w={w}, h={h}) after upscaling"
+                                    )
+                                    break
                         cap.release()
+                        if not found:
+                            logger.warning(
+                                f"No suitable face found in any sampled frame for video: {file_path}"
+                            )
                 else:
                     logger.warning(
                         f"Unsupported file extension for facial features: {file_path}"
@@ -1157,6 +1282,13 @@ class Pictures:
 
                 face = max(faces, key=face_area)
                 x1, y1, x2, y2 = [float(v) for v in face.bbox]
+
+                # Expand bbox by 10% on all sides
+                x1 -= 0.1 * (x2 - x1)
+                y1 -= 0.1 * (y2 - y1)
+                x2 += 0.1 * (x2 - x1)
+                y2 += 0.1 * (y2 - y1)
+
                 # Round width and height to nearest multiple of 64
                 w = x2 - x1
                 h = y2 - y1
@@ -1173,6 +1305,7 @@ class Pictures:
                 y1_new = cy - h_rounded / 2.0
                 x2_new = cx + w_rounded / 2.0
                 y2_new = cy + h_rounded / 2.0
+
                 # Clamp to image edges
                 img_h, img_w = None, None
                 if ext in [".jpg", ".jpeg", ".png", ".webp", ".bmp"]:
@@ -1679,6 +1812,7 @@ class Pictures:
             try:
                 features = picture_tagger.generate_facial_features(pic)
                 if features is not None:
+                    logger.info("Got facial features for picture %s", pic.id)
                     pic.facial_features = features
                     updated += 1
                 else:

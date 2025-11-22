@@ -36,10 +36,14 @@ const selectedSort = ref("");
 const searchQuery = ref("");
 const showStars = ref(true);
 
+
 const chatWindowRef = ref(null);
 
 const thumbnailSize = ref(256);
 const sidebarVisible = ref(true);
+
+// --- Media Type Filter State ---
+const mediaTypeFilter = ref('all'); // 'all', 'images', 'videos'
 
 // --- Chat Overlay State ---
 const chatOpen = ref(false);
@@ -402,7 +406,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleGlobalKeydown);
 });
 
-defineExpose({ currentView, sidebarVisible });
+defineExpose({ currentView, sidebarVisible, mediaTypeFilter });
 </script>
 <template src="./App.template.html"></template>
 <style scoped src="./App.css"></style>

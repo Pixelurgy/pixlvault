@@ -158,6 +158,7 @@
 import { computed, onMounted, ref, watch, nextTick, onUnmounted } from "vue";
 import {
   isSupportedMediaFile,
+  isSupportedImageFile,
   dataTransferHasSupportedMedia,
   isSupportedVideoFile,
   getOverlayFormat,
@@ -314,6 +315,7 @@ const props = defineProps({
   selectedSort: String,
   showStars: Boolean,
   gridVersion: { type: Number, default: 0 },
+  mediaTypeFilter: { type: String, default: 'all' },
 });
 
 watch(
@@ -619,6 +621,12 @@ function buildPictureIdsQueryParams() {
   if (props.selectedSort && props.selectedSort.trim()) {
     params.append("sort", props.selectedSort.trim());
   }
+  // Add format filter for backend media type filtering
+  if (props.mediaTypeFilter === 'images') {
+    params.append('format', 'PNG');
+  } else if (props.mediaTypeFilter === 'videos') {
+    params.append('format', 'MP4');
+  }
   return params.toString();
 }
 
@@ -685,11 +693,11 @@ watch(
     () => props.selectedSet,
     () => props.searchQuery,
     () => props.selectedSort,
+    () => props.mediaTypeFilter,
   ],
   () => {
     // Reset loaded ranges and thumbnails when filters change
     loadedRanges.value = [];
-    console.log("Selected set: ", props.selectedSet);
     allGridImages.value = [];
     selectedImageIds.value = [];
     lastSelectedIndex = null;
@@ -749,20 +757,30 @@ const allGridImages = ref([]);
 
 const gridImagesToRender = computed(() => {
   // Only render a window of placeholders/images for performance
-  console.log(
-    "Rendering images from",
-    renderStart.value,
-    "to",
-    renderEnd.value
-  );
-  // Always fill allGridImages with placeholders up to totalImageCount
   if (allGridImages.value.length < totalImageCount.value) {
     for (let i = allGridImages.value.length; i < totalImageCount.value; i++) {
       allGridImages.value[i] = { id: null, thumbnail: null, idx: i };
     }
   }
-  // Slice the buffer window and assign a unique key for each item
-  return allGridImages.value.slice(renderStart.value, renderEnd.value);
+  console.log("Filtering images for mediaTypeFilter:", props.mediaTypeFilter);
+  // Accept both 'all' and 'both' as showing all media
+  let filtered = allGridImages.value;
+  if (props.mediaTypeFilter === 'images') {
+    filtered = filtered.filter(img => {
+      if (!img) return false;
+      const name = img.filename || img.name || img.id || '';
+      const format = (img.format || '').toLowerCase();
+      return isSupportedImageFile(name) || isSupportedImageFile(format);
+    });
+  } else if (props.mediaTypeFilter === 'videos') {
+    filtered = filtered.filter(img => {
+      if (!img) return false;
+      const name = img.filename || img.name || img.id || '';
+      const format = (img.format || '').toLowerCase();
+      return isSupportedVideoFile(name) || isSupportedVideoFile(format);
+    });
+  } // else 'all' or 'both' shows everything
+  return filtered.slice(renderStart.value, renderEnd.value);
 });
 
 // Batch fetch metadata (including thumbnail) for visible range

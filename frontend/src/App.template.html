@@ -49,6 +49,22 @@
         >
           <v-icon>{{ showStars ? "mdi-star" : "mdi-star-outline" }}</v-icon>
         </v-btn>
+        <v-btn-toggle
+          v-model="mediaTypeFilter"
+          mandatory
+          class="media-type-toggle"
+          dense
+        >
+          <v-btn value="all" title="Show all media">
+            <v-icon>mdi-image-multiple</v-icon>
+          </v-btn>
+          <v-btn value="images" title="Show images only">
+            <v-icon>mdi-image</v-icon>
+          </v-btn>
+          <v-btn value="videos" title="Show videos only">
+            <v-icon>mdi-video</v-icon>
+          </v-btn>
+        </v-btn-toggle>
         <v-btn
           icon
           @click="settingsDialog = true"
@@ -275,6 +291,7 @@
               :thumbnailSize="thumbnailSize"
               :showStars="showStars"
               :storedLikenessThreshold="config.likeness_threshold"
+              :mediaTypeFilter="mediaTypeFilter"
               @update:likeness-threshold="val => config.likeness_threshold = val"
             />
           </template>
@@ -290,6 +307,7 @@
               :selectedSort="selectedSort"
               :showStars="showStars"
               :gridVersion="gridVersion"
+              :mediaTypeFilter="mediaTypeFilter"
               @refresh-sidebar="refreshSidebar"
             />
           </template>

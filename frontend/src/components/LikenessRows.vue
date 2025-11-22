@@ -31,9 +31,7 @@
       >
         <template #item="{ element, index }">
           <div class="criteria-item">
-            <v-icon small class="criteria-handle" style="vertical-align: middle"
-              >mdi-drag</v-icon
-            >
+            <v-icon small class="criteria-handle" style="vertical-align: middle">mdi-drag</v-icon>
             <span>{{ element.label }}</span>
             <span
               class="criteria-index"
@@ -89,7 +87,26 @@
               class="selection-overlay"
             ></div>
             <div class="likeness-img-wrapper">
+              <video
+                v-if="isVideo(img)"
+                class="likeness-img"
+                :style="{
+                  width: `${thumbnailSize}px`,
+                  height: `${thumbnailSize}px`,
+                }"
+                :ref="el => setVideoRef(img.id, el)"
+                muted
+                loop
+                playsinline
+                @mouseenter="playVideo(img.id)"
+                @mouseleave="pauseVideo(img.id)"
+                @click.stop="onThumbnailClick(img, row, $event)"
+              >
+                <source :src="`${backendUrl}/pictures/${img.id}`" type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
               <img
+                v-else
                 :src="`${backendUrl}/pictures/${img.id}`"
                 class="likeness-img"
                 :style="{
@@ -208,18 +225,22 @@ import Draggable from "vuedraggable";
 import SelectionBar from "./SelectionBar.vue";
 
 import { reactive, watch, watchEffect } from "vue";
+
 import { ref, onMounted, onBeforeUnmount, computed } from "vue";
 import { defineProps, defineEmits, defineExpose } from "vue";
 import ImageOverlay from "./ImageOverlay.vue";
+import { isSupportedImageFile, isSupportedVideoFile } from "../utils/media.js";
 
 const props = defineProps({
   backendUrl: String,
   thumbnailSize: Number,
   showStars: Boolean,
   storedLikenessThreshold: Number,
+  mediaTypeFilter: { type: String, default: 'all' },
 });
 
 const likenessThreshold = ref(props.storedLikenessThreshold ?? 0.97);
+
 
 watch(
   () => props.storedLikenessThreshold,
@@ -230,8 +251,28 @@ watch(
   }
 );
 
+// Watch for changes to mediaTypeFilter and refresh rows
+watch(
+  () => props.mediaTypeFilter,
+  (val, oldVal) => {
+    if (val !== oldVal) {
+      fetchLikenessRows();
+    }
+  }
+);
+
 const showThumbLabel = ref(false);
 let lastCommittedThreshold = likenessThreshold.value;
+
+// Helper to robustly detect video files
+function isVideo(img) {
+  if (!img) return false;
+  
+  let result = isSupportedVideoFile(img.id);
+  console.log("Is video check for img id:", img.id, "Result:", result);
+  return result;
+}
+
 
 function onSliderStart() {
   showThumbLabel.value = true;
@@ -261,6 +302,24 @@ watchEffect(likenessThreshold, (newVal) => {
   emit("update:likeness-threshold", newVal);
 });
 
+// Video refs for hover play/pause
+const videoRefs = {};
+function setVideoRef(id, el) {
+  if (el) videoRefs[id] = el;
+}
+function playVideo(id) {
+  const v = videoRefs[id];
+  if (v) v.play();
+}
+function pauseVideo(id) {
+  const v = videoRefs[id];
+  if (v) {
+    v.pause();
+    v.currentTime = 0;
+  }
+}
+
+
 // Overlay state
 const overlayOpen = ref(false);
 const overlayImage = ref(null);
@@ -283,6 +342,32 @@ const pageSize = 10;
 let pageOffset = 0;
 const likenessRowsContainer = ref(null);
 const allRows = ref([]);
+
+// Filtering logic moved here so pagination operates on filtered rows
+function getFilteredRows(rows) {
+  console.log(`[LikenessRows.vue] getFilteredRows called with filter: ${props.mediaTypeFilter}`);
+  if (props.mediaTypeFilter === 'images') {
+    return rows
+      .map(row => row.filter(img => {
+        if (!img) return false;
+        const name = img.filename || img.name || img.id || '';
+        const format = (img.format || '').toLowerCase();
+        return isSupportedImageFile(name) || isSupportedImageFile(format);
+      }))
+      .filter(row => row.length > 0);
+  } else if (props.mediaTypeFilter === 'videos') {
+    return rows
+      .map(row => row.filter(img => {
+        if (!img) return false;
+        const name = img.filename || img.name || img.id || '';
+        const format = (img.format || '').toLowerCase();
+        return isSupportedVideoFile(name) || isSupportedVideoFile(format);
+      }))
+      .filter(row => row.length > 0);
+  }
+  // else 'all' or 'both' shows everything
+  return rows;
+}
 
 // Track toggle state for each image in each row
 const toggleStates = reactive({});
@@ -322,7 +407,44 @@ async function fetchLikenessRows() {
       throw new Error("Failed to fetch likeness stacks");
     }
     const data = await res.json();
-    console.log("[LikenessRows.vue] Response:", data);
+    // Instrumentation: log first 5 stacks with .mp4 files
+    let mp4StackCount = 0;
+    let mp4PictureCount = 0;
+    const mp4Stacks = [];
+    if (data && Array.isArray(data.stacks)) {
+      for (const stack of data.stacks) {
+        if (Array.isArray(stack.pictures)) {
+          const hasMp4 = stack.pictures.some(pic => {
+            const id = pic.id || '';
+            const filename = pic.filename || '';
+            return id.endsWith('.mp4') || filename.endsWith('.mp4');
+          });
+          if (hasMp4) {
+            mp4StackCount++;
+            const mp4Pics = stack.pictures.filter(pic => {
+              const id = pic.id || '';
+              const filename = pic.filename || '';
+              return id.endsWith('.mp4') || filename.endsWith('.mp4');
+            });
+            mp4PictureCount += mp4Pics.length;
+            if (mp4Stacks.length < 5) {
+              mp4Stacks.push({
+                stackIdx: mp4StackCount,
+                pictureIds: mp4Pics.map(pic => pic.id),
+                filenames: mp4Pics.map(pic => pic.filename),
+                allIds: stack.pictures.map(pic => pic.id),
+                allFilenames: stack.pictures.map(pic => pic.filename)
+              });
+            }
+          }
+        }
+      }
+    }
+    console.log(`[LikenessRows.vue] Stacks with .mp4: ${mp4StackCount}, .mp4 pictures in stacks: ${mp4PictureCount}`);
+    if (mp4Stacks.length > 0) {
+      console.log('[LikenessRows.vue] Example stacks with .mp4:', mp4Stacks);
+    }
+    console.log(`[LikenessRows.vue] Received ${data?.stacks?.length ?? 0} stacks from backend.`);
     const rows = [];
     if (data && Array.isArray(data.stacks)) {
       for (const stack of data.stacks) {
@@ -330,7 +452,7 @@ async function fetchLikenessRows() {
       }
     }
     console.log(`[LikenessRows.vue] Parsed rows count: ${rows.length}`);
-    allRows.value = rows;
+    allRows.value = getFilteredRows(rows);
     // Always reset pagination and visibleRows before loading
     visibleRows.value = [];
     pageOffset = 0;
@@ -409,10 +531,7 @@ onBeforeUnmount(() => {
   }
 });
 
-const loggedVisibleRows = computed(() => {
-  console.log("[LikenessRows.vue] Rendering visibleRows:", visibleRows.value);
-  return visibleRows.value;
-});
+const loggedVisibleRows = computed(() => visibleRows.value);
 
 function onThumbnailClick(img, row, event) {
   // Always prevent default and stop propagation to avoid double triggers
