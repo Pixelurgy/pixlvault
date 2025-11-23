@@ -11,7 +11,7 @@ import gc
 
 from PIL import Image
 from fastapi.testclient import TestClient
-from pixlvault.pictures import PictureWorker
+from pixlvault.pictures import WorkerType
 from pixlvault.server import Server
 from io import BytesIO
 from urllib.parse import quote
@@ -337,7 +337,7 @@ def test_tagger_worker_adds_tags():
         with Server(
             config_path=config_path, server_config_path=server_config_path
         ) as server:
-            server.start_workers({PictureWorker.TAGGER})
+            server.start_workers({WorkerType.TAGGER})
             client = TestClient(server.api)
 
             # Create a character first
@@ -396,7 +396,7 @@ def test_semantic_search_on_all_pictures():
             config_path=config_path,
             server_config_path=server_config_path,
         ) as server:
-            server.start_workers({PictureWorker.TAGGER})
+            server.start_workers({WorkerType.TAGGER})
             server.vault.import_default_data()
             client = TestClient(server.api)
 

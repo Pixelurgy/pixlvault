@@ -23,7 +23,7 @@ from typing import List
 from pixlvault.character import CharacterModel
 from pixlvault.logging import get_logger, uvicorn_log_config
 from pixlvault.picture_utils import PictureUtils
-from pixlvault.pictures import PictureWorker, get_sort_mechanisms
+from pixlvault.pictures import WorkerType, get_sort_mechanisms
 from pixlvault.vault import Vault
 
 DEFAULT_DESCRIPTION = "PixlVault default configuration"
@@ -142,7 +142,7 @@ class Server:
             )
         uvicorn.run(self.api, **uvicorn_kwargs)
 
-    def start_workers(self, workers: set[PictureWorker] = PictureWorker.all()):
+    def start_workers(self, workers: set[WorkerType] = WorkerType.all()):
         self.vault.start_background_workers(workers)
 
     @asynccontextmanager
