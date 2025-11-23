@@ -4,6 +4,7 @@ import time
 from pixlvault.picture_tagger import PictureTagger
 import pixlvault.picture_db_tools as db_tools
 
+from .characters import Characters
 from .database import DBPriority
 from .logging import get_logger
 from .worker_registry import BaseWorker, WorkerType
@@ -16,13 +17,10 @@ class TagWorker(BaseWorker):
     Worker for generating picture descriptions and tags.
     """
 
-    def __init__(self, db_connection):
-        super().__init__(db_connection)
-
-        self._picture_tagger = None
-
-    def set_picture_tagger(self, picture_tagger: PictureTagger):
-        self._picture_tagger = picture_tagger
+    def __init__(
+        self, db_connection, picture_tagger: PictureTagger, characters: Characters
+    ):
+        super().__init__(db_connection, picture_tagger, characters)
 
     def worker_type(self) -> WorkerType:
         return WorkerType.TAGGER
@@ -250,9 +248,25 @@ class TagWorker(BaseWorker):
         rows_missing_embeddings = self._db.execute_read(
             lambda conn: conn.execute(
                 """
-            SELECT *
-            FROM pictures WHERE description IS NOT NULL AND text_embedding IS NULL
-            """
+                SELECT *
+                FROM pictures WHERE description IS NOT NULL AND text_embedding IS NULL
+                """
             ).fetchall()
         )
         return db_tools.from_batch_of_db_dicts(rows_missing_embeddings, [])
+
+    def _generate_text_embeddings(self, pictures_to_embed):
+        """
+        Generate text embeddings for a batch of PictureModel objects using PictureTagger.
+        Returns the number of pictures updated.
+        """
+        updated = []
+        for pic in pictures_to_embed:
+            try:
+                embedding, _ = self._picture_tagger.generate_text_embedding(pic)
+                if embedding is not None:
+                    pic.text_embedding = embedding
+                    updated.append(pic)
+            except Exception as e:
+                logger.error(f"Failed to generate text embedding for {pic.id}: {e}")
+        return updated

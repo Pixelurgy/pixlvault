@@ -7,10 +7,10 @@ from pixlvault.database import DBPriority
 
 
 class WorkerType(str, Enum):
-    FACIAL_FEATURES = "facial_features"
+    FACIAL_FEATURES = "FacialFeaturesWorker"
     TAGGER = "TagWorker"
-    QUALITY = "quality"
-    LIKENESS = "likeness"
+    #    QUALITY = "QualityWorker"
+    #    LIKENESS = "LikenessWorker"
 
     @staticmethod
     def all():
@@ -47,8 +47,10 @@ class BaseWorker(ABC, metaclass=WorkerRegistry):
 
     INTERVAL = 2.0  # Default interval between worker runs in seconds
 
-    def __init__(self, db_connection):
+    def __init__(self, db_connection, picture_tagger, characters):
         self._db = db_connection
+        self._picture_tagger = picture_tagger
+        self._characters = characters
         self._stop = threading.Event()
         self._thread = None
 
