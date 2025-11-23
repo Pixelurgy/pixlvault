@@ -74,7 +74,35 @@
             @click.stop="handleThumbnailClick(img, img.idx, $event)"
           >
             <div class="thumbnail-container">
-              <template v-if="img.thumbnail">
+              <template v-if="img.thumbnail && isVideo(img)">
+                <video
+                  class="thumbnail-img"
+                  :src="`${props.backendUrl}/pictures/${img.id}`"
+                  :ref="el => setVideoRef(img.id, el)"
+                  muted
+                  loop
+                  playsinline
+                  @mouseenter="playVideo(img.id)"
+                  @mouseleave="pauseVideo(img.id)"
+                  style="object-fit: cover; width: 100%; height: 100%; border-radius: 8px;"
+                ></video>
+                <div
+                  class="thumbnail-index-overlay"
+                  :style="{
+                    position: 'absolute',
+                    top: '6px',
+                    left: '10px',
+                    color: 'red',
+                    fontWeight: 'bold',
+                    fontSize: '1.2em',
+                    textShadow: '0 0 2px #fff',
+                    zIndex: 20,
+                  }"
+                >
+                  {{ img.idx }}
+                </div>
+              </template>
+              <template v-else-if="img.thumbnail">
                 <img :src="img.thumbnail" class="thumbnail-img" />
                 <div
                   class="thumbnail-index-overlay"
@@ -173,6 +201,38 @@ const emit = defineEmits(["open-overlay", "refresh-sidebar"]);
 function clearSelection() {
   selectedImageIds.value = [];
 }
+
+// Video refs for hover play/pause in grid
+const videoRefs = {};
+function setVideoRef(id, el) {
+  if (el) {
+    videoRefs[id] = el;
+  } else {
+    delete videoRefs[id];
+  }
+}
+function playVideo(id) {
+  const v = videoRefs[id];
+  if (v) v.play();
+}
+function pauseVideo(id) {
+  const v = videoRefs[id];
+  if (v) {
+    v.pause();
+    v.currentTime = 0;
+  }
+}
+function isVideo(img) {
+  if (!img) return false;
+  let name = '';
+  if (img.filename) {
+    name = img.filename;
+  } else if (img.id) {
+    name = img.id;
+  }
+  return isSupportedVideoFile(name);
+}
+
 
 function removeFromGroup() {
   if (!selectedImageIds.value.length) return;

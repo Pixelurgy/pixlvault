@@ -495,8 +495,15 @@ function loadMoreRows() {
   console.log("[LikenessRows.vue] pageOffset before:", pageOffset);
   setTimeout(() => {
     const nextRows = allRows.value.slice(pageOffset, pageOffset + pageSize);
-    console.log("[LikenessRows.vue] nextRows:", nextRows);
-    visibleRows.value = [...visibleRows.value, ...nextRows];
+    // Deduplicate: only add rows that are not already present in visibleRows
+    const existingRowKeys = new Set(
+      visibleRows.value.map(row => row.map(img => img.id).join(','))
+    );
+    const dedupedRows = nextRows.filter(row => {
+      const key = row.map(img => img.id).join(',');
+      return !existingRowKeys.has(key);
+    });
+    visibleRows.value = [...visibleRows.value, ...dedupedRows];
     console.log(
       "[LikenessRows.vue] visibleRows after update:",
       visibleRows.value
