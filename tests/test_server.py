@@ -378,7 +378,7 @@ def test_tagger_worker_adds_tags():
     gc.collect()
 
 
-def test_semantic_search_on_all_pictures():
+def test_semantic_search():
     """Test: Add all images from pictures folder, wait for tagging, perform semantic search, print results, assert count."""
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -427,9 +427,9 @@ def test_semantic_search_on_all_pictures():
                 assert resp["results"][0]["status"] == "success"
                 picture_ids.append(resp["results"][0]["picture_id"])
 
-            # Wait for all pictures to be tagged (embeddings generated)
 
-            for _ in range(360):
+            # Wait for all pictures to be tagged (embeddings generated)
+            for _ in range(420):
                 missing_embeddings = picture_ids.copy()
                 if not missing_embeddings:
                     break
@@ -458,6 +458,13 @@ def test_semantic_search_on_all_pictures():
                     print(
                         f"Picture {pid} has embedding of length {len(embedding_b64)} and norm {np.linalg.norm(emb):.4f}."
                     )
+                    # Additional checks: tags, description, character name in description
+                    description = pic_info.get("description", "")
+                    assert description and isinstance(description, str), f"Picture {pid} missing description: {description}"
+                    # Accept either 'Esmeralda' or 'Esmeralda Vault' in description
+                    assert ("esmeralda" in description.lower()), f"Picture {pid} description does not contain character name: {description}"
+                    tags = pic_info.get("tags", [])
+                    assert tags and isinstance(tags, list), f"Picture {pid} missing tags or tags not a list: {tags}"
                     picture_ids.remove(pid)
                 time.sleep(1)
 
