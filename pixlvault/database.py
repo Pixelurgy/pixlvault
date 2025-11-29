@@ -62,11 +62,52 @@ def _assert_no_bytes(params):
         )
 
 
+
 class VaultDatabase:
+
+    def clear_chat_history(self, character_id, session_id):
+        """Delete all chat messages for a character/session."""
+        def op(conn):
+            conn.execute(
+                """
+                DELETE FROM chat_messages
+                WHERE character_id = ? AND session_id = ?
+                """,
+                (character_id, session_id)
+            )
+        self.submit_task(op)
+
     """
     Centralized database access for Pixelurgy Vault.
     All direct SQLite operations should be performed here.
     """
+
+    def save_chat_message(self, character_id, session_id, timestamp, role, content, picture_id=None):
+        """Save a chat message to the database."""
+        def op(conn):
+            conn.execute(
+                """
+                INSERT INTO chat_messages (character_id, session_id, timestamp, role, content, picture_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (character_id, session_id, timestamp, role, content, picture_id)
+            )
+        self.submit_task(op)
+
+    def load_chat_history(self, character_id, session_id, limit=100):
+        """Load chat history for a character/session, newest last."""
+        def op(conn):
+            return conn.execute(
+                """
+                SELECT id, character_id, session_id, timestamp, role, content, picture_id
+                FROM chat_messages
+                WHERE character_id = ? AND session_id = ?
+                ORDER BY timestamp ASC, id ASC
+                LIMIT ?
+                """,
+                (character_id, session_id, limit)
+            ).fetchall()
+        return self.execute_read(op)
 
     def __init__(self, db_path: str, description: Optional[str] = None):
         self._db_path = db_path
@@ -100,6 +141,20 @@ class VaultDatabase:
                     )
                     conn.execute(sql)
                     self._create_indexes_for_model(model, conn)
+                # --- Chat messages table ---
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS chat_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        character_id TEXT,
+                        session_id TEXT,
+                        timestamp REAL,
+                        role TEXT,
+                        content TEXT,
+                        picture_id TEXT -- nullable, references pictures(id)
+                    );
+                    """
+                )
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS likeness_work_queue (
@@ -111,6 +166,9 @@ class VaultDatabase:
                 )
                 conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_lwq_pair ON likeness_work_queue(picture_id_a, picture_id_b)
+            """)
+                conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_chat_character_session ON chat_messages(character_id, session_id, timestamp)
             """)
                 conn.commit()
         else:
