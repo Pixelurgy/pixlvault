@@ -270,6 +270,33 @@ class Server:
             )
 
     def _setup_routes(self):
+        @self.api.get("/chat/history")
+        async def get_chat_history(character_id: str, session_id: str, limit: int = 100):
+            """Return chat history for a character/session."""
+            rows = self.vault.db.load_chat_history(character_id, session_id, limit)
+            # Convert sqlite3.Row to dict
+            messages = [dict(row) for row in rows]
+            for msg in messages:
+                logger.info(f"[Chat] Loaded message: role={msg.get('role')}, picture_id={msg.get('picture_id')}")
+            return {"messages": messages}
+
+        @self.api.post("/chat/message")
+        async def post_chat_message(payload: dict):
+            """Save a chat message. Expects character_id, session_id, timestamp, role, content, picture_id (optional)."""
+            required = ["character_id", "session_id", "timestamp", "role", "content"]
+            for key in required:
+                if key not in payload:
+                    return JSONResponse(status_code=400, content={"error": f"Missing required field: {key}"})
+            logger.info(f"[Chat] Saving message: character_id={payload.get('character_id')}, session_id={payload.get('session_id')}, role={payload.get('role')}, picture_id={payload.get('picture_id')}")
+            self.vault.db.save_chat_message(
+                character_id=payload["character_id"],
+                session_id=payload["session_id"],
+                timestamp=payload["timestamp"],
+                role=payload["role"],
+                content=payload["content"],
+                picture_id=payload.get("picture_id")
+            )
+            return {"status": "ok"}
         @self.api.get("/picture_stacks")
         async def get_picture_stacks(threshold: float = 0.98, min_group_size: int = 2):
             """
@@ -342,18 +369,22 @@ class Server:
             If the value is a list and the existing value is a list, appends items.
             Ensures new image root directories and DBs are created as needed.
             """
-            import os
-
             patch_data = await request.json()
             updated = False
             image_root_changed = False
             for key, value in patch_data.items():
+                logger.info(f"Updating config key '{key}' with value: {value}")
                 if key not in self._config:
                     # Allow adding 'sort', 'thumbnail', 'show_stars' keys if missing
                     if key in (
                         "sort",
                         "thumbnail",
                         "show_stars",
+                        "likeness_threshold",
+                        "openai_host",
+                        "openai_port",
+                        "openai_model",
+                        "default_device",
                     ):
                         self._config[key] = value
                         updated = True

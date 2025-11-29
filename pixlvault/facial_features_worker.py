@@ -168,7 +168,7 @@ class FacialFeaturesWorker(BaseWorker):
                     )
                 if not data_updated:
                     # Wait for the specified interval before checking again
-                    logger.info(
+                    logger.debug(
                         "FacialFeaturesWorker: Sleeping after %.2f seconds. No work needed."
                         % timing
                     )

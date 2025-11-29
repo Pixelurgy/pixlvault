@@ -57,7 +57,7 @@ class DescriptionWorker(BaseWorker):
                 if timing > 0.5:
                     logger.info(f"DescriptionWorker: Done after {timing:.2f} seconds.")
                 if not data_updated:
-                    logger.info(
+                    logger.debug(
                         f"DescriptionWorker: Sleeping after {timing:.2f} seconds. No work needed."
                     )
                     self._wait()
@@ -161,7 +161,7 @@ class TagWorker(BaseWorker):
                 if timing > 0.5:
                     logger.info(f"TaggingWorker: Done after {timing:.2f} seconds.")
                 if not data_updated:
-                    logger.info(
+                    logger.debug(
                         f"TaggingWorker: Sleeping after {timing:.2f} seconds. No work needed."
                     )
                     self._wait()
@@ -295,7 +295,7 @@ class EmbeddingWorker(BaseWorker):
                 if timing > 0.5:
                     logger.info(f"EmbeddingWorker: Done after {timing:.2f} seconds.")
                 if not data_updated:
-                    logger.info(
+                    logger.debug(
                         f"EmbeddingWorker: Sleeping after {timing:.2f} seconds. No work needed."
                     )
                     self._wait()

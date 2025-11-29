@@ -42,7 +42,7 @@ class LikenessWorker(BaseWorker):
                 % (total_pending)
             )
             if total_pending == 0:
-                logger.info(
+                logger.debug(
                     "LikenessWorker: Sleeping after %.2f seconds. No pending work."
                     % (time.time() - start)
                 )
@@ -92,7 +92,7 @@ class LikenessWorker(BaseWorker):
                     % (likeness_score_count, time.time() - start)
                 )
             if not data_updated:
-                logger.info(
+                logger.debug(
                     "LikenessWorker: Sleeping after %.2f seconds. No work needed."
                     % (time.time() - start)
                 )

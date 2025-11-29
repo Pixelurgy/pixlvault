@@ -104,7 +104,7 @@ class QualityWorker(BaseWorker):
             if did_work and timing > 0.5:
                 logger.info("QualityWorker: Done after %.2f seconds." % timing)
             if not did_work:
-                logger.info(
+                logger.debug(
                     "QualityWorker: Sleeping after %.2f seconds, no updates made."
                     % timing
                 )

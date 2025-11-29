@@ -62,14 +62,14 @@
           <div class="drag-overlay-message">{{ dragOverlayMessage }}</div>
         </div>
         <div
-          v-for="img in gridImagesToRender"
+          v-for="(img, idx) in gridImagesToRender"
           :key="img.id ? `img-${img.id}` : `placeholder-${img.idx}`"
           class="image-card"
           :draggable="isImageSelected(img.id)"
           @dragstart="onImageDragStart(img, img.idx, $event)"
           @click="handleImageCardClick(img, img.idx, $event)"
-          @mouseenter="img._showRes = true"
-          @mouseleave="img._showRes = false"
+          @mouseenter="handleImageMouseEnter(img)"
+          @mouseleave="handleImageMouseLeave(img)"
         >
           <v-card
             class="thumbnail-card"
@@ -255,6 +255,18 @@
 </template>
 
 <script setup>
+// Track which image is currently hovered
+const hoveredImageIdx = ref(null);
+
+function handleImageMouseEnter(img) {
+  img._showRes = true;
+  hoveredImageIdx.value = img.idx;
+}
+function handleImageMouseLeave(img) {
+  img._showRes = false;
+  if (hoveredImageIdx.value === img.idx) hoveredImageIdx.value = null;
+}
+
 // Number of images before/after viewport to load thumbnails for
 // Format date to ISO (YYYY-MM-DD HH:mm:ss)
 function formatIsoDate(dateStr) {
@@ -590,39 +602,42 @@ async function applyScore(img, newScore) {
       { method: "PATCH" }
     );
     if (!res.ok) throw new Error(`Failed to set score for image ${imageId}`);
+
+    // Update score in allGridImages
     const gridImg = allGridImages.value.find((i) => i.id === imageId);
     if (gridImg) {
       gridImg.score = newScore;
     }
+    // Update score in images array if present
+    const idx = loadedRanges.value.findIndex((i) => i.id === imageId);
+    if (idx !== -1) {
+      loadedRanges.value[idx].score = newScore;
+    }
+    // Update overlay image if open and matches
+    if (overlayOpen.value && overlayImage.value && overlayImage.value.id === imageId) {
+      overlayImage.value = { ...overlayImage.value, score: newScore };
+    }
 
-    // Overlay image is not refreshed here; grid stays in sync
+    // If sorting by score, re-sort
     if (
       props.selectedSort.value === "score_desc" ||
       props.selectedSort.value === "score_asc"
     ) {
-      const idx = images.value.findIndex((i) => i.id === imageId);
-      if (idx === -1) return;
-      img.score = newScore;
-      images.value.splice(idx, 1);
-      let insertIdx = 0;
-      if (props.selectedSort.value === "score_desc") {
-        insertIdx = images.value.findIndex((i) => (i.score || 0) < newScore);
-        if (insertIdx === -1) insertIdx = images.value.length;
-      } else {
-        insertIdx = images.value.findIndex((i) => (i.score || 0) > newScore);
-        if (insertIdx === -1) insertIdx = images.value.length;
-      }
-      images.value.splice(insertIdx, 0, img);
+      // Resort images array
+      loadedRanges.value.sort((a, b) => {
+        const sa = a.score || 0;
+        const sb = b.score || 0;
+        return props.selectedSort.value === "score_desc" ? sb - sa : sa - sb;
+      });
       nextTick(() => {
         const grid = gridContainer.value;
         if (!grid) return;
-        const card = grid.querySelectorAll(".image-card")[insertIdx];
+        const newIdx = loadedRanges.value.findIndex((i) => i.id === imageId);
+        const card = grid.querySelectorAll(".image-card")[newIdx];
         if (card && card.scrollIntoView) {
           card.scrollIntoView({ behavior: "smooth", block: "center" });
         }
       });
-    } else {
-      img.score = newScore;
     }
     emit("refresh-sidebar");
   } catch (e) {
@@ -1251,6 +1266,21 @@ function handleKeyDown(event) {
     selectedImageIds.value = Array.from(allIds);
     console.log("[CTRL+A] selectedImageIds:", selectedImageIds.value);
     lastSelectedIndex = null;
+  } else if (
+    hoveredImageIdx.value !== null &&
+    selectedImageIds.value.length === 0 &&
+    !overlayOpen.value &&
+    /^[1-5]$|^0$/.test(event.key)
+  ) {
+    // Number key pressed, set score for hovered image
+    const idx = hoveredImageIdx.value;
+    const img = allGridImages.value[idx];
+    if (img && img.id) {
+      let score = parseInt(event.key, 10);
+      if (score === 0) score = 5;
+      setScore(img, score);
+      event.preventDefault();
+    }
   }
 }
 

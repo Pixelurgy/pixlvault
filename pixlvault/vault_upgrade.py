@@ -80,6 +80,37 @@ class VaultUpgrade:
             self.schema_version.set_version(6)
             self.logger.info("Database schema upgraded to version 6")
 
+        # Version 7: Add chat_messages table
+        if current_version < 7:
+            self.logger.info("Upgrading database schema to version 7 (chat_messages)...")
+            self._upgrade_to_v7()
+            self.schema_version.set_version(7)
+            self.logger.info("Database schema upgraded to version 7")
+
+    def _upgrade_to_v7(self):
+        """Add chat_messages table for persistent chat history."""
+        self.logger.info("Creating chat_messages table...")
+        self.connection.execute('''
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                character_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                picture_id TEXT
+            )
+        ''')
+        self.connection.execute('''
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_character_session ON chat_messages(character_id, session_id)
+        ''')
+        self.connection.commit()
+        self.logger.info("chat_messages table created successfully")
+        """
+        Perform schema upgrade if necessary. Bumps schema version.
+        """
+        self.schema_version.set_version(7)
+
     def _ensure_reference_picture_sets(self):
         self.logger.info("Ensuring reference picture sets for all characters...")
         cursor = self.connection.cursor()
