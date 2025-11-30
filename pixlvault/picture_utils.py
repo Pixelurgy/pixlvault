@@ -17,6 +17,50 @@ logger = get_logger(__name__)
 
 class PictureUtils:
     @staticmethod
+    def extract_created_at_from_metadata(image_bytes: bytes, fallback_file_path: str = None) -> str:
+        """
+        Try to extract the creation datetime from EXIF (for images), or from file metadata (for videos/filesystem).
+        Returns ISO 8601 string in UTC (Z), or None if not found.
+        """
+        from datetime import datetime, timezone
+        import os
+        try:
+            from PIL import Image
+            import piexif
+        except ImportError:
+            piexif = None
+        # Try EXIF for images
+        try:
+            with Image.open(BytesIO(image_bytes)) as img:
+                exif_data = img.info.get('exif')
+                if exif_data and piexif:
+                    exif_dict = piexif.load(exif_data)
+                    date_str = None
+                    for tag in ('DateTimeOriginal', 'DateTime', 'DateTimeDigitized'):
+                        val = exif_dict['0th'].get(piexif.ImageIFD.__dict__.get(tag)) or exif_dict['Exif'].get(piexif.ExifIFD.__dict__.get(tag))
+                        if val:
+                            date_str = val.decode() if isinstance(val, bytes) else val
+                            break
+                    if date_str:
+                        # EXIF format: 'YYYY:MM:DD HH:MM:SS'
+                        try:
+                            dt = datetime.strptime(date_str, '%Y:%m:%d %H:%M:%S')
+                            return dt.replace(tzinfo=timezone.utc).isoformat().replace('+00:00', 'Z')
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        # Try filesystem mtime/ctime if file path is available
+        if fallback_file_path and os.path.exists(fallback_file_path):
+            try:
+                ts = os.path.getmtime(fallback_file_path)
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                return dt.isoformat().replace('+00:00', 'Z')
+            except Exception:
+                pass
+        # Could add video metadata extraction here if needed
+        return None
+    @staticmethod
     def crop_face_from_frame(frame, bbox):
         """
         Crop a face region from a video frame (numpy array) using bbox [x1, y1, x2, y2].
@@ -308,26 +352,20 @@ class PictureUtils:
         pixel_sha: Optional[str] = None,
     ) -> PictureModel:
         """
-        Create a Picture from a file path.
-        Args:
-            image_root_path (str): Root directory to store images.
-            source_file_path (str): Path to the source image file.
-            picture_id (str): Stable UUID for the picture.
-            character_id (Optional[str]): Associated character ID.
-            description (Optional[str]): Description of the picture.
-        Returns:
-            Picture: The created Picture object.
+        Create a Picture from a file path, using metadata for created_at if available.
         """
         if not os.path.exists(source_file_path):
             raise ValueError(f"Source file path does not exist: {source_file_path}")
         with open(source_file_path, "rb") as f:
             image_bytes = f.read()
+        created_at = PictureUtils.extract_created_at_from_metadata(image_bytes, fallback_file_path=source_file_path)
         return PictureUtils.create_picture_from_bytes(
             image_root_path=image_root_path,
             image_bytes=image_bytes,
             picture_id=picture_id,
             character_id=character_id,
             pixel_sha=pixel_sha,
+            created_at=created_at,
         )
 
     @staticmethod
@@ -337,18 +375,11 @@ class PictureUtils:
         picture_id: Optional[str] = None,
         character_id: Optional[str] = None,
         pixel_sha: Optional[str] = None,
+        created_at: Optional[str] = None,
     ) -> PictureModel:
         """
-        Create a a Picture from raw bytes. Supports both images and videos.
-        Args:
-            image_root_path (str): Root directory to store images.
-            image_bytes (bytes): Raw bytes of the image or video.
-            picture_id (str): Stable UUID for the picture.
-            character_id (Optional[str]): Associated character ID.
-        Returns:
-            Picture: The created Picture object.
+        Create a Picture from raw bytes. Uses created_at from metadata if provided, else falls back to now.
         """
-
         if not pixel_sha:
             pixel_sha = PictureUtils.calculate_hash_from_bytes(image_bytes)
 
@@ -357,19 +388,15 @@ class PictureUtils:
         width = height = None
         thumbnail_bytes = None
         is_video = False
-        # Try image first
         try:
             with Image.open(BytesIO(image_bytes)) as img:
                 img_format = img.format or "PNG"
                 width, height = img.size
                 thumbnail_bytes = PictureUtils.generate_thumbnail_bytes(img)
         except Exception:
-            # Not an image, try video
             is_video = True
         if is_video:
-            # Write bytes to temp file to read with cv2
             import tempfile
-
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
                 tmp.write(image_bytes)
                 tmp_path = tmp.name
@@ -381,8 +408,7 @@ class PictureUtils:
                 height, width = frame.shape[:2]
                 thumbnail_bytes = PictureUtils.generate_thumbnail_bytes(frame)
             cap.release()
-            img_format = "MP4"  # Default, could be improved by sniffing
-            # Remove temp file
+            img_format = "MP4"
             os.remove(tmp_path)
 
         if not picture_id:
@@ -397,7 +423,10 @@ class PictureUtils:
                 f.write(image_bytes)
             size_bytes = len(image_bytes)
 
-        created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        if not created_at:
+            created_at = PictureUtils.extract_created_at_from_metadata(image_bytes, fallback_file_path=file_path)
+        if not created_at:
+            created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         pic = PictureModel(
             id=picture_id,
