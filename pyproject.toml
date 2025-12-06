@@ -33,7 +33,8 @@ dependencies = [
     "einops",
     "sentence_transformers",
     "spacy",
-    "pillow-heif"
+    "pillow-heif",
+    "sqlmodel"
 ]
 
 [project.optional-dependencies]
