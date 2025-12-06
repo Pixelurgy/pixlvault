@@ -16,6 +16,7 @@ from .worker_registry import WorkerRegistry, WorkerType
 # These three import lines are all necessary to register the workers with the WorkerRegistry
 from pixlvault.tag_worker import TagWorker, DescriptionWorker, EmbeddingWorker  # noqa: F401
 from pixlvault.facial_features_worker import FacialFeaturesWorker  # noqa: F401
+from pixlvault.face_likeness_worker import FaceLikenessWorker  # noqa: F401
 from pixlvault.likeness_worker import LikenessWorker  # noqa: F401
 from pixlvault.quality_worker import FaceQualityWorker, QualityWorker  # noqa: F401
 
