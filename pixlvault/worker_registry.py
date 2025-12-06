@@ -14,7 +14,7 @@ class WorkerType(str, Enum):
     TAGGER = "TagWorker"
     QUALITY = "QualityWorker"
     FACE_QUALITY = "FaceQualityWorker"
-    #    LIKENESS = "LikenessWorker"
+    LIKENESS = "LikenessWorker"
     DESCRIPTION = "DescriptionWorker"
     TEXT_EMBEDDING = "EmbeddingWorker"
 

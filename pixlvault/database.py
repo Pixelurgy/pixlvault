@@ -10,7 +10,13 @@ from rapidfuzz.distance import Levenshtein
 
 from pixlvault.logging import get_logger
 from pixlvault.picture_utils import PictureUtils
-from pixlvault.db_models import Character, Conversation, FaceLikeness, Face, Message, PictureLikeness, PictureSet, Picture, Quality, Tag # noqa: F401
+
+# These imports are necessary to register the models with SQLModel
+
+# The following imports are required to register all models with SQLModel.
+# They may appear unused, but are necessary for correct table creation and ORM operation.
+from pixlvault.db_models import Character, Conversation, FaceLikeness, Face, Message  # noqa: F401
+from pixlvault.db_models import PictureLikeness, PictureSet, Picture, Quality, Tag  # noqa: F401
 
 
 # Priority enum for DB operations

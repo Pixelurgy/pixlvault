@@ -19,7 +19,14 @@ from pillow_heif import register_heif_opener
 from PIL import Image
 from typing import List
 
-from pixlvault.db_models import Character, Face, Conversation, Message, Picture, SortMechanism
+from pixlvault.db_models import (
+    Character,
+    Face,
+    Conversation,
+    Message,
+    Picture,
+    SortMechanism,
+)
 from pixlvault.picture_utils import PictureUtils
 from pixlvault.logging import get_logger, uvicorn_log_config
 from pixlvault.vault import Vault

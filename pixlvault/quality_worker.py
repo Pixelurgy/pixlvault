@@ -46,7 +46,7 @@ class QualityWorker(BaseWorker):
                     result = session.exec(
                         select(Picture)
                         .outerjoin(Quality, Quality.picture_id == Picture.id)
-                            .where(Quality.id.is_(None))
+                        .where(Quality.id.is_(None))
                         .order_by(Picture.format, Picture.width, Picture.height)
                     )
                     pics = result.all()
@@ -173,6 +173,7 @@ class QualityWorker(BaseWorker):
                 e,
                 traceback.format_exc(),
             )
+            return [None] * len(pics)
 
     def _update_quality(
         self, session, pics: List[Picture], qualities: List["Quality"]
@@ -356,6 +357,7 @@ class FaceQualityWorker(BaseWorker):
                 e,
                 traceback.format_exc(),
             )
+            return [None] * len(pics_and_faces)
 
     def _update_face_quality(
         self, session, faces: List[Face], qualities: List["Quality"]

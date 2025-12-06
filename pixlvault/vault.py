@@ -13,8 +13,10 @@ from .picture_tagger import PictureTagger
 from .picture_utils import PictureUtils
 from .worker_registry import WorkerRegistry, WorkerType
 
+# These three import lines are all necessary to register the workers with the WorkerRegistry
 from pixlvault.tag_worker import TagWorker, DescriptionWorker, EmbeddingWorker  # noqa: F401
 from pixlvault.facial_features_worker import FacialFeaturesWorker  # noqa: F401
+from pixlvault.likeness_worker import LikenessWorker  # noqa: F401
 from pixlvault.quality_worker import FaceQualityWorker, QualityWorker  # noqa: F401
 
 
@@ -87,6 +89,19 @@ class Vault:
                 self._workers[worker].start()
             else:
                 logger.warning(f"Worker {worker} not found in vault workers.")
+
+    def queue_likeness_pair_calculation(self, picture_id_a: str, picture_id_b: str):
+        """
+        Queue a pair of pictures for likeness calculation.
+
+        Args:
+            picture_id_a (str): ID of the first picture.
+            picture_id_b (str): ID of the second picture.
+        """
+        likeness_worker: LikenessWorker = self._workers.get(WorkerType.LIKENESS)
+        if likeness_worker is None:
+            raise ValueError("LikenessWorker is not available in this vault.")
+        likeness_worker.queue_pair(picture_id_a, picture_id_b)
 
     def __repr__(self):
         """

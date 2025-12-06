@@ -793,8 +793,6 @@ class PictureTagger:
 
         # Compose the final sentence, avoid double periods and capitalize
         def clean_sentence(s):
-            import re
-
             s = s.strip()
             # Remove double periods
             while ".." in s:
