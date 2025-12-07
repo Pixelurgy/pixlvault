@@ -20,6 +20,7 @@ class FaceLikenessWorker(BaseWorker):
         return WorkerType.FACE_LIKENESS
 
     def _run(self):
+        logger.info("FaceLikenessWorker: Face likeness worker started.")
         while not self._stop.is_set():
             start = time.time()
 
@@ -35,12 +36,16 @@ class FaceLikenessWorker(BaseWorker):
                 faces = session.exec(
                     select(Face).where(Face.id.in_(face_ids))
                 ).all()
-                face_dict = {face.id: face for face in faces}
+                # Filter out sentinel records (face_index == -1)
+                valid_faces = [face for face in faces if face.face_index != -1]
+                face_dict = {face.id: face for face in valid_faces}
+                for fid, face in face_dict.items():
+                    logger.info(f"Face {fid}: features is {'set' if face.features else 'None'}; face_index={face.face_index}")
                 return pairs, face_dict
 
             pending_pairs, face_dict = self._db.run_task(fetch_pending_pairs)
             if not pending_pairs:
-                logger.debug("FaceLikenessWorker: No pending pairs. Sleeping...")
+                logger.info("FaceLikenessWorker: No pending pairs. Sleeping...")
                 self._stop.wait(self.INTERVAL)
                 continue
 
@@ -53,14 +58,15 @@ class FaceLikenessWorker(BaseWorker):
             for pair in pending_pairs:
                 face_a = face_dict.get(pair.face_id_a)
                 face_b = face_dict.get(pair.face_id_b)
+                # Skip pairs where either face is missing or is a sentinel (already filtered in face_dict, but double check)
                 if not face_a or not face_b:
                     logger.warning(
-                        f"Skipping pair ({pair.face_id_a}, {pair.face_id_b}): missing face(s). Removing from queue."
+                        f"Skipping pair ({pair.face_id_a}, {pair.face_id_b}): missing or sentinel face(s). Removing from queue."
                     )
                     to_remove.append(pair)
                     continue
-                features_a = face_a.features if hasattr(face_a, "features") else None
-                features_b = face_b.features if hasattr(face_b, "features") else None
+                features_a = face_a.features
+                features_b = face_b.features
                 if features_a is None or features_b is None:
                     logger.warning(
                         f"Skipping pair ({pair.face_id_a}, {pair.face_id_b}): missing facial features. Removing from queue."
@@ -103,6 +109,40 @@ class FaceLikenessWorker(BaseWorker):
             if elapsed < self.INTERVAL:
                 self._stop.wait(self.INTERVAL - elapsed)
         logger.info("FaceLikenessWorker: Face likeness worker stopped.")
+
+    def queue_pair(self, face_id_a: int, face_id_b: int):
+        """
+        Public method to queue a pair for likeness computation.
+        """
+        self._db.run_task(FaceLikenessWorker._add_pair_to_queue, face_id_a, face_id_b)
+    @staticmethod
+    def _add_pair_to_queue(session, face_id_a: int, face_id_b: int):
+        """
+        Add a pair to the likeness work queue, ensuring uniqueness and order (a < b).
+        """
+        if face_id_a == face_id_b:
+            return  # Don't add self-pairs
+        a, b = sorted([face_id_a, face_id_b])
+        # Check if already exists in queue or results
+
+        exists = session.exec(
+            select(FaceLikenessWorkQueue).where(
+                (FaceLikenessWorkQueue.face_id_a == a)
+                & (FaceLikenessWorkQueue.face_id_b == b)
+            )
+        ).first()
+        if exists:
+            return
+        exists = session.exec(
+            select(FaceLikeness).where(
+                (FaceLikeness.face_id_a == a)
+                & (FaceLikeness.face_id_b == b)
+            )
+        ).first()
+        if exists:
+            return
+        session.add(FaceLikenessWorkQueue(face_id_a=a, face_id_b=b))
+        session.commit()
 
     def _cosine_similarity(self, features_a, features_b):
         # Assume features are bytes representing np.ndarray

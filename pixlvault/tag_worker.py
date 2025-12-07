@@ -96,7 +96,7 @@ class DescriptionWorker(BaseWorker):
             self._db.submit_task(
                 lambda session: session.exec(
                     select(Picture)
-                    .where(Picture.description is None)
+                    .where(Picture.description.is_(None))
                     .options(selectinload(Picture.characters))
                 ).all()
             )
@@ -315,8 +315,8 @@ class EmbeddingWorker(BaseWorker):
                     Character.original_prompt,
                 ),
             )
-            query = query.where(Picture.text_embedding is None)
-            query = query.where(Picture.description is not None)
+            query = query.where(Picture.text_embedding.is_(None))
+            query = query.where(Picture.description.is_not(None))
             query = query.where(Picture.tags.any())
             results = session.exec(query)
             return results.all()

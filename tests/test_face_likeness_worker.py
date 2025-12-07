@@ -29,38 +29,69 @@ def test_face_likeness_worker():
         with Server(config_path, server_config_path) as server:
             print("Server started for face likeness worker test.")
             server.vault.import_default_data(add_tagger_test_images=True)
+
+            pics = server.vault.db.run_task(lambda session: Picture.find(session))
+
+            face_futures = []
+            for pic in pics:
+                print(
+                    "Scheduling watch for picture %s with description %s"
+                    % (pic.file_path, pic.description)
+                )
+                if pic.description and pic.description.startswith("Tagger"):
+                    face_futures.append(
+                        server.vault.get_worker_future(
+                            WorkerType.FACIAL_FEATURES, Picture, pic.id, "faces"
+                        )
+                    )
+
+            server.vault.start_workers({WorkerType.FACIAL_FEATURES})
+
+            timeout = time.time() + 60
+            for face_future in face_futures:
+                result = face_future.result(timeout=timeout - time.time())
+
+            server.vault.stop_workers({WorkerType.FACIAL_FEATURES})
+
+            logger.info("All faces extracted. Gathering pairs for likeness computation.")
+
             # Get all faces
-            faces = server.vault.db.run_task(lambda session: session.exec(Face.__table__.select()).all())
+            faces = server.vault.db.run_task(lambda session: Face.find(session))
             assert faces and len(faces) >= 2, "No faces found in the database. Test requires at least two faces."
             # Get all unique face pairs (a < b)
             pairs = []
             ids = sorted([face.id for face in faces])
             for i, a in enumerate(ids):
                 for b in ids[i+1:]:
-                    pairs.append((a, b))
+                    if faces[i].features is not None and faces[ids.index(b)].features is not None:
+                        pairs.append((a, b))
+                    else:
+                        logger.warning(f"Skipping pair ({a}, {b}): missing features.")
             # Get future objects for each pair
             futures = {}
             for a, b in pairs:
                 future = server.vault.get_worker_future(
-                    WorkerType.FACIAL_FEATURES, FaceLikeness, (a, b), "pair"
+                    WorkerType.FACE_LIKENESS, FaceLikeness, (a, b), "pair"
                 )
                 futures[(a, b)] = future
+                server.vault.queue_face_likeness_pair_calculation(a, b)
 
-            print(f"Queued {len(futures)} face likeness pairs for processing.")
-            server.vault.start_workers({WorkerType.FACIAL_FEATURES})
+            logger.info(f"Queued {len(futures)} face likeness pairs for processing.")
+            server.vault.start_workers({WorkerType.FACE_LIKENESS})
 
             # Wait for all futures to complete
             timeout = time.time() + 60
             for key, future in futures.items():
                 result = future.result(timeout=timeout - time.time())
                 assert result == key
-            server.vault.stop_workers({WorkerType.FACIAL_FEATURES})
+            server.vault.stop_workers({WorkerType.FACE_LIKENESS})
+
             # Check that all face likeness results are present
             likeness_results = server.vault.db.run_task(lambda session: session.exec(FaceLikeness.__table__.select()).all())
             result_pairs = set((r.face_id_a, r.face_id_b) for r in likeness_results)
             assert len(likeness_results) == len(pairs), "Not all face likeness pairs were processed"
             for a, b in pairs:
-                assert (a, b) in result_pairs
+                assert (a, b) in result_pairs, "Face likeness pair (%s, %s) missing" % (a, b)
 
             # Print table of face likeness scores with picture descriptions and face indices
             face_map = {face.id: face for face in faces}

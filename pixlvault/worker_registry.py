@@ -125,13 +125,9 @@ class BaseWorker(ABC, metaclass=WorkerRegistry):
         """
         with self._watched_ids_lock:
             for cls, object_id, attr in object_ids:
-                logger.info(
-                    f"Trying to notify processed ID: {cls.__name__} id={object_id} attr={attr}"
-                )
-
                 future = self._watched_ids.pop((cls, object_id, attr), None)
                 if future:
-                    logger.info(
+                    logger.debug(
                         f"Worker {self.name()} processed {cls.__name__} id={object_id} attr={attr}"
                     )
                     future.set_result(object_id)

@@ -104,6 +104,19 @@ class Vault:
             raise ValueError("LikenessWorker is not available in this vault.")
         likeness_worker.queue_pair(picture_id_a, picture_id_b)
 
+    def queue_face_likeness_pair_calculation(self, face_id_a: int, face_id_b: int):
+        """
+        Queue a pair of faces for likeness calculation.
+
+        Args:
+            face_id_a (int): ID of the first face.
+            face_id_b (int): ID of the second face.
+        """
+        likeness_worker: FaceLikenessWorker = self._workers.get(WorkerType.FACE_LIKENESS)
+        if likeness_worker is None:
+            raise ValueError("FaceLikenessWorker is not available in this vault.")
+        likeness_worker.queue_pair(face_id_a, face_id_b)
+
     def __repr__(self):
         """
         Return a string representation of the Vault instance.

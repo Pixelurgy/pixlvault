@@ -11,12 +11,11 @@ class FaceLikeness(SQLModel, table=True):
     Stores likeness scores for each (Face, Face) combination.
     Note, this is NOT picture likeness, but individual face likeness.
     """
-
-    face_id_a: str = Field(
+    face_id_a: int = Field(
         foreign_key="face.id",
         primary_key=True,
     )
-    face_id_b: str = Field(
+    face_id_b: int = Field(
         foreign_key="face.id",
         primary_key=True,
     )

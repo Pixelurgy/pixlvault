@@ -41,7 +41,7 @@ class FacialFeaturesWorker(BaseWorker):
                 logger.debug("FacialFeaturesWorker: Starting iteration...")
 
                 pics_needing_face_bboxes = self._find_pics_needing_face_extraction()
-                logger.debug(
+                logger.info(
                     f"FacialFeaturesWorker: Found {len(pics_needing_face_bboxes)} pictures needing face bboxes: {[getattr(pic, 'file_path', pic.id) for pic in pics_needing_face_bboxes]}"
                 )
                 time_after_fetch = time.time()
@@ -59,7 +59,7 @@ class FacialFeaturesWorker(BaseWorker):
                     ]
                 )
                 time_after_calculate = time.time()
-                logger.debug(
+                logger.info(
                     "FacialFeaturesWorker: It took %.2f seconds to calculate face bboxes."
                     % (time_after_calculate - time_after_fetch)
                 )
@@ -80,7 +80,7 @@ class FacialFeaturesWorker(BaseWorker):
                     self._fetch_pics_missing_facial_features(faces_missing_features)
                 )
 
-                logger.debug(
+                logger.info(
                     "FacialFeaturesWorker: It took %.2f seconds to fetch %d pictures needing facial features."
                     % (
                         time.time() - time_after_calculate,
@@ -88,13 +88,13 @@ class FacialFeaturesWorker(BaseWorker):
                     )
                 )
                 if pictures_missing_facial_features:
-                    logger.debug(
+                    logger.info(
                         f"Generating facial features for {len(pictures_missing_facial_features)} pictures."
                     )
                     features_updated = self._generate_facial_features(
                         pictures_missing_facial_features
                     )
-                    logger.debug(
+                    logger.info(
                         f"Updated facial features for {len(pictures_missing_facial_features)} pictures."
                     )
                     data_updated |= features_updated > 0
@@ -102,7 +102,7 @@ class FacialFeaturesWorker(BaseWorker):
                 timing = time.time() - start
 
                 if timing > 0.5:
-                    logger.debug(
+                    logger.info(
                         "FacialFeaturesWorker: Done after %.2f seconds." % timing
                     )
                 if not data_updated:
@@ -332,8 +332,8 @@ class FacialFeaturesWorker(BaseWorker):
             if self._stop.is_set():
                 logger.debug("Stopping facial features generation as requested.")
                 return updates
-            logger.debug(
-                f"Generating facial features for picture {picture_id} with {len(faces)} faces."
+            logger.info(
+                f"Generating facial features for picture {picture.description} with {len(faces)} faces."
             )
             # Collect bboxes for all faces in this picture
             bboxes = [f.bbox for f in faces]
@@ -346,12 +346,17 @@ class FacialFeaturesWorker(BaseWorker):
                 features_list = self._picture_tagger.generate_facial_features(
                     picture, bboxes
                 )
+                if len(features_list) != len(faces):
+                    logger.error(
+                        f"Number of features returned ({len(features_list)}) does not match number of faces ({len(faces)}) for picture {picture.description}."
+                    )
+                    continue
                 for face, features, frame_index in zip(
                     faces, features_list, frame_indices
                 ):
                     if features is not None:
-                        logger.debug(
-                            f"Got facial features for picture {face.picture_id} face_index {face.face_index} frame_index {frame_index}"
+                        logger.info(
+                            f"Got facial features for picture {picture.description} face_index {face.face_index} frame_index {frame_index}"
                         )
                         # Convert numpy array to bytes for DB storage
                         features_bytes = (
@@ -362,7 +367,7 @@ class FacialFeaturesWorker(BaseWorker):
                         face.features = features_bytes
                     else:
                         logger.warning(
-                            f"No facial features for picture {face.picture_id} face_index {face.face_index} frame_index {frame_index}"
+                            f"No facial features for picture {picture.description} face_index {face.face_index} frame_index {frame_index}"
                         )
 
                 def update_faces(session, faces_to_update):
@@ -380,7 +385,7 @@ class FacialFeaturesWorker(BaseWorker):
                 updates += len(faces_updated)
             except Exception as e:
                 logger.error(
-                    f"Failed to generate facial features for picture {face.picture_id}: {e}"
+                    f"Failed to generate facial features for picture {picture.description}: {e}"
                 )
         logger.debug("Generated facial features for %d faces", updates)
         return updates

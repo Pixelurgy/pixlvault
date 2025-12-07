@@ -104,7 +104,7 @@ class Face(SQLModel, table=True):
         """
         Find faces by picture_id, frame_index, and/or face_index.
         """
-        query = select(cls).options(joinedload(cls.quality))
+        query = select(cls).options(joinedload(cls.quality)).where(cls.face_index != -1)
         for attr, value in filters.items():
             if hasattr(cls, attr):
                 query = query.where(getattr(cls, attr) == value)

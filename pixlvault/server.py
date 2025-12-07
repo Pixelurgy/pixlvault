@@ -924,9 +924,6 @@ class Server:
         @self.api.get("/pictures/{id}/{field}")
         async def get_picture_field(id: str, field: str):
             """Return single field for a picture"""
-            logger.warning(
-                "Searching for picture field: " + field + " for picture id: " + id
-            )
             pics = self.vault.db.run_task(
                 lambda session: Picture.find(session, id=id, select_fields=[field])
             )
