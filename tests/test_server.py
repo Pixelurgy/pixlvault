@@ -689,7 +689,7 @@ def test_semantic_search():
 
             for search_text in search_texts:
                 search_resp = client.get(
-                    f"/pictures?query={quote(search_text)}&sort=search_likeness%20desc&threshold=0.3"
+                    f"/pictures/search?query={quote(search_text)}&threshold=0.3"
                 )
                 assert search_resp.status_code == 200
                 results = search_resp.json()

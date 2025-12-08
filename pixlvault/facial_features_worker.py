@@ -53,7 +53,7 @@ class FacialFeaturesWorker(BaseWorker):
                         pictures_missing_facial_features
                     )
                     logger.debug(
-                        f"Updated facial features for {len(features_updated)} pictures."
+                        f"Updated facial features for {features_updated} pictures."
                     )
                 else:
                     logger.debug(

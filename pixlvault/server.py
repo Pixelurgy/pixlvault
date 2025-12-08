@@ -3,6 +3,7 @@ import uvicorn
 import io
 import os
 import json
+import re
 import uuid
 import mimetypes
 import concurrent.futures
@@ -138,7 +139,7 @@ class Server:
             "image_roots": [default_image_root],
             "selected_image_root": default_image_root,
             "description": DEFAULT_DESCRIPTION,
-            "sort": "ORDER BY created_at DESC",
+            "sort": SortMechanism.DATE_ASC.value,
             "thumbnail": "default",
             "thumbnail_size": "default",
             "show_stars": True,
@@ -1256,13 +1257,6 @@ class Server:
             query_params.pop("sort", None)
             query_params.pop("threshold", None)
 
-            # Convert tags to list if present
-            if "tags" in query_params and isinstance(query_params["tags"], str):
-                try:
-                    query_params["tags"] = json.loads(query_params["tags"])
-                except Exception:
-                    query_params["tags"] = [query_params["tags"]]
-
             pics = []
             if set_id is not None:
                 # Fetch picture IDs in set, then fetch Picture objects
@@ -1279,8 +1273,6 @@ class Server:
 
                 pics = self.vault.db.run_task(fetch_members, set_id)
             elif query:
-                import re
-
                 def find_by_text(session, query):
                     words = re.findall(r"\b\w+\b", query.lower())
                     preprocessed_query_words = self.vault.preprocess_query_words(words)
@@ -1343,8 +1335,6 @@ class Server:
                     filename_parts.append(picture_set.name.replace(" ", "_"))
             if query:
                 filename_parts.append(f"search_{query[:20]}")
-            if "tags" in query_params:
-                filename_parts.append("tagged")
 
             filename = "_".join(filename_parts) if filename_parts else "pictures"
             filename = f"{filename}_{len(pics)}_images.zip"
@@ -1354,6 +1344,50 @@ class Server:
                 media_type="application/zip",
                 headers={"Content-Disposition": f"attachment; filename={filename}"},
             )
+
+
+        @self.api.get("/pictures/search")
+        async def search_pictures(
+            request: Request,
+            query: str,
+            sort: str = Query(SortMechanism.SEARCH_LIKENESS.value),
+            offset: int = Query(0),
+            limit: int = Query(sys.maxsize),
+            threshold: float = Query(0.5),
+        ):
+            from pixlvault.db_models import SortMechanism
+
+            query_params = {}
+            if request.query_params:
+                query_params = dict(request.query_params)
+                query = query_params.pop("query", query)
+                sort = query_params.pop("sort", sort)
+                offset = query_params.pop("offset", offset)
+                limit = query_params.pop("limit", limit)
+
+            if not query:
+                raise HTTPException(status_code=400, detail="Query parameter is required for search")
+
+            # Handle semantic search
+            def find_by_text(session, query, offset, limit):
+                # Use regex to extract words, removing punctuation
+                words = re.findall(r"\b\w+\b", query.lower())
+                preprocessed_query_words = self.vault.preprocess_query_words(words)
+                query = "A photo of " + query
+                return Picture.semantic_search(
+                    session,
+                    query,
+                    preprocessed_query_words,
+                    text_to_embedding=self.vault.generate_text_embedding,
+                    offset=offset,
+                    limit=limit,
+                    threshold=threshold,
+                    select_fields=Picture.metadata_fields(),
+                )
+
+            results = self.vault.db.run_task(find_by_text, query, offset, limit)
+            # Each result is (pic, likeness_score)
+            return [Picture.serialize_with_likeness(r) for r in results]
 
         @self.api.get("/pictures/{id}")
         async def get_picture(id: str):
@@ -1562,52 +1596,25 @@ class Server:
         @self.api.get("/pictures")
         async def list_pictures(
             request: Request,
-            query: str = Query(None),
             sort: str = Query(None),
             offset: int = Query(0),
             limit: int = Query(sys.maxsize),
-            threshold: float = Query(0.5),
         ):
             from pixlvault.db_models import SortMechanism
 
             query_params = {}
             if request.query_params:
                 query_params = dict(request.query_params)
-                query = query_params.pop("query", query)
                 sort = query_params.pop("sort", sort)
                 offset = query_params.pop("offset", offset)
                 limit = query_params.pop("limit", limit)
 
-            # Handle semantic search
-            if sort == SortMechanism.SEARCH_LIKENESS.value and query:
-                import re
-
-                def find_by_text(session, query, offset, limit):
-                    # Use regex to extract words, removing punctuation
-                    words = re.findall(r"\b\w+\b", query.lower())
-                    preprocessed_query_words = self.vault.preprocess_query_words(words)
-                    query = "A photo of " + query
-                    return Picture.semantic_search(
-                        session,
-                        query,
-                        preprocessed_query_words,
-                        text_to_embedding=self.vault.generate_text_embedding,
-                        offset=offset,
-                        limit=limit,
-                        threshold=threshold,
-                        select_fields=Picture.metadata_fields(),
-                    )
-
-                results = self.vault.db.run_task(find_by_text, query, offset, limit)
-                # Each result is (pic, likeness_score)
-                return [Picture.serialize_with_likeness(r) for r in results]
-            else:
-                pics = self.vault.db.run_task(
-                    Picture.find,
-                    sort=SortMechanism(sort.lower()) if sort else None,
-                    offset=offset,
-                    limit=limit,
-                    select_fields=Picture.metadata_fields(),
-                    **query_params,
-                )
-                return [pic.to_serializable_dict() for pic in pics]
+            pics = self.vault.db.run_task(
+                Picture.find,
+                sort=SortMechanism(sort.lower()) if sort else None,
+                offset=offset,
+                limit=limit,
+                select_fields=Picture.metadata_fields(),
+                **query_params,
+            )
+            return [pic.to_serializable_dict() for pic in pics]
