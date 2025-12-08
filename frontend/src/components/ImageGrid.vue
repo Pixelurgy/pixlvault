@@ -216,29 +216,26 @@
             </div>
           </v-card>
           <div v-if="isImageSelected(img.id)" class="selection-overlay"></div>
-                        <!-- Info row absolutely positioned below thumbnail -->
-              <div
-                class="thumbnail-info-row"
-              >
-                <div
-                  v-if="
-                    props.selectedSort === 'search_likeness' &&
-                    img.likeness_score !== undefined
-                  "
-                  class="likeness-score"
-                >
-                  Likeness: {{ img.likeness_score.toFixed(2) }}
-                </div>
-                <div
-                  v-else-if="
-                    props.selectedSort.includes('created_at') && img.created_at
-                  "
-                  class="thumbnail-info"
-                >
-                  {{ formatIsoDate(img.created_at) }}
-                </div>
-              </div>
-
+          <!-- Info row absolutely positioned below thumbnail -->
+          <div class="thumbnail-info-row">
+            <div
+              v-if="
+                props.selectedSort === 'search_likeness' &&
+                img.likeness_score !== undefined
+              "
+              class="likeness-score"
+            >
+              Likeness: {{ img.likeness_score.toFixed(2) }}
+            </div>
+            <div
+              v-else-if="
+                props.selectedSort.includes('created_at') && img.created_at
+              "
+              class="thumbnail-info"
+            >
+              {{ formatIsoDate(img.created_at) }}
+            </div>
+          </div>
         </div>
         <!-- Bottom spacer -->
         <div
@@ -270,11 +267,13 @@ function handleImageMouseLeave(img) {
 // Number of images before/after viewport to load thumbnails for
 // Format date to ISO (YYYY-MM-DD HH:mm:ss)
 function formatIsoDate(dateStr) {
-  if (!dateStr) return '';
+  if (!dateStr) return "";
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return dateStr;
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
 }
 import { computed, onMounted, ref, watch, nextTick, onUnmounted } from "vue";
 import {
@@ -614,7 +613,11 @@ async function applyScore(img, newScore) {
       loadedRanges.value[idx].score = newScore;
     }
     // Update overlay image if open and matches
-    if (overlayOpen.value && overlayImage.value && overlayImage.value.id === imageId) {
+    if (
+      overlayOpen.value &&
+      overlayImage.value &&
+      overlayImage.value.id === imageId
+    ) {
       overlayImage.value = { ...overlayImage.value, score: newScore };
     }
 
@@ -862,17 +865,12 @@ watch(
   }
 );
 
-watch(
-  [
-    () => props.mediaTypeFilter,
-  ],
-  () => {
-    // Reset loaded ranges and thumbnails when filters change
-    loadedRanges.value = [];
-    selectedImageIds.value = [];
-    lastSelectedIndex = null;
-  }
-);
+watch([() => props.mediaTypeFilter], () => {
+  // Reset loaded ranges and thumbnails when filters change
+  loadedRanges.value = [];
+  selectedImageIds.value = [];
+  lastSelectedIndex = null;
+});
 
 // Track loaded batch ranges to avoid duplicate requests
 const loadedRanges = ref([]);
@@ -1324,28 +1322,25 @@ defineExpose({
 // --- Export to Zip ---
 async function exportCurrentViewToZip() {
   // Build query params for current view
-  let url = `${props.backendUrl}/export/zip`;
+  let url = `${props.backendUrl}/pictures/export`;
   const params = buildPictureIdsQueryParams();
   if (params) {
     url += `?${params}`;
-  }
-  // If viewing a set, send set_id as param
-  if (
-    props.selectedSet &&
-    props.selectedSet !== "__all__" &&
-    props.selectedSet !== "__unassigned__"
-  ) {
-    url += params
-      ? `&set_id=${props.selectedSet}`
-      : `?set_id=${props.selectedSet}`;
   }
   try {
     const res = await fetch(url, { method: "GET" });
     if (!res.ok) throw new Error("Failed to export zip");
     const blob = await res.blob();
+    // Extract filename from Content-Disposition header
+    let filename = "pixlvault_export.zip";
+    const disposition = res.headers.get("Content-Disposition");
+    if (disposition) {
+      const match = disposition.match(/filename=\"?([^\";]+)\"?/);
+      if (match) filename = match[1];
+    }
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = "pixlvault_export.zip";
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     setTimeout(() => {
@@ -1465,10 +1460,9 @@ async function exportCurrentViewToZip() {
   text-align: center;
   min-height: 1.2em;
   background: none;
-  
 }
 .thumbnail-info {
-  font-size: 1.0em;
+  font-size: 1em;
   color: #222;
   text-align: center;
   word-break: break-all;
