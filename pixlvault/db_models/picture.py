@@ -2,12 +2,14 @@ import base64
 import sys
 import numpy as np
 
+from datetime import datetime
+
 from enum import Enum
 from PIL import Image
 from sqlalchemy import desc, func
 from sqlalchemy.orm import load_only, selectinload
 from sqlalchemy.types import LargeBinary
-from sqlmodel import Column, SQLModel, Field, Relationship, select, Session
+from sqlmodel import Column, DateTime, SQLModel, Field, Relationship, select, Session
 from typing import Optional, List, TYPE_CHECKING
 
 
@@ -62,7 +64,9 @@ class Picture(SQLModel, table=True):
     width: Optional[int] = None
     height: Optional[int] = None
     size_bytes: Optional[int] = None
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = Field(
+        default=None, sa_column=Column("created_at", type_=DateTime, nullable=True)
+    )
     primary_character_id: Optional[int] = Field(
         default=None, index=True, foreign_key="character.id", nullable=True
     )

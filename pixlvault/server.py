@@ -379,7 +379,7 @@ class Server:
         ###############################
         @self.api.delete("/conversations/{id}")
         async def delete_conversation(id: int):
-            """Delete all chat messages for a character/session."""
+            """Delete a conversation and all messages."""
 
             def delete_query(session, id: int):
                 conversation = session.get(Conversation, id)
@@ -397,7 +397,7 @@ class Server:
 
         @self.api.get("/conversations/{id}")
         async def get_conversation(id: int, limit: int = 100):
-            """Return chat history for a character/session."""
+            """Return conversation and its messages."""
             future = self.vault.db.submit_task(
                 lambda session: session.get(Conversation, id)
             )
@@ -428,14 +428,33 @@ class Server:
             messages = future.result()
             return {"conversation": conversation, "messages": messages}
 
+        @self.api.get("/conversations")
+        async def list_conversations():
+            """Return list of conversations."""
+            future = self.vault.db.submit_task(
+                lambda session: session.exec(select(Conversation)).all()
+            )
+            if future.exception():
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to load conversations",
+                )
+            conversations = future.result()
+            return {"conversations": conversations}
+
         @self.api.post("/conversations")
-        async def create_conversation(character_id: int = Query(None)):
+        async def create_conversation(
+            character_id: int = Query(None),
+            description: str = Query("Chat with this character"),
+        ):
             """Create a new chat session for a character. Returns conversation_id."""
             if character_id is None:
                 raise HTTPException(status_code=400, detail="character_id is required")
 
             def create_conversation(session: Session, character_id: int):
-                conversation = Conversation(character_id=character_id)
+                conversation = Conversation(
+                    character_id=character_id, description=description
+                )
                 session.add(conversation)
                 session.commit()
                 session.refresh(conversation)
@@ -472,8 +491,8 @@ class Server:
 
         @self.api.post("/conversations/message")
         async def post_conversation_message(payload: dict):
-            """Save a chat message. Expects conversation_id, timestamp, role, content, picture_id (optional)."""
-            required = ["conversation_id", "timestamp", "role", "content"]
+            """Save a chat message. Expects conversation_id, role, content, picture_id (optional)."""
+            required = ["conversation_id", "role", "content"]
             for key in required:
                 if key not in payload:
                     return JSONResponse(
@@ -490,7 +509,6 @@ class Server:
 
             message = Message(
                 conversation_id=payload["conversation_id"],
-                timestamp=payload["timestamp"],
                 role=payload["role"],
                 content=payload["content"],
                 picture_id=payload.get("picture_id"),
@@ -856,6 +874,7 @@ class Server:
                 raise HTTPException(status_code=400, detail="face_id must be a list")
 
             def assign_faces(session: Session, face_ids: list[int], character_id: int):
+                faces = []
                 for face_id in face_ids:
                     face = session.get(Face, face_id)
                     if not face:
@@ -866,14 +885,15 @@ class Server:
                     session.add(face)
                 session.commit()
                 session.refresh(face)
-                return face
+                return faces
 
-            face = self.vault.db.run_task(assign_faces, face_ids, character_id)
-            if face.id != face_ids or face.character_id != character_id:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to set character {character_id} for face {face_ids}",
-                )
+            faces = self.vault.db.run_task(assign_faces, face_ids, character_id)
+            for face in faces:
+                if face.id not in face_ids or face.character_id != character_id:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to set character {character_id} for face {face_ids}",
+                    )
             return {
                 "status": "success",
                 "face_ids": face_ids,
@@ -894,6 +914,7 @@ class Server:
             def remove_faces_from_character(
                 session: Session, character_id: int, face_ids: list[int]
             ):
+                faces = []
                 for face_id in face_ids:
                     face = session.get(Face, face_id)
                     if face and face.character_id == character_id:
@@ -901,7 +922,7 @@ class Server:
                         session.add(face)
                 session.commit()
                 session.refresh(face)
-                return face
+                return faces
 
             self.vault.db.run_task(remove_faces_from_character, character_id, face_ids)
             return {

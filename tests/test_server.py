@@ -325,9 +325,11 @@ def test_characters_summary():
                 assert face_id is not None
                 assoc_resp = client.post(
                     f"/characters/{esmeralda_id}/faces",
-                    json={"face_id": face_id},
+                    json={"face_ids": [face_id]},
                 )
-                assert assoc_resp.status_code == 200
+                assert assoc_resp.status_code == 200, (
+                    f"Failed to associate face {face_id} with Esmeralda Vault: {assoc_resp.text}"
+                )
                 assoc_data = assoc_resp.json()
                 assert assoc_data["status"] == "success"
 
@@ -643,7 +645,7 @@ def test_semantic_search():
                 # Associate Esmeralda Vault with this face
                 assoc_resp = client.post(
                     f"/characters/{esmeralda_id}/faces",
-                    json={"face_id": face_id},
+                    json={"face_ids": [face_id]},
                 )
                 assert assoc_resp.status_code == 200, (
                     f"Failed to associate face {face_id} with Esmeralda Vault: {assoc_resp.text}"

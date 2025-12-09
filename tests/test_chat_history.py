@@ -4,7 +4,6 @@ from pixlvault.server import Server
 import tempfile
 import os
 import shutil
-import time
 
 
 @pytest.fixture
@@ -22,14 +21,15 @@ def test_server():
 def test_chat_history_save_and_load(test_server):
     client = test_server
 
-    resp = client.post("/conversations", params={"character_id": 0})
+    resp = client.post(
+        "/conversations", params={"character_id": 0, "description": "Test chat"}
+    )
     assert resp.status_code == 200, f"Failed to create chat: {resp.text}"
     conversation_id = resp.json().get("conversation_id")
     assert conversation_id == 1
 
     payload = {
         "conversation_id": conversation_id,
-        "timestamp": int(time.time()),
         "role": "user",
         "content": "Hello!",
         "picture_id": 42,
@@ -57,7 +57,6 @@ def test_chat_history_clear(test_server):
 
     payload = {
         "conversation_id": conversation_id,
-        "timestamp": int(time.time()),
         "role": "user",
         "content": "To be deleted",
     }
@@ -88,13 +87,11 @@ def test_chat_history_multiple_sessions(test_server):
     # Save messages to two sessions
     payload1 = {
         "conversation_id": conversation_id_1,
-        "timestamp": int(time.time()),
         "role": "user",
         "content": "Session A",
     }
     payload2 = {
         "conversation_id": conversation_id_2,
-        "timestamp": int(time.time()),
         "role": "user",
         "content": "Session B",
     }

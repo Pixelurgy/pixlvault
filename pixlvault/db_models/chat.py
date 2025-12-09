@@ -1,4 +1,14 @@
-from sqlmodel import Column, ForeignKey, Integer, SQLModel, Field, Relationship
+from datetime import datetime, timezone
+
+from sqlmodel import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    SQLModel,
+    Field,
+    Relationship,
+)
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -11,6 +21,16 @@ class Conversation(SQLModel, table=True):
     character_id: int = Field(
         sa_column=Column(
             Integer, ForeignKey("character.id", ondelete="CASCADE"), index=True
+        )
+    )
+
+    description: Optional[str] = Field(default=None)
+    created_at: Optional[datetime] = Field(
+        sa_column=Column(
+            "created_at",
+            DateTime,
+            nullable=False,
+            default=lambda: datetime.now(timezone.utc),
         )
     )
 
@@ -27,7 +47,14 @@ class Message(SQLModel, table=True):
 
     role: str = Field(index=True)  # e.g., 'user' or 'bot'
     content: str
-    timestamp: Optional[str] = None
+    timestamp: Optional[datetime] = Field(
+        sa_column=Column(
+            "timestamp",
+            DateTime,
+            nullable=False,
+            default=lambda: datetime.now(timezone.utc),
+        )
+    )
     picture_id: Optional[str] = Field(default=None, foreign_key="picture.id")
 
     # Relationships

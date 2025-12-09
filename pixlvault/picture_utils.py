@@ -19,10 +19,10 @@ class PictureUtils:
     @staticmethod
     def extract_created_at_from_metadata(
         image_bytes: bytes, fallback_file_path: str = None
-    ) -> str:
+    ) -> Optional[datetime]:
         """
         Try to extract the creation datetime from EXIF (for images), or from file metadata (for videos/filesystem).
-        Returns ISO 8601 string in UTC (Z), or None if not found.
+        Returns a timezone-aware datetime in UTC, or None if not found.
         """
         from datetime import datetime, timezone
         import os
@@ -50,11 +50,7 @@ class PictureUtils:
                         # EXIF format: 'YYYY:MM:DD HH:MM:SS'
                         try:
                             dt = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
-                            return (
-                                dt.replace(tzinfo=timezone.utc)
-                                .isoformat()
-                                .replace("+00:00", "Z")
-                            )
+                            return dt.replace(tzinfo=timezone.utc)
                         except Exception:
                             pass
         except Exception:
@@ -64,7 +60,7 @@ class PictureUtils:
             try:
                 ts = os.path.getmtime(fallback_file_path)
                 dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-                return dt.isoformat().replace("+00:00", "Z")
+                return dt
             except Exception:
                 pass
         # Could add video metadata extraction here if needed
@@ -441,7 +437,7 @@ class PictureUtils:
                 image_bytes, fallback_file_path=file_path
             )
         if not created_at:
-            created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            created_at = datetime.now(timezone.utc)
 
         pic = Picture(
             id=picture_id,
