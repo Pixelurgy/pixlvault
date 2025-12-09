@@ -9,8 +9,12 @@ class LikenessWorkQueue(SQLModel, table=True):
     """
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    picture_id_a: str = Field(index=True, nullable=False)
-    picture_id_b: str = Field(index=True, nullable=False)
+    picture_id_a: str = Field(
+        index=True, nullable=False, foreign_key="picture.id", ondelete="CASCADE"
+    )
+    picture_id_b: str = Field(
+        index=True, nullable=False, foreign_key="picture.id", ondelete="CASCADE"
+    )
     # Optionally, add timestamp or priority fields if needed
     # created_at: Optional[str] = Field(default=None, index=True)
     # priority: Optional[int] = Field(default=0, index=True)

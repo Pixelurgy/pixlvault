@@ -839,7 +839,6 @@ class PictureTagger:
         flat = []
         if texts.get("description"):
             flat.append(str(texts["description"]))
-        # flat.extend([str(tag) for tag in texts.get("tags") or [] if tag])
         for char in texts.get("characters") or []:
             for v in char.values():
                 if v:

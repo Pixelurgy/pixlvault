@@ -1,6 +1,7 @@
 import random
 import threading
-import time
+
+from event_types import EventTypes
 from typing import List, Tuple, Type
 from concurrent.futures import Future
 from abc import ABC, ABCMeta, abstractmethod
@@ -56,17 +57,20 @@ class BaseWorker(ABC, metaclass=WorkerRegistry):
     Class representing different types of picture processing workers.
     """
 
-    INTERVAL = 2.5  # Default interval between worker runs in seconds
+    INTERVAL = 10  # Default interval between worker runs in seconds
 
-    def __init__(self, database, picture_tagger):
+    def __init__(self, database, picture_tagger, event_callback):
         self._db = database
         self._picture_tagger = picture_tagger
 
         self._stop = threading.Event()
+        self._event = threading.Event()
         self._thread = None
 
         self._watched_ids = {}
         self._watched_ids_lock = threading.Lock()
+
+        self._event_callback = event_callback
 
     @abstractmethod
     def worker_type(self) -> WorkerType:
@@ -79,6 +83,7 @@ class BaseWorker(ABC, metaclass=WorkerRegistry):
         """
         Start the worker process.
         """
+        self._event.clear()
         self._stop.clear()
         if self._thread is not None and self._thread.is_alive():
             return
@@ -90,6 +95,7 @@ class BaseWorker(ABC, metaclass=WorkerRegistry):
         Stop the worker process.
         """
         self._stop.set()
+        self._event.set()
         if self._thread is not None:
             self._thread.join()
 
@@ -105,6 +111,12 @@ class BaseWorker(ABC, metaclass=WorkerRegistry):
         """
         return self._stop.is_set()
 
+    def notify(self):
+        """
+        Notify the worker that it needs to wake.
+        """
+        self._event.set()
+
     def name(self):
         """
         Return the name of the worker.
@@ -119,6 +131,13 @@ class BaseWorker(ABC, metaclass=WorkerRegistry):
         with self._watched_ids_lock:
             self._watched_ids[(cls, object_id, attr)] = future
         return future
+
+    def _notify_others(self, event_type: EventTypes):
+        """
+        Notify other components of an event.
+        """
+        if self._event_callback:
+            self._event_callback(event_type)
 
     def _notify_ids_processed(self, object_ids: List[Tuple[Type, object, str]]):
         """
@@ -138,7 +157,7 @@ class BaseWorker(ABC, metaclass=WorkerRegistry):
         Wait for a random short duration to stagger working time
         """
         wait_time = random.uniform(self.INTERVAL - 1.0, self.INTERVAL + 1.0)
-        time.sleep(wait_time)
+        self._event.wait(wait_time)
 
     @abstractmethod
     def _run(self):

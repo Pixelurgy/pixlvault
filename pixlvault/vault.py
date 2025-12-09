@@ -1,4 +1,5 @@
 import concurrent
+
 import os
 import numpy as np
 
@@ -14,6 +15,7 @@ from .picture_utils import PictureUtils
 from .worker_registry import WorkerRegistry, WorkerType
 
 # These import lines are all necessary to register the workers with the WorkerRegistry
+from pixlvault.event_types import EventTypes
 from pixlvault.tag_worker import TagWorker, DescriptionWorker, EmbeddingWorker  # noqa: F401
 from pixlvault.face_extraction_worker import FaceExtractionWorker  # noqa: F401
 from pixlvault.facial_features_worker import FacialFeaturesWorker  # noqa: F401
@@ -26,6 +28,18 @@ logger = get_logger(__name__)
 
 
 class Vault:
+    # Map event type to list of worker types
+    _event_worker_map = {
+        EventTypes.CHANGED_PICTURES: [
+            WorkerType.FACE,
+            WorkerType.TAGGER,
+            WorkerType.QUALITY,
+        ],
+        EventTypes.CHANGED_TAGS: [WorkerType.TAGGER],
+        EventTypes.CHANGED_CHARACTERS: [WorkerType.DESCRIPTION],
+        # Extend as needed
+    }
+
     def __enter__(self):
         # Allow use as a context manager for robust cleanup
         return self
@@ -66,12 +80,13 @@ class Vault:
         self.set_description(description or "")
 
         self._picture_tagger = PictureTagger()
+
         self._workers = {}
 
         for worker_type in WorkerType.all():
             logger.debug(f"Creating worker of type: {worker_type}")
             self._workers[worker_type] = WorkerRegistry.create_worker(
-                worker_type, self.db, self._picture_tagger
+                worker_type, self.db, self._picture_tagger, lambda et: self.notify(et)
             )
 
     def stop_workers(self, workers: set[WorkerType] = WorkerType.all()):
@@ -91,6 +106,22 @@ class Vault:
                 self._workers[worker].start()
             else:
                 logger.warning(f"Worker {worker} not found in vault workers.")
+
+    def notify(self, event_type: "Vault.VaultEventType"):
+        """
+        Notify all relevant workers for a given event type.
+
+        Example:
+            vault.notify(Vault.VaultEventType.NEW_PICTURE)
+        """
+        worker_types = self._event_worker_map.get(event_type, [])
+        for worker_type in worker_types:
+            worker = self._workers.get(worker_type)
+            if worker:
+                logger.debug(f"Notifying worker {worker_type} for event {event_type}")
+                worker.notify()
+            else:
+                logger.warning(f"Worker {worker_type} not found for event {event_type}")
 
     def queue_likeness_pair_calculation(self, picture_id_a: str, picture_id_b: str):
         """

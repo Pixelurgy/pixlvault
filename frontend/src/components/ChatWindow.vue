@@ -19,8 +19,8 @@ const props = defineProps({
   backendUrl: { type: String, required: true },
 });
 
-const sessionId = ref(localStorage.getItem("chatSessionId") || uuidv4());
-localStorage.setItem("chatSessionId", sessionId.value);
+// Conversation state
+const conversationId = ref(null); // integer conversation_id from backend
 
 const displayedPictureQueue = ref([]);
 
@@ -32,31 +32,40 @@ function handleGlobalKeydown(e) {
   }
 }
 
+// Get or create a conversation for the selected character
+async function ensureConversation() {
+  if (!props.backendUrl || !props.selectedCharacter) return null;
+  try {
+    const res = await fetch(`${props.backendUrl}/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ character_id: props.selectedCharacter }),
+    });
+    if (!res.ok) throw new Error("Failed to get/create conversation");
+    const data = await res.json();
+    conversationId.value = data.conversation_id;
+    return data.conversation_id;
+  } catch (e) {
+    conversationId.value = null;
+    return null;
+  }
+}
+
 async function loadChatHistory() {
   if (!props.backendUrl || !props.selectedCharacter) return;
+  const convId = await ensureConversation();
+  if (!convId) return;
   try {
     const res = await fetch(
-      `${props.backendUrl}/chat/history?character_id=${encodeURIComponent(
-        props.selectedCharacter
-      )}&session_id=${encodeURIComponent(sessionId.value)}&limit=100`
+      `${props.backendUrl}/conversations/${convId}/messages?limit=100`
     );
     if (res.ok) {
       const data = await res.json();
       let messages = Array.isArray(data.messages) ? data.messages : [];
-      // Attach pictureUrl if picture_id is present
       messages = messages.map((msg) => {
         if (msg.picture_id) {
           const pictureUrl = `${props.backendUrl}/pictures/${msg.picture_id}`;
-          console.log(
-            "[ChatHistory] Loaded message with picture_id:",
-            msg.picture_id,
-            "pictureUrl:",
-            pictureUrl
-          );
-          return {
-            ...msg,
-            pictureUrl,
-          };
+          return { ...msg, pictureUrl };
         }
         return msg;
       });
@@ -209,6 +218,10 @@ async function fetchCharacterById(characterId) {
 async function sendChatMessageAndFocus() {
   const input = chatInput.value.trim();
   if (!input || chatLoading.value) return;
+
+  // Ensure conversation exists and get its id
+  const convId = await ensureConversation();
+  if (!convId) return;
 
   const characterId = props.selectedCharacter;
   const character = await fetchCharacterById(characterId);
@@ -439,11 +452,10 @@ async function sendChatMessageAndFocus() {
 }
 
 async function saveChatMessage(msg) {
-  if (!props.backendUrl || !props.selectedCharacter) return;
+  if (!props.backendUrl || !conversationId.value) return;
   if (!["user", "assistant", "system"].includes(msg.role)) return;
   const payload = {
-    character_id: props.selectedCharacter,
-    session_id: sessionId.value,
+    conversation_id: conversationId.value,
     timestamp: Date.now(),
     role: msg.role,
     content: msg.content,
@@ -451,7 +463,7 @@ async function saveChatMessage(msg) {
   if (msg.picture_id) {
     payload.picture_id = msg.picture_id;
   }
-  await fetch(`${props.backendUrl}/chat/message`, {
+  await fetch(`${props.backendUrl}/conversations/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -459,11 +471,9 @@ async function saveChatMessage(msg) {
 }
 
 async function clearChatHistory() {
-  if (!props.backendUrl || !props.selectedCharacter) return;
+  if (!props.backendUrl || !conversationId.value) return;
   await fetch(
-    `${props.backendUrl}/chat/history?character_id=${encodeURIComponent(
-      props.selectedCharacter
-    )}&session_id=${encodeURIComponent(sessionId.value)}`,
+    `${props.backendUrl}/conversations/${conversationId.value}/messages`,
     { method: "DELETE" }
   );
   chatMessages.value = [];

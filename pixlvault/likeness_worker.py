@@ -191,6 +191,7 @@ class LikenessWorker(BaseWorker):
         Public method to queue a pair for likeness computation.
         """
         self._db.run_task(LikenessWorker._add_pair_to_queue, picture_id_a, picture_id_b)
+        self.notify()  # Wake up the worker if sleeping
 
     @staticmethod
     def _add_pair_to_queue(session, picture_id_a: str, picture_id_b: str):

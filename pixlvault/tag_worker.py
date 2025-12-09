@@ -3,6 +3,7 @@ import time
 from sqlmodel import select, Session
 from sqlalchemy.orm import load_only, selectinload
 
+from pixlvault.event_types import EventTypes
 from pixlvault.picture_tagger import PictureTagger
 from pixlvault.database import DBPriority
 from pixlvault.pixl_logging import get_logger
@@ -70,6 +71,7 @@ class DescriptionWorker(BaseWorker):
                     )
                     data_updated = len(changed) > 0
                     self._notify_ids_processed(changed)
+                    self._notify_others(EventTypes.CHANGED_DESCRIPTIONS)
                 timing = time.time() - start
                 if data_updated:
                     logger.debug(f"DescriptionWorker: Done after {timing:.2f} seconds.")
@@ -173,6 +175,7 @@ class TagWorker(BaseWorker):
                     break
                 tagged_pictures = self._tag_pictures(missing_tags)
                 self._notify_ids_processed(tagged_pictures)
+                self._notify_others(EventTypes.CHANGED_TAGS)
                 logger.debug(f"TaggingWorker: Tagged {len(tagged_pictures)} pictures.")
                 timing = time.time() - start
                 if tagged_pictures:
@@ -307,7 +310,6 @@ class EmbeddingWorker(BaseWorker):
             query = select(Picture)
             query = query.options(
                 load_only(Picture.id, Picture.description, Picture.text_embedding),
-                selectinload(Picture.tags),
                 selectinload(Picture.characters).load_only(
                     Character.id,
                     Character.name,
@@ -317,7 +319,6 @@ class EmbeddingWorker(BaseWorker):
             )
             query = query.where(Picture.text_embedding.is_(None))
             query = query.where(Picture.description.is_not(None))
-            query = query.where(Picture.tags.any())
             results = session.exec(query)
             return results.all()
 
@@ -334,7 +335,7 @@ class EmbeddingWorker(BaseWorker):
         for pic in pictures_to_embed:
             try:
                 logger.debug(
-                    f"[EMBEDDING WORKER]  Generating embedding for picture {pic.id} of type {type(pic)} with tags {[t.tag for t in pic.tags]}"
+                    f"[EMBEDDING WORKER]  Generating embedding for picture {pic.id} of type {type(pic)}"
                 )
                 embedding, _ = self._picture_tagger.generate_text_embedding(picture=pic)
                 if embedding is not None:

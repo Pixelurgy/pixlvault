@@ -1,4 +1,4 @@
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, ForeignKey, Field, Relationship
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,11 +13,11 @@ class FaceLikeness(SQLModel, table=True):
     """
 
     face_id_a: int = Field(
-        foreign_key="face.id",
+        foreign_key=ForeignKey("face.id", ondelete="CASCADE"),
         primary_key=True,
     )
     face_id_b: int = Field(
-        foreign_key="face.id",
+        foreign_key=ForeignKey("face.id", ondelete="CASCADE"),
         primary_key=True,
     )
     likeness: float = Field(default=None)

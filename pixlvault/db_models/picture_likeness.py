@@ -1,4 +1,4 @@
-from sqlmodel import SQLModel, Field, select
+from sqlmodel import SQLModel, Field, ForeignKey, select
 
 
 class PictureLikeness(SQLModel, table=True):
@@ -9,11 +9,11 @@ class PictureLikeness(SQLModel, table=True):
     """
 
     picture_id_a: str = Field(
-        foreign_key="picture.id",
+        foreign_key=ForeignKey("picture.id", ondelete="CASCADE"),
         primary_key=True,
     )
     picture_id_b: str = Field(
-        foreign_key="picture.id",
+        foreign_key=ForeignKey("picture.id", ondelete="CASCADE"),
         primary_key=True,
     )
     likeness: float = Field(default=None)

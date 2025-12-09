@@ -4,6 +4,7 @@ import time
 
 from sqlmodel import select
 from pixlvault.database import DBPriority
+from pixlvault.event_types import EventTypes
 from pixlvault.pixl_logging import get_logger
 from pixlvault.worker_registry import BaseWorker, WorkerType
 from pixlvault.db_models.face import Face
@@ -148,3 +149,4 @@ class FaceExtractionWorker(BaseWorker):
 
                 self._db.run_task(insert_faces, face_objects, priority=DBPriority.LOW)
             self._notify_ids_processed([(Picture, pic.id, "faces")])
+            self._notify_others(EventTypes.NEW_FACES)

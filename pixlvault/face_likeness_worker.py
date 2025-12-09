@@ -2,6 +2,7 @@ import numpy as np
 import time
 from sqlmodel import select
 
+from pixlvault.event_types import EventTypes
 from pixlvault.pixl_logging import get_logger
 from pixlvault.worker_registry import BaseWorker, WorkerType
 from pixlvault.db_models.face import Face
@@ -128,6 +129,7 @@ class FaceLikenessWorker(BaseWorker):
         Public method to queue a pair for likeness computation.
         """
         self._db.run_task(FaceLikenessWorker._add_pair_to_queue, face_id_a, face_id_b)
+        self.notify()  # Wake up the worker if sleeping
 
     @staticmethod
     def _add_pair_to_queue(session, face_id_a: int, face_id_b: int):
