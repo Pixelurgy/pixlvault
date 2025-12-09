@@ -318,7 +318,7 @@ function refreshSidebar() {
 async function fetchCharacterThumbnail(characterId) {
   try {
     const cacheBuster = Date.now();
-    const thumbUrl = `${props.backendUrl}/face_thumbnail/${characterId}?cb=${cacheBuster}`;
+    const thumbUrl = `${props.backendUrl}/characters/${characterId}/thumbnail?cb=${cacheBuster}`;
     const res = await fetch(thumbUrl);
     if (res.ok && res.headers.get("content-type")?.includes("image/png")) {
       characterThumbnails.value[characterId] = thumbUrl;

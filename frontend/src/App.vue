@@ -36,14 +36,13 @@ const selectedSort = ref("");
 const searchQuery = ref("");
 const showStars = ref(true);
 
-
 const chatWindowRef = ref(null);
 
 const thumbnailSize = ref(256);
 const sidebarVisible = ref(true);
 
 // --- Media Type Filter State ---
-const mediaTypeFilter = ref('all'); // 'all', 'images', 'videos'
+const mediaTypeFilter = ref("all"); // 'all', 'images', 'videos'
 
 // --- Chat Overlay State ---
 const chatOpen = ref(false);
@@ -225,15 +224,18 @@ async function patchConfigUIOptions() {
   const patch = {};
   if (selectedSort.value) patch.sort = selectedSort.value;
   if (thumbnailSize.value) patch.thumbnail = thumbnailSize.value;
-  if (typeof showStars.value === 'boolean') patch.show_stars = showStars.value;
-  if (typeof config.likeness_threshold === 'number') patch.likeness_threshold = config.likeness_threshold;
+  if (typeof showStars.value === "boolean") patch.show_stars = showStars.value;
+  if (typeof config.likeness_threshold === "number")
+    patch.likeness_threshold = config.likeness_threshold;
   if (config.openai_host) patch.openai_host = config.openai_host;
   if (config.openai_port) patch.openai_port = config.openai_port;
   if (config.openai_model) patch.openai_model = config.openai_model;
   if (config.default_device) patch.default_device = config.default_device;
   // Only send image_roots and selected_image_root if present
-  if (Array.isArray(config.image_roots) && config.image_roots.length > 0) patch.image_roots = config.image_roots;
-  if (config.selected_image_root) patch.selected_image_root = config.selected_image_root;
+  if (Array.isArray(config.image_roots) && config.image_roots.length > 0)
+    patch.image_roots = config.image_roots;
+  if (config.selected_image_root)
+    patch.selected_image_root = config.selected_image_root;
   console.log("PATCH /config payload:", patch);
   await fetch(`${BACKEND_URL}/config`, {
     method: "PATCH",
@@ -250,8 +252,8 @@ function selectImageRoot(root) {
 }
 
 async function saveConfig() {
-  await fetch(`/${BACKEND_URL}/config`, {
-    method: "POST",
+  await fetch(`${BACKEND_URL}/config`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       image_roots: config.image_roots,
