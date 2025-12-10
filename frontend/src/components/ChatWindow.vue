@@ -10,7 +10,6 @@ import {
 import nlp from "compromise";
 // FIFO queue for last 20 displayed pictures
 import { marked } from "marked";
-import { v4 as uuidv4 } from "uuid";
 
 const props = defineProps({
   open: { type: Boolean, default: false },

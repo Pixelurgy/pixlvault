@@ -22,4 +22,6 @@ class Tag(SQLModel, table=True):
     )
     tag: str = Field(primary_key=True, index=True)
 
-    picture: Optional["Picture"] = Relationship(back_populates="tags")
+    picture: Optional["Picture"] = Relationship(
+        back_populates="tags", sa_relationship_kwargs={"passive_deletes": True}
+    )

@@ -17,6 +17,14 @@ logger = get_logger(__name__)
 
 class PictureUtils:
     @staticmethod
+    def is_video_file(file_path: str) -> bool:
+        """
+        Returns True if the file is a supported video format.
+        """
+        ext = os.path.splitext(file_path)[1].lower()
+        return ext in [".mp4", ".webm", ".avi", ".mov", ".mkv"]
+
+    @staticmethod
     def extract_created_at_from_metadata(
         image_bytes: bytes, fallback_file_path: str = None
     ) -> Optional[datetime]:
@@ -88,14 +96,15 @@ class PictureUtils:
         return crop
 
     @staticmethod
-    def extract_video_frames(file_path, max_frames=None):
+    def extract_video_frames(file_path, max_frames=None, specific_frame=None):
         """
         Extract frames from a video file and return them as PIL Images.
         Args:
             file_path (str): Path to video file.
             max_frames (int, optional): Maximum number of frames to extract.
+            specific_frame (int, optional): If set, only extract this frame index (0-based).
         Returns:
-            List of PIL.Image objects.
+            List of PIL.Image objects (or single image if specific_frame is set).
         """
         import cv2
         from PIL import Image
@@ -103,6 +112,16 @@ class PictureUtils:
         frames = []
         cap = cv2.VideoCapture(file_path)
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if specific_frame is not None:
+            # Seek to specific frame
+            cap.set(cv2.CAP_PROP_POS_FRAMES, specific_frame)
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_img = Image.fromarray(frame_rgb)
+                frames.append(pil_img)
+            cap.release()
+            return frames
         count = 0
         for idx in range(frame_count):
             ret, frame = cap.read()

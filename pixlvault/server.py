@@ -27,6 +27,7 @@ from pixlvault.db_models import (
     Picture,
     SortMechanism,
 )
+from pixlvault.database import DBPriority
 from pixlvault.db_models.picture_set import PictureSet
 from pixlvault.event_types import EventType
 from pixlvault.utils import safe_model_dict
@@ -375,7 +376,8 @@ class Server:
         @self.api.get("/sort_mechanisms")
         async def get_pictures_sort_mechanisms():
             """Return available sorting mechanisms for pictures."""
-            return SortMechanism.all()
+            labels = [label for label in SortMechanism]
+            return labels
 
         ###############################
         # Chat endpoints              #
@@ -645,8 +647,8 @@ class Server:
                     ).all()
                     return set(face.picture_id for face in faces)
 
-                pics = self.vault.db.run_task(find_assigned, character_id=int(id))
-                image_count = len(pics)
+                faces = self.vault.db.run_task(find_assigned, character_id=int(id))
+                image_count = len(faces)
                 char_id = int(id)
 
             # Thumbnail URL (reuse existing endpoint)
@@ -898,39 +900,72 @@ class Server:
         async def assign_face_to_character(
             character_id: int, payload: dict = Body(...)
         ):
-            """Assigns a face to a character. Payload: { face_id: list[int] }"""
+            """Assigns faces to a character. Payload: { face_ids: list[int] } or { picture_ids: list[str] }"""
             face_ids = payload.get("face_ids")
-            if not isinstance(face_ids, list):
-                raise HTTPException(status_code=400, detail="face_id must be a list")
+            picture_ids = payload.get("picture_ids")
+            if face_ids is not None and not isinstance(face_ids, list):
+                raise HTTPException(status_code=400, detail="face_ids must be a list")
+            if picture_ids is not None and not isinstance(picture_ids, list):
+                raise HTTPException(
+                    status_code=400, detail="picture_ids must be a list"
+                )
 
-            def assign_faces(session: Session, face_ids: list[int], character_id: int):
-                faces = []
-                for face_id in face_ids:
-                    face = session.get(Face, face_id)
-                    if not face:
-                        raise HTTPException(
-                            status_code=404, detail=f"Face {face_id} not found"
-                        )
+            def assign_faces(
+                session: Session,
+                face_ids: list[int],
+                picture_ids: list[str],
+                character_id: int,
+            ):
+                faces_to_assign = []
+                # If picture_ids are provided, find the largest face in each picture
+                if picture_ids:
+                    for pic_id in picture_ids:
+                        faces = Face.find(session, picture_id=pic_id)
+                        if not faces:
+                            continue  # No faces in this picture
+
+                        # Select the largest face by area (width * height)
+                        def face_area(face):
+                            try:
+                                return (face.width or 0) * (face.height or 0)
+                            except Exception:
+                                return 0
+
+                        largest_face = max(faces, key=face_area)
+                        faces_to_assign.append(largest_face)
+                # If face_ids are provided, add those faces
+                if face_ids:
+                    for face_id in face_ids:
+                        face = session.get(Face, face_id)
+                        if not face:
+                            raise HTTPException(
+                                status_code=404, detail=f"Face {face_id} not found"
+                            )
+                        faces_to_assign.append(face)
+                # Remove duplicates
+                unique_faces = {face.id: face for face in faces_to_assign}.values()
+                for face in unique_faces:
                     face.character_id = character_id
                     session.add(face)
-                    faces.append(face)
                 session.commit()
-                for face in faces:
+                for face in unique_faces:
                     session.refresh(face)
-                return faces
+                return list(unique_faces)
 
-            faces = self.vault.db.run_task(assign_faces, face_ids, character_id)
+            faces = self.vault.db.run_task(
+                assign_faces, face_ids, picture_ids, character_id
+            )
             for face in faces:
-                if face.id not in face_ids or face.character_id != character_id:
+                if face.character_id != character_id:
                     raise HTTPException(
                         status_code=500,
-                        detail=f"Failed to set character {character_id} for face {face_ids}",
+                        detail=f"Failed to set character {character_id} for face {face.id}",
                     )
             self.vault.notify(EventType.CHANGED_CHARACTERS)
             self.vault.notify(EventType.CHANGED_FACES)
             return {
                 "status": "success",
-                "face_ids": face_ids,
+                "face_ids": [face.id for face in faces],
                 "character_id": character_id,
             }
 
@@ -991,7 +1026,7 @@ class Server:
                     result.append(set_dict)
                 return result
 
-            result = self.vault.db.run_task(fetch_sets, priority="IMMEDIATE")
+            result = self.vault.db.run_task(fetch_sets, priority=DBPriority.IMMEDIATE)
             elapsed = time.time() - start
             print(f"[SERVER] get_picture_sets took {elapsed:.4f} seconds")
             return result
@@ -1014,7 +1049,7 @@ class Server:
                 return picture_set.dict()
 
             set_dict = self.vault.db.run_task(
-                create_set, name, description, priority="IMMEDIATE"
+                create_set, name, description, priority=DBPriority.IMMEDIATE
             )
             return {"status": "success", "picture_set": set_dict}
 
@@ -1034,7 +1069,7 @@ class Server:
                 return picture_set, picture_ids
 
             picture_set, picture_ids = self.vault.db.run_task(
-                fetch_set, id, priority="IMMEDIATE"
+                fetch_set, id, priority=DBPriority.IMMEDIATE
             )
             if not picture_set:
                 raise HTTPException(status_code=404, detail="Picture set not found")
@@ -1051,7 +1086,7 @@ class Server:
                 return [pic.dict(exclude={"file_path", "thumbnail"}) for pic in pics]
 
             pictures = self.vault.db.run_task(
-                fetch_pics, picture_ids, priority="IMMEDIATE"
+                fetch_pics, picture_ids, priority=DBPriority.IMMEDIATE
             )
             return {"pictures": pictures, "set": picture_set.dict()}
 
@@ -1076,7 +1111,7 @@ class Server:
                 return True
 
             success = self.vault.db.run_task(
-                update_set, id, name, description, priority="IMMEDIATE"
+                update_set, id, name, description, priority=DBPriority.IMMEDIATE
             )
             if not success:
                 raise HTTPException(status_code=404, detail="Picture set not found")
@@ -1101,7 +1136,9 @@ class Server:
                 session.commit()
                 return True
 
-            success = self.vault.db.run_task(delete_set, id, priority="IMMEDIATE")
+            success = self.vault.db.run_task(
+                delete_set, id, priority=DBPriority.IMMEDIATE
+            )
             if not success:
                 raise HTTPException(status_code=404, detail="Picture set not found")
             return {"status": "success", "deleted_id": id}
@@ -1121,7 +1158,7 @@ class Server:
                 return [m.picture_id for m in members]
 
             picture_ids = self.vault.db.run_task(
-                fetch_members, id, priority="IMMEDIATE"
+                fetch_members, id, priority=DBPriority.IMMEDIATE
             )
             if picture_ids is None:
                 raise HTTPException(status_code=404, detail="Picture set not found")
@@ -1152,7 +1189,7 @@ class Server:
                 return True
 
             success = self.vault.db.run_task(
-                add_member, id, picture_id, priority="IMMEDIATE"
+                add_member, id, picture_id, priority=DBPriority.IMMEDIATE
             )
             if not success:
                 raise HTTPException(
@@ -1180,7 +1217,7 @@ class Server:
                 return True
 
             success = self.vault.db.run_task(
-                remove_member, id, picture_id, priority="IMMEDIATE"
+                remove_member, id, picture_id, priority=DBPriority.IMMEDIATE
             )
             if not success:
                 raise HTTPException(status_code=404, detail="Picture not in set")
@@ -1516,7 +1553,12 @@ class Server:
                     json_body = None
 
             try:
-                pic = self.vault.pictures[id]
+                pic_list = self.vault.db.run_task(
+                    lambda session: Picture.find(session, id=id)
+                )
+                if not pic_list:
+                    raise HTTPException(status_code=404, detail="Picture not found")
+                pic = pic_list[0]
             except KeyError:
                 raise HTTPException(status_code=404, detail="Picture not found")
 
@@ -1562,9 +1604,15 @@ class Server:
                         pic.text_embedding = None
                     updated = True
             if updated:
-                self.vault.pictures.update(pic)
+
+                def update_picture(session, pic):
+                    session.add(pic)
+                    session.commit()
+                    session.refresh(pic)
+                    return pic
+
                 self.vault.notify(EventType.CHANGED_PICTURES)
-            return {"status": "success", "picture": pic.to_dict()}
+            return {"status": "success", "picture": safe_model_dict(pic)}
 
         @self.api.post("/pictures")
         async def import_pictures(
@@ -1638,7 +1686,32 @@ class Server:
             """
             Delete a picture by id
             """
-            self.vault.pictures.delete(id)
+
+            def delete_pic(session, id):
+                pic = session.get(Picture, id)
+                if not pic:
+                    return False
+                file_path = pic.file_path
+                if not file_path or not os.path.isfile(file_path):
+                    logger.error(
+                        f"File path missing or does not exist for picture id={pic.id}, file_path={pic.file_path}"
+                    )
+                    session.delete(pic)
+                    session.commit()
+                    return True
+                session.delete(pic)
+                try:
+                    os.remove(file_path)
+                except Exception as e:
+                    logger.error(f"Failed to delete picture file {file_path}: {e}")
+                    session.rollback()
+                    return False
+                session.commit()
+                return True
+
+            success = self.vault.db.run_task(delete_pic, id)
+            if not success:
+                raise HTTPException(status_code=404, detail="Picture not found")
             return {
                 "status": "success",
             }
@@ -1657,12 +1730,37 @@ class Server:
                 offset = int(query_params.pop("offset", offset))
                 limit = int(query_params.pop("limit", limit))
 
-            pics = self.vault.db.run_task(
-                Picture.find,
-                sort=SortMechanism(sort.lower()) if sort else None,
-                offset=offset,
-                limit=limit,
-                select_fields=Picture.metadata_fields(),
-                **query_params,
-            )
-            return [pic.to_serializable_dict() for pic in pics]
+            if "character_id" in query_params and query_params["character_id"]:
+                character_id = int(query_params.pop("character_id"))
+
+                # Find all faces for this character
+                def get_picture_ids_for_character(session, character_id):
+                    faces = session.exec(
+                        select(Face).where(Face.character_id == character_id)
+                    ).all()
+                    return list({face.picture_id for face in faces})
+
+                picture_ids = self.vault.db.run_task(
+                    get_picture_ids_for_character, character_id
+                )
+                if not picture_ids:
+                    return []
+                pics = self.vault.db.run_task(
+                    Picture.find,
+                    id=picture_ids,
+                    sort=SortMechanism(sort.lower()) if sort else None,
+                    offset=offset,
+                    limit=limit,
+                    select_fields=Picture.metadata_fields(),
+                )
+                return [safe_model_dict(pic) for pic in pics]
+            else:
+                pics = self.vault.db.run_task(
+                    Picture.find,
+                    sort=SortMechanism(sort.lower()) if sort else None,
+                    offset=offset,
+                    limit=limit,
+                    select_fields=Picture.metadata_fields(),
+                    **query_params,
+                )
+            return [safe_model_dict(pic) for pic in pics]

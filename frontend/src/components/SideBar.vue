@@ -341,14 +341,17 @@ async function fetchSortOptions() {
     const res = await fetch(`${props.backendUrl}/sort_mechanisms`);
     if (!res.ok) throw new Error("Failed to fetch sort mechanisms");
     const options = await res.json();
+    console.log("Fetched sort options:", options);
+    sortOptions.value = options;
+
     // Use backend-provided values directly
-    sortOptions.value = options.map((opt) => ({
+    /* sortOptions.value = options.map((opt) => ({
       label: opt.label,
       value: opt.id,
     }));
     if (!sortModel.value && sortOptions.value.length) {
       sortModel.value = sortOptions.value[0].value;
-    }
+    } */
   } catch (e) {
     // Fallback to hardcoded options only if backend fails
     sortOptions.value = [
@@ -488,7 +491,7 @@ async function onCharacterDrop(characterId, event) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ face_ids: draggedIds }),
+        body: JSON.stringify({ picture_ids: draggedIds }),
       }
     );
     if (!res.ok) {

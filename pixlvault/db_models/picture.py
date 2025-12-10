@@ -81,7 +81,13 @@ class Picture(SQLModel, table=True):
     faces: List["Face"] = Relationship(
         back_populates="picture", sa_relationship_kwargs={"overlaps": "characters"}
     )
-    tags: List["Tag"] = Relationship(back_populates="picture")
+    tags: List["Tag"] = Relationship(
+        back_populates="picture",
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "passive_deletes": True,
+        },
+    )
     characters: List["Character"] = Relationship(  # Many-to-many via Face
         back_populates="pictures",
         link_model=Face,

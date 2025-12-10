@@ -111,10 +111,7 @@ class FacialFeaturesWorker(BaseWorker):
         Returns the number of faces updated.
         """
 
-        import os
         import ast
-        from PIL import Image
-        import numpy as np
 
         updates = 0
 
@@ -130,77 +127,43 @@ class FacialFeaturesWorker(BaseWorker):
             bboxes = [f.bbox for f in faces]
             bboxes = [ast.literal_eval(b) if isinstance(b, str) else b for b in bboxes]
             frame_indices = [f.frame_index for f in faces]
-            try:
-                # Load the image for cropping
-                img_path = (
-                    picture.file_path if hasattr(picture, "file_path") else picture.path
-                )
-                img = Image.open(img_path)
-                features_list = self._picture_tagger.generate_facial_features(
-                    picture, bboxes
-                )
-                if len(features_list) != len(faces):
-                    logger.error(
-                        f"Number of features returned ({len(features_list)}) does not match number of faces ({len(faces)}) for picture {picture.description}."
-                    )
-                    continue
-                for idx, (face, features, frame_index, bbox) in enumerate(
-                    zip(faces, features_list, frame_indices, bboxes)
-                ):
-                    # Save face crop for diagnostics
-                    try:
-                        crop = img.crop((bbox[0], bbox[1], bbox[2], bbox[3]))
-                        crops_dir = os.path.join(
-                            "tmp",
-                            "face_crops",
-                            os.path.splitext(os.path.basename(img_path))[0],
-                        )
-                        os.makedirs(crops_dir, exist_ok=True)
-                        crop_path = os.path.join(
-                            crops_dir, f"face_{face.face_index}.png"
-                        )
-                        crop.save(crop_path)
-                        logger.debug(f"Saved face crop to {crop_path}")
-                    except Exception as crop_exc:
-                        logger.warning(
-                            f"Failed to save face crop for face_index {face.face_index}: {crop_exc}"
-                        )
-                    # Print feature vector for diagnostics
-                    if features is not None:
-                        logger.debug(
-                            f"Got facial features for picture {picture.description} face_index {face.face_index} frame_index {frame_index}"
-                        )
-                        logger.debug(
-                            f"Feature vector (first 8 values) for face_index {face.face_index}: {np.array2string(np.asarray(features)[:8], precision=4, separator=', ') if hasattr(features, '__len__') else features}"
-                        )
-                        # Convert numpy array to bytes for DB storage
-                        features_bytes = (
-                            features.tobytes()
-                            if hasattr(features, "tobytes")
-                            else features
-                        )
-                        face.features = features_bytes
-                    else:
-                        logger.warning(
-                            f"No facial features for picture {picture.description} face_index {face.face_index} frame_index {frame_index}"
-                        )
 
-                def update_faces(session, faces_to_update):
-                    changed = []
-                    for face in faces_to_update:
-                        session.add(face)
-                        changed.append((Face, face.id, "features"))
-                    session.commit()
-                    return changed
-
-                faces_updated = self._db.run_task(
-                    update_faces, faces, priority=DBPriority.LOW
-                )
-                self._notify_ids_processed(faces_updated)
-                updates += len(faces_updated)
-            except Exception as e:
+            features_list = self._picture_tagger.generate_facial_features(
+                picture, bboxes
+            )
+            if len(features_list) != len(faces):
                 logger.error(
-                    f"Failed to generate facial features for picture {picture.description}: {e}"
+                    f"Number of features returned ({len(features_list)}) does not match number of faces ({len(faces)}) for picture {picture.description}."
                 )
+                continue
+
+            for idx, (face, features, frame_index, bbox) in enumerate(
+                zip(faces, features_list, frame_indices, bboxes)
+            ):
+                if features is not None:
+                    # Convert numpy array to bytes for DB storage
+                    features_bytes = (
+                        features.tobytes() if hasattr(features, "tobytes") else features
+                    )
+                    face.features = features_bytes
+                else:
+                    logger.warning(
+                        f"No facial features for picture {picture.description} face_index {face.face_index} frame_index {frame_index}"
+                    )
+
+            def update_faces(session, faces_to_update):
+                changed = []
+                for face in faces_to_update:
+                    session.add(face)
+                    changed.append((Face, face.id, "features"))
+                session.commit()
+                return changed
+
+            faces_updated = self._db.run_task(
+                update_faces, faces, priority=DBPriority.LOW
+            )
+            self._notify_ids_processed(faces_updated)
+            updates += len(faces_updated)
+
         logger.debug("Generated facial features for %d faces", updates)
         return updates

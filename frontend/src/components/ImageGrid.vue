@@ -339,7 +339,7 @@ function removeFromGroup() {
         fetch(`${backendUrl}/pictures/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ primary_character_id: null }),
+          body: JSON.stringify({ character_id: null }),
         })
           .then((res) => {
             if (!res.ok)
@@ -767,9 +767,9 @@ function buildPictureIdsQueryParams() {
     params.append("set_id", props.selectedSet);
   } else if (props.selectedCharacter && props.selectedCharacter !== "__all__") {
     if (props.selectedCharacter === "__unassigned__") {
-      params.append("primary_character_id", "");
+      params.append("character_id", "");
     } else {
-      params.append("primary_character_id", props.selectedCharacter);
+      params.append("character_id", props.selectedCharacter);
     }
   }
 
