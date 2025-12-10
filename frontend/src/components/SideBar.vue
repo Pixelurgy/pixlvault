@@ -467,47 +467,87 @@ function handleDragLeaveCharacter() {
 }
 
 async function onCharacterDrop(characterId, event) {
-  // Get the dragged image IDs from the drag event
-  let draggedIds = [];
+  // Accept faceIds or imageIds from drag event
+  let faceIds = [];
+  let imageIds = [];
+  let dragType = null;
   try {
-    const data = JSON.parse(event.dataTransfer.getData("application/json"));
+    const rawDataStr = event.dataTransfer.getData("application/json");
+    console.log("[DROP] raw drag data string:", rawDataStr);
+    const data = JSON.parse(rawDataStr);
+    console.log("onCharacterDrop data:", data);
+    dragType = data.type || null;
+    if (
+      dragType === "face-bbox" &&
+      data.faceIds &&
+      Array.isArray(data.faceIds)
+    ) {
+      faceIds = data.faceIds;
+    }
     if (data.imageIds && Array.isArray(data.imageIds)) {
-      draggedIds = data.imageIds;
+      imageIds = data.imageIds;
     }
   } catch (e) {
     console.error("Could not parse drag data:", e);
     return;
   }
 
-  if (draggedIds.length === 0) {
+  if (dragType === "face-bbox" && faceIds.length > 0) {
+    // Assign faces to character
+    try {
+      const body = { face_ids: faceIds };
+      console.log("Assigning faces to character:", characterId, body);
+      const res = await fetch(
+        `${props.backendUrl}/characters/${characterId}/faces`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      );
+      if (!res.ok) {
+        throw new Error("Failed to assign faces to character");
+      }
+      await fetchSidebarCounts();
+      await fetchCharacterThumbnail(characterId);
+      emit("faces-assigned-to-character", { characterId, faceIds });
+      console.log(
+        `Assigned ${faceIds.length} face(s) to character ${characterId}`
+      );
+    } catch (e) {
+      alert("Failed to assign faces to character: " + (e.message || e));
+    }
+    return;
+  }
+
+  if (imageIds.length === 0) {
     console.log("No images found in drag data");
     return;
   }
 
   try {
-    // Batch assign faces to character
+    // Fallback: assign images to character
+    const body = { picture_ids: imageIds };
+    console.log("Assigning images to character:", characterId, body);
     const res = await fetch(
       `${props.backendUrl}/characters/${characterId}/faces`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ picture_ids: draggedIds }),
+        body: JSON.stringify(body),
       }
     );
     if (!res.ok) {
-      throw new Error("Failed to assign faces to character");
+      throw new Error("Failed to assign images to character");
     }
-    // Optionally refresh sidebar counts
     await fetchSidebarCounts();
-    // Refresh the character's thumbnail
     await fetchCharacterThumbnail(characterId);
-    // Emit signal to App.vue to trigger ImageGrid refresh
-    //emit("faces-assigned-to-character", { characterId, faceIds: draggedIds });
+    //emit("faces-assigned-to-character", { characterId, imageIds });
     console.log(
-      `Assigned ${draggedIds.length} face(s) to character ${characterId}`
+      `Assigned ${imageIds.length} image(s) to character ${characterId}`
     );
   } catch (e) {
-    alert("Failed to assign faces to character: " + (e.message || e));
+    alert("Failed to assign images to character: " + (e.message || e));
   }
 }
 

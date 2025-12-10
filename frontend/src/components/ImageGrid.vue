@@ -190,7 +190,12 @@
                     class="face-bbox-overlay"
                     :style="overlay.style"
                     draggable="true"
-                    @dragstart="onFaceBboxDragStart($event, img, overlay.idx)"
+                    @dragstart="
+                      (e) => {
+                        e.stopPropagation();
+                        onFaceBboxDragStart(e, img, overlay.idx);
+                      }
+                    "
                   >
                     <span
                       style="
@@ -203,8 +208,15 @@
                         padding: 1px 4px;
                         border-bottom-right-radius: 6px;
                       "
-                      >Face {{ overlay.idx + 1 }}</span
                     >
+                      {{
+                        img.faces &&
+                        img.faces[overlay.idx] &&
+                        img.faces[overlay.idx].character_name
+                          ? img.faces[overlay.idx].character_name
+                          : `Face ${overlay.idx + 1}`
+                      }}
+                    </span>
                   </div>
                 </template>
                 <div
@@ -336,6 +348,20 @@ const props = defineProps({
 const thumbnailRefs = reactive({});
 const thumbnailLoadedMap = reactive({});
 
+// Key to force face bbox overlay recompute
+const faceOverlayRedrawKey = ref(0);
+
+function triggerFaceOverlayRedraw() {
+  faceOverlayRedrawKey.value++;
+}
+
+onMounted(() => {
+  window.addEventListener("resize", triggerFaceOverlayRedraw);
+});
+onUnmounted(() => {
+  window.removeEventListener("resize", triggerFaceOverlayRedraw);
+});
+
 function onThumbnailLoad(id) {
   thumbnailLoadedMap[id] = (thumbnailLoadedMap[id] || 0) + 1;
 }
@@ -349,17 +375,52 @@ function setThumbnailRef(id, el) {
   }
 }
 
-function onFaceBboxDragStart(event, img, faceIdx) {
-  const face = img.faces[faceIdx];
-  event.dataTransfer.setData(
-    "application/json",
-    JSON.stringify({
-      type: "face-bbox",
-      imageId: img.id,
-      faceIdx,
-      face,
-    })
+// --- Multi-face selection state ---
+const selectedFaceIds = ref([]); // Array of { imageId, faceIdx, faceId }
+
+function isFaceSelected(imageId, faceIdx) {
+  return selectedFaceIds.value.some(
+    (f) => f.imageId === imageId && f.faceIdx === faceIdx
   );
+}
+
+function toggleFaceSelection(imageId, faceIdx, faceId) {
+  const idx = selectedFaceIds.value.findIndex(
+    (f) => f.imageId === imageId && f.faceIdx === faceIdx
+  );
+  if (idx !== -1) {
+    selectedFaceIds.value.splice(idx, 1);
+  } else {
+    selectedFaceIds.value.push({ imageId, faceIdx, faceId });
+  }
+}
+
+function clearFaceSelection() {
+  selectedFaceIds.value = [];
+}
+
+function onFaceBboxDragStart(event, img, faceIdx) {
+  // If this face is selected, drag all selected faces; else, drag just this one
+  console.log(`Dragging face bbox: imageId=${img.id}, faceIdx=${faceIdx}`);
+  let facesToDrag = [];
+  if (isFaceSelected(img.id, faceIdx) && selectedFaceIds.value.length > 0) {
+    facesToDrag = selectedFaceIds.value.map((f) => ({
+      imageId: f.imageId,
+      faceIdx: f.faceIdx,
+      faceId: f.faceId,
+    }));
+  } else {
+    const face = img.faces[faceIdx];
+    facesToDrag = [{ imageId: img.id, faceIdx, faceId: face.id }];
+  }
+  const dragDataStr = JSON.stringify({
+    type: "face-bbox",
+    faceIds: facesToDrag.map((f) => f.faceId),
+    imageIds: Array.from(new Set(facesToDrag.map((f) => f.imageId))),
+    faces: facesToDrag,
+  });
+  console.log("[DRAG] onFaceBboxDragStart dragData:", dragDataStr);
+  event.dataTransfer.setData("application/json", dragDataStr);
   event.dataTransfer.effectAllowed = "move";
 }
 
@@ -404,6 +465,7 @@ function getFaceBboxOverlays(img) {
   return computed(() => {
     void thumbnailLoadedMap[img.id];
     void thumbnailRefs[img.id];
+    void faceOverlayRedrawKey.value; // depend on redraw key
     if (
       !props.showFaceBboxes ||
       !img.faces ||
@@ -513,8 +575,7 @@ function removeFromGroup() {
       body: JSON.stringify({ picture_ids: selectedImageIds.value }),
     })
       .then((res) => {
-        if (!res.ok)
-          throw new Error(`Failed to remove images from character`);
+        if (!res.ok) throw new Error(`Failed to remove images from character`);
       })
       .catch((err) => {
         alert(`Error removing images from character: ${err.message}`);
@@ -1531,6 +1592,17 @@ async function exportCurrentViewToZip() {
   color: #ffffff;
   font-size: 3em;
   font-weight: bold;
+}
+.face-bbox-overlay span {
+  white-space: pre-line;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 90px;
+  display: block;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  max-height: 1.1em;
 }
 .grid-scroll-wrapper {
   height: 100vh; /* or calc(100vh - headerHeight) if you have a header */

@@ -1337,11 +1337,19 @@ class Server:
                         except Exception:
                             bbox = None
                         if bbox and isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                            character = self.vault.db.run_task(
+                                lambda session: Character.find(
+                                    session,
+                                    id=face.character_id,
+                                    select_fields=["name"],
+                                )
+                            ) if face.character_id else None
                             face_data.append(
                                 {
                                     "id": face.id,
                                     "bbox": bbox,
                                     "character_id": face.character_id,
+                                    "character_name": getattr(character[0], "name", None) if character else None,
                                     "frame_index": getattr(face, "frame_index", None),
                                 }
                             )
