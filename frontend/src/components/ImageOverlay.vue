@@ -366,12 +366,6 @@ function updateOverlayDims() {
     overlayDims.value.height = imgRef.value.clientHeight;
     overlayDims.value.naturalWidth = imgRef.value.naturalWidth;
     overlayDims.value.naturalHeight = imgRef.value.naturalHeight;
-    console.log("[ImageOverlay] updateOverlayDims", {
-      width: overlayDims.value.width,
-      height: overlayDims.value.height,
-      naturalWidth: overlayDims.value.naturalWidth,
-      naturalHeight: overlayDims.value.naturalHeight,
-    });
   }
 }
 
@@ -391,7 +385,6 @@ const faceBboxes = ref([]);
 async function fetchFaceBboxes(imageId) {
   if (!imageId || !backendUrl.value) {
     faceBboxes.value = [];
-    console.log("[ImageOverlay] fetchFaceBboxes: No imageId or backendUrl");
     return;
   }
   try {
@@ -406,7 +399,6 @@ async function fetchFaceBboxes(imageId) {
           )
           .filter(Boolean)
       : [];
-    console.log("[ImageOverlay] fetchFaceBboxes: faceBboxes", faceBboxes.value);
   } catch (e) {
     console.error("[ImageOverlay] fetchFaceBboxes error:", e);
     faceBboxes.value = [];

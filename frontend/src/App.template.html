@@ -58,7 +58,10 @@
           style="margin-left: 4px"
         >
           <span class="face-bbox-icon-wrapper">
-            <v-icon>{{ showFaceBboxes ? 'mdi-account' : 'mdi-account-outline' }}</v-icon>
+            <v-icon
+              >{{ showFaceBboxes ? 'mdi-account' : 'mdi-account-outline'
+              }}</v-icon
+            >
           </span>
         </v-btn>
         <v-btn-toggle
@@ -320,6 +323,7 @@
               :showStars="showStars"
               :gridVersion="gridVersion"
               :mediaTypeFilter="mediaTypeFilter"
+              :showFaceBboxes="showFaceBboxes"
               @refresh-sidebar="refreshSidebar"
             />
           </template>

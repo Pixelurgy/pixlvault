@@ -134,6 +134,12 @@
                   class="thumbnail-img"
                   :src="`${props.backendUrl}/pictures/${img.id}`"
                   :ref="(el) => setVideoRef(img.id, el)"
+                  @load="
+                    () => {
+                      setThumbnailRef(img.id, el);
+                      onThumbnailLoad(img.id);
+                    }
+                  "
                   muted
                   loop
                   playsinline
@@ -163,7 +169,42 @@
                 </div>
               </template>
               <template v-else-if="img.thumbnail">
-                <img :src="img.thumbnail" class="thumbnail-img" />
+                <img
+                  :src="img.thumbnail"
+                  class="thumbnail-img"
+                  :ref="(el) => setThumbnailRef(img.id, el)"
+                  @load="
+                    () => {
+                      setThumbnailRef(img.id, el);
+                      onThumbnailLoad(img.id);
+                    }
+                  "
+                />
+                <!-- Face bounding box overlays: must be rendered after the image for correct stacking -->
+                <template
+                  v-if="thumbnailRefs[img.id] && thumbnailLoadedMap[img.id]"
+                >
+                  <div
+                    v-for="overlay in getFaceBboxOverlays(img).value"
+                    :key="overlay.idx + '-' + thumbnailLoadedMap[img.id]"
+                    class="face-bbox-overlay"
+                    :style="overlay.style"
+                  >
+                    <span
+                      style="
+                        position: absolute;
+                        left: 0;
+                        top: 0;
+                        background: #222c;
+                        color: #fff;
+                        font-size: 0.8em;
+                        padding: 1px 4px;
+                        border-bottom-right-radius: 6px;
+                      "
+                      >Face {{ overlay.idx + 1 }}</span
+                    >
+                  </div>
+                </template>
                 <div
                   class="thumbnail-index-overlay"
                   :style="{
@@ -252,7 +293,15 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch, nextTick, onUnmounted } from "vue";
+import {
+  computed,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+  nextTick,
+  onUnmounted,
+} from "vue";
 import {
   isSupportedMediaFile,
   isSupportedImageFile,
@@ -277,9 +326,102 @@ const props = defineProps({
   searchQuery: String,
   selectedSort: String,
   showStars: Boolean,
+  showFaceBboxes: Boolean,
   gridVersion: { type: Number, default: 0 },
   mediaTypeFilter: { type: String, default: "all" },
 });
+// Store refs for each thumbnail image
+const thumbnailRefs = reactive({});
+const thumbnailLoadedMap = reactive({});
+
+function onThumbnailLoad(id) {
+  thumbnailLoadedMap[id] = (thumbnailLoadedMap[id] || 0) + 1;
+}
+
+function setThumbnailRef(id, el) {
+  if (el) {
+    thumbnailRefs[id] = el;
+  } else {
+    delete thumbnailRefs[id];
+    delete thumbnailLoadedMap[id];
+  }
+}
+
+// Helper to calculate face bbox overlay style using object-fit: cover logic
+function getFaceBboxStyle(bbox, idx, img, el) {
+  if (!el) return { display: "none" };
+  const container = el.parentElement;
+  if (!container) return { display: "none" };
+  const containerWidth = container.clientWidth;
+  const containerHeight = container.clientHeight;
+  const naturalWidth = img.width || 1;
+  const naturalHeight = img.height || 1;
+  // Calculate scale and offset for object-fit: cover
+  const scale = Math.max(
+    containerWidth / naturalWidth,
+    containerHeight / naturalHeight
+  );
+  const displayWidth = naturalWidth * scale;
+  const displayHeight = naturalHeight * scale;
+  const offsetX = (containerWidth - displayWidth) / 2;
+  const offsetY = (containerHeight - displayHeight) / 2;
+  // Transform bbox
+  const left = offsetX + bbox[0] * scale;
+  const top = offsetY + bbox[1] * scale;
+  const width = (bbox[2] - bbox[0]) * scale;
+  const height = (bbox[3] - bbox[1]) * scale;
+  return {
+    position: "absolute",
+    border: `1.5px solid ${faceBoxColor(idx)}`,
+    background: `${faceBoxColor(idx)}22`,
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${width}px`,
+    height: `${height}px`,
+    pointerEvents: "auto",
+    zIndex: 100,
+    display: "block",
+  };
+}
+
+function getFaceBboxOverlays(img) {
+  return computed(() => {
+    void thumbnailLoadedMap[img.id];
+    void thumbnailRefs[img.id];
+    if (
+      !props.showFaceBboxes ||
+      !img.faces ||
+      !img.faces.length ||
+      !img.width ||
+      !img.height
+    ) {
+      return [];
+    }
+    const el = thumbnailRefs[img.id];
+    if (!el) return [];
+    return img.faces.map((face, fidx) => ({
+      style: getFaceBboxStyle(face.bbox, fidx, img, el),
+      idx: fidx,
+    }));
+  });
+}
+
+// Helper for face bbox color palette (copied from ImageOverlay.vue)
+function faceBoxColor(idx) {
+  const palette = [
+    "#ff5252", // red
+    "#40c4ff", // blue
+    "#ffd740", // yellow
+    "#69f0ae", // green
+    "#d500f9", // purple
+    "#ffab40", // orange
+    "#00e676", // teal
+    "#ff4081", // pink
+    "#8d6e63", // brown
+    "#7c4dff", // indigo
+  ];
+  return palette[idx % palette.length];
+}
 
 // Track which image is currently hovered
 const hoveredImageIdx = ref(null);
@@ -909,7 +1051,6 @@ const topSpacerHeight = computed(() => {
   const cols = columns.value;
   const rowsAbove = Math.floor(renderStart.value / cols);
   const height = rowsAbove > 0 ? rowsAbove * rowHeight.value : 1;
-  console.log("topSpacerHeight:", height);
   return height;
 });
 
@@ -932,7 +1073,6 @@ const gridImagesToRender = computed(() => {
       allGridImages.value[i] = { id: null, thumbnail: null, idx: i };
     }
   }
-  console.log("Filtering images for mediaTypeFilter:", props.mediaTypeFilter);
   // Accept both 'all' and 'both' as showing all media
   let filtered = allGridImages.value;
   if (props.mediaTypeFilter === "images") {
@@ -959,11 +1099,11 @@ async function fetchThumbnailsBatch(start, end) {
   start = renderStart.value;
   end = renderEnd.value;
 
-  console.debug(
+  /* console.debug(
     `[BATCH REQUEST] start=${start}, end=${end}, loadedRanges=${JSON.stringify(
       loadedRanges.value
     )}`
-  );
+  ); */
   // Check if this batch range is already loaded
   for (const range of loadedRanges.value) {
     if (start >= range[0] && end <= range[1]) {
@@ -1014,10 +1154,10 @@ async function fetchThumbnailsBatch(start, end) {
         }
       }
     }
-    console.debug(
+    /* console.debug(
       `[BATCH RESPONSE] Received ${images.length} images:`,
       images.map((img) => img.id)
-    );
+    ); */
     // Prepare grid image objects
     const gridImages = images.map((img, idx) => ({
       ...img,
@@ -1495,6 +1635,7 @@ async function exportCurrentViewToZip() {
   position: absolute;
   top: 0;
   left: 0;
+  z-index: 1;
   transition: transform 0.18s cubic-bezier(0.4, 2, 0.6, 1), box-shadow 0.18s;
 }
 /* Spinner for thumbnail loading */
@@ -1521,6 +1662,7 @@ async function exportCurrentViewToZip() {
   }
 }
 .thumbnail-container:hover .thumbnail-img,
+.thumbnail-container:hover .thumbnail-img,
 .thumbnail-container:focus-within .thumbnail-img {
   transform: scale(1.02);
   box-shadow: 0 4px 24px 0 rgba(25, 118, 210, 0.2),
@@ -1528,7 +1670,6 @@ async function exportCurrentViewToZip() {
   z-index: 2;
   transition: transform 0.18s cubic-bezier(0.4, 2, 0.6, 1), box-shadow 0.18s;
 }
-
 .thumbnail-card {
   width: 100%;
   max-width: none;
