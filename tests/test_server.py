@@ -602,6 +602,16 @@ def test_semantic_search():
             assert barry_id is not None, "Barry Vault character not found"
             assert cassandra_id is not None, "Cassandra Vault character not found"
 
+            server.vault.start_workers(
+                {
+                    WorkerType.FACE,
+                    WorkerType.FACIAL_FEATURES,
+                    WorkerType.DESCRIPTION,
+                    WorkerType.TAGGER,
+                    WorkerType.TEXT_EMBEDDING,
+                }
+            )
+
             # Upload all images as new pictures
             picture_ids = []
             face_futures = []
@@ -627,13 +637,6 @@ def test_semantic_search():
                         "text_embedding",
                     )
                 )
-
-            server.vault.start_workers(
-                {
-                    WorkerType.FACE,
-                    WorkerType.FACIAL_FEATURES,
-                }
-            )
 
             # Wait for facial features to be processed and associate Esmeralda Vault with largest face in each picture
             for idx, future in enumerate(face_futures):
@@ -716,14 +719,6 @@ def test_semantic_search():
                         logging.debug(
                             f"Associated face ID {face_id} in picture {pid} with character ID {char_id}"
                         )
-
-            server.vault.start_workers(
-                {
-                    WorkerType.DESCRIPTION,
-                    WorkerType.TAGGER,
-                    WorkerType.TEXT_EMBEDDING,
-                }
-            )
 
             # Wait for all text embeddings to be processed
             for future in embeddings_futures:

@@ -27,7 +27,7 @@ class FaceExtractionWorker(BaseWorker):
             try:
                 logger.debug("FaceExtractionWorker: Starting iteration...")
                 pics_needing_face_bboxes = self._find_pics_needing_face_extraction()
-                logger.info(
+                logger.debug(
                     f"FaceExtractionWorker: Found {len(pics_needing_face_bboxes)} pictures needing face bboxes: {[getattr(pic, 'file_path', pic.id) for pic in pics_needing_face_bboxes]}"
                 )
                 if not pics_needing_face_bboxes:
@@ -38,7 +38,7 @@ class FaceExtractionWorker(BaseWorker):
                     self._notify_ids_processed(updates)
                     self._notify_others(EventType.CHANGED_FACES)
 
-                logger.info(
+                logger.debug(
                     "FaceExtractionWorker: Done with iteration having processed %d pictures.",
                     len(updates),
                 )

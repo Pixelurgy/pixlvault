@@ -50,7 +50,7 @@ class DescriptionWorker(BaseWorker):
                         changed = []
                         for pic in pics:
                             db_pic = session.get(Picture, pic.id)
-                            if db_pic is None:
+                            if db_pic is not None:
                                 db_pic.description = pic.description
                                 session.add(db_pic)
                                 changed.append((Picture, pic.id, "description"))

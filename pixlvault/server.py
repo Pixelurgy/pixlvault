@@ -300,13 +300,6 @@ class Server:
             lambda session: Picture.find(session, pixel_shas=shas)
         )
 
-        logger.info(
-            "Got "
-            + str(len(existing_pictures))
-            + " existing pictures to skip and importing {}".format(
-                len(uploaded_files) - len(existing_pictures)
-            )
-        )
         existing_map = {pic.pixel_sha: pic for pic in existing_pictures}
 
         importable = [
@@ -779,7 +772,11 @@ class Server:
                 best_face = None
 
                 def get_reference_set_and_members(session, reference_picture_set_id):
-                    ref_set = session.get(PictureSet, reference_picture_set_id)
+                    ref_set = (
+                        session.get(PictureSet, reference_picture_set_id)
+                        if reference_picture_set_id
+                        else None
+                    )
                     if ref_set:
                         session.refresh(ref_set)
                         members = list(ref_set.members)
@@ -846,7 +843,7 @@ class Server:
                 if not char:
                     raise KeyError("Character not found")
                 char = char[0]
-                logger.info(
+                logger.debug(
                     "Data type for Character field {}: {}".format(field, type(char))
                 )
                 if not hasattr(char, field):
@@ -854,7 +851,7 @@ class Server:
                         status_code=404, detail=f"Field {field} not found in Character"
                     )
                 returnValue = {field: safe_model_dict(getattr(char, field))}
-                logger.info(
+                logger.debug(
                     f"Returning character id={id} field={field} value={returnValue}"
                 )
                 return returnValue
@@ -882,7 +879,7 @@ class Server:
                     session.add(character)
                     session.commit()
                     session.refresh(character)
-                    logger.info("Created character with ID: {}".format(character.id))
+                    logger.debug("Created character with ID: {}".format(character.id))
                     reference_set = PictureSet(
                         name="reference_pictures", description=str(character.name)
                     )
@@ -898,7 +895,7 @@ class Server:
                 char_dict = self.vault.db.run_task(
                     create_character_and_reference_set, payload
                 )
-                logger.info("Created character: {}".format(char_dict))
+                logger.debug("Created character: {}".format(char_dict))
                 self.vault.notify(EventType.CHANGED_CHARACTERS)
                 return {"status": "success", "character": char_dict}
             except Exception as e:
@@ -1057,7 +1054,7 @@ class Server:
             result = safe_model_dict(
                 self.vault.db.run_task(fetch_sets, priority=DBPriority.IMMEDIATE)
             )
-            logger.info(f"Fetched picture set {result}")
+            logger.debug(f"Fetched picture set {result}")
             return result
 
         @self.api.post("/picture_sets")
@@ -1619,12 +1616,11 @@ class Server:
             """
             params = dict(request.query_params)
 
-            logger.info("Got a PATCH request for picture id={}".format(id))
+            logger.debug("Got a PATCH request for picture id={}".format(id))
 
             # If PATCH is called with a JSON body, use it
             content_type = request.headers.get("content-type", "")
 
-            logger.info("Content type: {}".format(content_type))
             json_body = None
             if "application/json" in content_type:
                 try:
@@ -1647,7 +1643,7 @@ class Server:
             if json_body and isinstance(json_body, dict):
                 params = json_body | params
 
-            logger.info(
+            logger.debug(
                 f"Updating picture id={id} with params: {params} and json_body: {json_body}"
             )
             updated = False
