@@ -32,4 +32,4 @@ jobs:
           ruff check pixlvault
       - name: Run tests
         run: |
-          python -m pytest -s -vvv --fast-captions --force-cpu
+          python -m pytest -s -vvv --fast-captions --force-cpu --log-cli-level=INFO
