@@ -81,34 +81,31 @@ class Vault:
         self.db = VaultDatabase(self._db_path)
         self.set_description(description or "")
 
-        self._picture_tagger = PictureTagger()
+        self._picture_tagger = None
 
         self._workers = {}
 
-        for worker_type in WorkerType.all():
-            logger.debug(f"Creating worker of type: {worker_type}")
-            self._workers[worker_type] = WorkerRegistry.create_worker(
-                worker_type,
-                self.db,
-                self._picture_tagger,
-                event_callback=lambda et: self.notify(et),
-            )
-
-    def stop_workers(self, workers: set[WorkerType] = WorkerType.all()):
+    def stop_workers(self, workers_to_stop: set[WorkerType] = WorkerType.all()):
         logger.debug("Stopping background workers...")
-        for worker in workers:
-            if worker in self._workers:
+        for worker in self._workers.values():
+            if worker.worker_type() in workers_to_stop:
                 logger.debug(f"Stopping worker: {worker}")
-                self._workers[worker].stop()
+                worker.stop()
             else:
                 logger.warning(f"Worker {worker} not found in vault workers.")
 
-    def start_workers(self, workers: set[WorkerType] = WorkerType.all()):
+    def start_workers(self, workers_to_start: set[WorkerType] = WorkerType.all()):
+        # Initialize all workers
+        logger.debug("Initialise background workers...")
+        for worker_type in workers_to_start:
+            if worker_type not in self._workers:
+                self.initialise_worker_if_necessary(worker_type)
+
         logger.debug("Starting background workers...")
-        for worker in workers:
-            if worker in self._workers:
+        for worker in self._workers.values():
+            if worker.worker_type() in workers_to_start:
                 logger.info(f"Starting worker: {worker}")
-                self._workers[worker].start()
+                worker.start()
             else:
                 logger.warning(f"Worker {worker} not found in vault workers.")
 
@@ -227,6 +224,25 @@ class Vault:
             .description
         ).result()
 
+    def initialise_worker_if_necessary(self, worker_type: WorkerType):
+        """
+        Initialize and start a specific worker type.
+
+        Args:
+            worker_type (WorkerType): The type of worker to initialize.
+        """
+        if not self._picture_tagger:
+            self._picture_tagger = PictureTagger()
+
+        if worker_type not in self._workers:
+            worker_instance = WorkerRegistry.create_worker(
+                worker_type,
+                self.db,
+                self._picture_tagger,
+                event_callback=lambda et: self.notify(et),
+            )
+            self._workers[worker_type] = worker_instance
+
     def get_worker_future(
         self, worker_type: WorkerType, cls: type, object_id: int, attr: str
     ) -> "concurrent.futures.Future":
@@ -237,6 +253,7 @@ class Vault:
         Returns:
             concurrent.futures.Future: Future set to True when completed.
         """
+        self.initialise_worker_if_necessary(worker_type)
 
         worker = self._workers.get(worker_type)
         if worker is None:
