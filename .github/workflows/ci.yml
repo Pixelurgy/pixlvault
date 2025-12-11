@@ -30,6 +30,9 @@ jobs:
       - name: Check formatting with ruff
         run: |
           ruff check pixlvault
-      - name: Run tests
+      - name: Run tests serially in separate processes to limit resource usage
         run: |
-          python -m pytest -s -vvv --fast-captions --force-cpu --log-cli-level=INFO
+          for test in $(python -m pytest --collect-only -q | grep 'test_'); do
+            echo "Running $test"
+            python -m pytest -s -vvv --fast-captions --force-cpu --log-cli-level=INFO -k "$test"
+          done
