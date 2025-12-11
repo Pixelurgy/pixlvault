@@ -11,6 +11,7 @@ import concurrent.futures
 import sys
 import time
 
+from collections import defaultdict, deque
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
@@ -29,8 +30,13 @@ from pixlvault.db_models import (
     Picture,
     SortMechanism,
 )
+
+from pixlvault.db_models import PictureLikeness, FaceLikeness, PictureSet
+from pixlvault.picture_stack_utils import (
+    order_stack_pictures,
+    combined_picture_face_likeness,
+)
 from pixlvault.database import DBPriority
-from pixlvault.db_models.picture_set import PictureSet
 from pixlvault.event_types import EventType
 from pixlvault.utils import safe_model_dict
 from pixlvault.picture_utils import PictureUtils
@@ -1263,9 +1269,6 @@ class Server:
             Return groups (stacks) of near-identical pictures based on likeness threshold.
             Each stack contains picture dicts and preselection info.
             """
-            from collections import defaultdict, deque
-            from pixlvault.db_models import PictureLikeness, Picture
-            from pixlvault.picture_stack_utils import order_stack_pictures
 
             def fetch_likeness_pairs(session, threshold):
                 # Query all likeness pairs above threshold
@@ -1276,7 +1279,13 @@ class Server:
                     (row.picture_id_a, row.picture_id_b, row.likeness) for row in rows
                 ]
 
+            def fetch_face_likeness(session):
+                # Fetch all face likeness scores
+                rows = session.exec(select(FaceLikeness)).all()
+                return {(row.face_id_a, row.face_id_b): row.likeness for row in rows}
+
             rows = self.vault.db.run_task(fetch_likeness_pairs, threshold)
+            face_likeness_map = self.vault.db.run_task(fetch_face_likeness)
 
             neighbors = defaultdict(set)
             for picture_id_a, picture_id_b, _ in rows:
@@ -1305,14 +1314,40 @@ class Server:
 
             # For each group, fetch picture info and select best
             def fetch_pictures(session, ids):
-                return session.exec(select(Picture).where(Picture.id.in_(ids))).all()
+                return Picture.find(
+                    session,
+                    id=ids,
+                    select_fields=["faces", "quality", "height", "width"],
+                )
+
+            def face_likeness_lookup(face_a, face_b):
+                # Try both (a, b) and (b, a) since order may vary
+                return face_likeness_map.get(
+                    (face_a.id, face_b.id)
+                ) or face_likeness_map.get((face_b.id, face_a.id))
 
             stacks = []
             for group in groups:
                 pics = self.vault.db.run_task(fetch_pictures, group)
+                # Compute combined likeness for all pairs in group
+                likeness_matrix = {}
+                for i, pic_a in enumerate(pics):
+                    for j, pic_b in enumerate(pics):
+                        if i < j:
+                            score = combined_picture_face_likeness(
+                                pic_a, pic_b, face_likeness_lookup
+                            )
+                            likeness_matrix[(pic_a.id, pic_b.id)] = score
+                # Convert tuple keys to string keys for JSON compatibility
+                likeness_matrix_json = {
+                    f"{k[0]}|{k[1]}": v for k, v in likeness_matrix.items()
+                }
                 ordered = order_stack_pictures(pics)
                 stacks.append(
-                    {"pictures": [pic.to_serializable_dict() for pic in ordered]}
+                    {
+                        "pictures": [safe_model_dict(pic) for pic in ordered],
+                        "face_likeness_matrix": likeness_matrix_json,
+                    }
                 )
 
             return {
@@ -1752,9 +1787,19 @@ class Server:
 
             # Import all at once
             if new_pictures:
-                self.vault.db.run_task(
-                    lambda session: (session.add_all(new_pictures), session.commit())
+
+                def import_task(session):
+                    session.add_all(new_pictures)
+                    session.commit()
+                    for pic in new_pictures:
+                        session.refresh(pic)
+                    return new_pictures
+
+                new_pictures = self.vault.db.run_task(import_task)
+                logger.debug(
+                    f"Queuing likeness calculation for {len(new_pictures)} new pictures."
                 )
+                self.vault.queue_likeness_calculation(new_pictures)
             else:
                 logger.error("No new pictures to import; all are duplicates.")
                 raise HTTPException(

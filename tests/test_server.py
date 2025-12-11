@@ -679,8 +679,6 @@ def test_semantic_search():
                 }
             )
 
-
-
             # Wait for facial features to be processed and associate Esmeralda Vault with largest face in each picture
             for idx, future in enumerate(face_futures):
                 result_id = future.result(timeout=120)
@@ -769,7 +767,6 @@ def test_semantic_search():
                     WorkerType.TEXT_EMBEDDING,
                 }
             )
-
 
             # Wait for all text embeddings to be processed
             for future in embeddings_futures:

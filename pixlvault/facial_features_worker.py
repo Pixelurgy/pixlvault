@@ -8,6 +8,8 @@ from pixlvault.picture_tagger import PictureTagger
 from pixlvault.pixl_logging import get_logger
 from pixlvault.worker_registry import BaseWorker, WorkerType
 
+from pixlvault.db_models.face_likeness import FaceLikeness
+from pixlvault.db_models.face_likeness_work_queue import FaceLikenessWorkQueue
 from pixlvault.db_models.face import Face
 from pixlvault.db_models.picture import Picture
 
@@ -159,6 +161,9 @@ class FacialFeaturesWorker(BaseWorker):
                 session.commit()
                 return changed
 
+            all_face_ids = [face.id for face in faces]
+            self.add_face_combinations_to_queue(face_ids=all_face_ids)
+
             faces_updated = self._db.run_task(
                 update_faces, faces, priority=DBPriority.LOW
             )
@@ -167,3 +172,47 @@ class FacialFeaturesWorker(BaseWorker):
 
         logger.debug("Generated facial features for %d faces", updates)
         return updates
+
+    def add_face_combinations_to_queue(self, face_ids: list[int]):
+        """
+        Add combinations of all the face_ids and all existing face_ids to the likeness work queue.
+        Calls add_pair_to_queue for each combination.
+        """
+
+        # Fetch all existing face ids
+        def fetch_all_face_ids(session):
+            return [face.id for face in session.exec(select(Face)).all()]
+
+        existing_face_ids = self._db.run_task(fetch_all_face_ids)
+        for new_id in face_ids:
+            for existing_id in existing_face_ids:
+                if new_id > existing_id:
+                    self._db.run_task(self.add_pair_to_queue, new_id, existing_id)
+
+    @staticmethod
+    def add_pair_to_queue(session, face_id_a: int, face_id_b: int):
+        """
+        Add a pair to the likeness work queue, ensuring uniqueness and order (a < b).
+        """
+        if face_id_a == face_id_b:
+            return  # Don't add self-pairs
+        a, b = sorted([face_id_a, face_id_b])
+        # Check if already exists in queue or results
+
+        exists = session.exec(
+            select(FaceLikenessWorkQueue).where(
+                (FaceLikenessWorkQueue.face_id_a == a)
+                & (FaceLikenessWorkQueue.face_id_b == b)
+            )
+        ).first()
+        if exists:
+            return
+        exists = session.exec(
+            select(FaceLikeness).where(
+                (FaceLikeness.face_id_a == a) & (FaceLikeness.face_id_b == b)
+            )
+        ).first()
+        if exists:
+            return
+        session.add(FaceLikenessWorkQueue(face_id_a=a, face_id_b=b))
+        session.commit()

@@ -1,0 +1,212 @@
+import logging
+import os
+import tempfile
+
+import gc
+
+from fastapi.testclient import TestClient
+
+from pixlvault.db_models.face import Face
+from pixlvault.db_models.face_likeness import FaceLikeness
+from pixlvault.db_models.picture_likeness import PictureLikeness
+from pixlvault.db_models.picture import Picture
+from pixlvault.pixl_logging import get_logger
+from pixlvault.worker_registry import WorkerType
+from pixlvault.server import Server
+
+logger = get_logger(__name__)
+
+
+def test_picture_stacking():
+    """Test: Add all images from pictures folder, wait for tagging, perform semantic search, print results, assert count."""
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        config_path = os.path.join(temp_dir, "config.json")
+        server_config_path = os.path.join(temp_dir, "server_config.json")
+
+        src_dir = os.path.join(os.path.dirname(__file__), "../pictures")
+        image_files = [
+            f
+            for f in os.listdir(src_dir)
+            if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
+        ]
+
+        with Server(
+            config_path=config_path,
+            server_config_path=server_config_path,
+        ) as server:
+            # server.vault.import_default_data()
+            client = TestClient(server.api)
+
+            server.vault.start_workers(
+                {
+                    WorkerType.LIKENESS,
+                }
+            )
+
+            # Upload all images as new pictures
+            picture_ids = []
+            face_futures = []
+            picture_likeness_futures = []
+            id_to_filename = {}
+            for fname in image_files:
+                with open(os.path.join(src_dir, fname), "rb") as f:
+                    files = [("file", (fname, f.read(), "image/png"))]
+                    r = client.post("/pictures", files=files)
+                assert r.status_code == 200
+                resp = r.json()
+                assert resp["results"][0]["status"] == "success"
+                id_to_filename[resp["results"][0]["picture_id"]] = fname
+                picture_ids.append(resp["results"][0]["picture_id"])
+                face_futures.append(
+                    server.vault.get_worker_future(
+                        WorkerType.FACE, Picture, picture_ids[-1], "faces"
+                    )
+                )
+            for pid1 in picture_ids:
+                for pid2 in picture_ids:
+                    if pid2 > pid1:
+                        logger.debug("Queuing likeness pair: (%s, %s)", pid1, pid2)
+                        picture_likeness_futures.append(
+                            server.vault.get_worker_future(
+                                WorkerType.LIKENESS,
+                                PictureLikeness,
+                                (pid1, pid2),
+                                "pair",
+                            )
+                        )
+
+            server.vault.start_workers(
+                {
+                    WorkerType.FACE,
+                    WorkerType.FACIAL_FEATURES,
+                }
+            )
+
+            # Wait for facial features to be processed
+            facial_features_futures = []
+
+            all_face_ids = set()
+            for idx, future in enumerate(face_futures):
+                pid = future.result(timeout=120)
+                logging.debug(f"Facial features processed for picture ID: {pid}")
+
+                # Fetch faces for this picture
+                faces_resp = client.get(f"/pictures/{pid}/faces")
+                assert faces_resp.status_code == 200, (
+                    f"Failed to get picture info for {pid}"
+                )
+                logging.debug(
+                    f"Received face data for picture ID {pid}: {faces_resp.json().get('faces', [])}"
+                )
+                faces_data = faces_resp.json().get("faces", [])
+                logging.debug(f"Picture ID {pid} has {len(faces_data)} faces detected")
+                if not faces_data:
+                    continue  # No faces detected
+
+                for face in faces_data:
+                    facial_features_futures.append(
+                        server.vault.get_worker_future(
+                            WorkerType.FACIAL_FEATURES,
+                            Face,
+                            face["id"],
+                            "facial_features",
+                        )
+                    )
+                    all_face_ids.add(face["id"])
+
+            face_likeness_futures = []
+            for face_id1 in all_face_ids:
+                for face_id2 in all_face_ids:
+                    if face_id2 > face_id1:
+                        face_likeness_futures.append(
+                            server.vault.get_worker_future(
+                                WorkerType.FACE_LIKENESS,
+                                FaceLikeness,
+                                (face_id1, face_id2),
+                                "pair",
+                            )
+                        )
+
+            server.vault.start_workers({WorkerType.FACE_LIKENESS})
+
+            logger.info("Waiting for likeness to be processed...")
+
+            likeness_pairs = []
+            for future in picture_likeness_futures:
+                result = future.result(timeout=60)
+                assert result is not None, "LikenessWorker timed out"
+                likeness_pairs.append(result)
+                logger.info("Picture likeness computed: %s", result)
+
+            logger.info("Waiting for facial likeness to be processed...")
+            face_likeness_pairs = []
+            for future in face_likeness_futures:
+                result = future.result(timeout=60)
+                assert result is not None, "FaceLikenessWorker timed out"
+                face_likeness_pairs.append(result)
+
+            assert (
+                len(likeness_pairs) == (len(picture_ids) * (len(picture_ids) - 1)) // 2
+            ), "Not all picture likeness pairs were computed."
+            assert (
+                len(face_likeness_pairs)
+                == (len(all_face_ids) * (len(all_face_ids) - 1)) // 2
+            ), "Not all face likeness pairs were computed."
+
+            server.vault.stop_workers()
+
+            # --- NEW: Fetch /pictures/stacks and log likeness table ---
+            response = client.get("/pictures/stacks")
+            assert response.status_code == 200, (
+                f"Failed to fetch /pictures/stacks: {response.text}"
+            )
+            stacks_data = response.json()
+            # Build a picture-to-picture likeness table from all stacks
+            pic_ids = picture_ids
+            # Fetch descriptions for all picture ids
+            desc_resp = client.get("/pictures", params={"ids": ",".join(pic_ids)})
+            assert desc_resp.status_code == 200, (
+                f"Failed to fetch picture descriptions: {desc_resp.text}"
+            )
+            desc_data = desc_resp.json()
+
+            logger.info("Picture descriptions data: %s", desc_data)
+
+            # Build a dict of dicts for likeness values
+            likeness_table = {pid: {} for pid in pic_ids}
+            for stack in stacks_data.get("stacks", []):
+                matrix = stack.get("face_likeness_matrix", {})
+                for key, score in matrix.items():
+                    id_a, id_b = key.split("|", 1)
+                    likeness_table.setdefault(id_a, {})[id_b] = score
+                    likeness_table.setdefault(id_b, {})[id_a] = score
+            # Log as a text table using descriptions
+            header = [" "] + [id_to_filename[pid] for pid in pic_ids]
+            rows = []
+            for pid_a in pic_ids:
+                row = [id_to_filename[pid_a]]
+                for pid_b in pic_ids:
+                    if pid_a == pid_b:
+                        row.append("--")
+                    else:
+                        val = likeness_table.get(pid_a, {}).get(pid_b)
+                        row.append(f"{val:.3f}" if val is not None else "")
+                rows.append(row)
+            # Format as aligned text
+            col_widths = [
+                max(len(str(cell)) for cell in col) for col in zip(*([header] + rows))
+            ]
+
+            def fmt_row(row):
+                return " | ".join(
+                    str(cell).ljust(w) for cell, w in zip(row, col_widths)
+                )
+
+            table_str = "\n".join([fmt_row(header)] + [fmt_row(r) for r in rows])
+            logger.info(
+                "\nPicture-to-picture likeness table (from /pictures/stacks):\n%s",
+                table_str,
+            )
+
+    gc.collect()

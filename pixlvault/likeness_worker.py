@@ -1,7 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import cv2
 import numpy as np
-import time
 from sqlmodel import select
 
 from pixlvault.pixl_logging import get_logger
@@ -24,8 +23,6 @@ class LikenessWorker(BaseWorker):
 
     def _run(self):
         while not self._stop.is_set():
-            start = time.time()
-
             # 1. Fetch pending pairs from the work queue
             def fetch_pending_pairs(session):
                 pairs = session.exec(
@@ -47,7 +44,7 @@ class LikenessWorker(BaseWorker):
                 self._stop.wait(self.INTERVAL)
                 continue
 
-            logger.info(f"LikenessWorker: Processing {len(pending_pairs)} pairs.")
+            logger.debug(f"LikenessWorker: Processing {len(pending_pairs)} pairs.")
 
             # 2. Do likeness computation outside the session
             likeness_results = []
@@ -105,10 +102,12 @@ class LikenessWorker(BaseWorker):
 
             if processed_notify_ids:
                 self._notify_ids_processed(processed_notify_ids)
-
-            elapsed = time.time() - start
-            if elapsed < self.INTERVAL:
-                self._stop.wait(self.INTERVAL - elapsed)
+                logger.info(
+                    f"LikenessWorker: Processed {len(processed_notify_ids)} likeness scores."
+                )
+            else:
+                logger.info("LikenessWorker: No likeness scores computed. Sleeping...")
+                self._stop.wait()
         logger.info("LikenessWorker: Likeness worker stopped.")
 
     def _color_histogram_likeness(self, img_a, img_b, bins=32):
@@ -223,4 +222,5 @@ class LikenessWorker(BaseWorker):
         if exists:
             return
         session.add(LikenessWorkQueue(picture_id_a=a, picture_id_b=b))
+        logger.info("Added likeness pair to queue: (%s, %s)", a, b)
         session.commit()

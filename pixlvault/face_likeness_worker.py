@@ -123,15 +123,8 @@ class FaceLikenessWorker(BaseWorker):
                 self._stop.wait(self.INTERVAL - elapsed)
         logger.info("FaceLikenessWorker: Face likeness worker stopped.")
 
-    def queue_pair(self, face_id_a: int, face_id_b: int):
-        """
-        Public method to queue a pair for likeness computation.
-        """
-        self._db.run_task(FaceLikenessWorker._add_pair_to_queue, face_id_a, face_id_b)
-        self.notify()  # Wake up the worker if sleeping
-
     @staticmethod
-    def _add_pair_to_queue(session, face_id_a: int, face_id_b: int):
+    def add_pair_to_queue(session, face_id_a: int, face_id_b: int):
         """
         Add a pair to the likeness work queue, ensuring uniqueness and order (a < b).
         """

@@ -89,10 +89,8 @@ class Vault:
         logger.debug("Stopping background workers...")
         for worker in self._workers.values():
             if worker.worker_type() in workers_to_stop:
-                logger.debug(f"Stopping worker: {worker}")
+                logger.debug(f"Stopping worker: {worker.worker_type()}")
                 worker.stop()
-            else:
-                logger.warning(f"Worker {worker} not found in vault workers.")
 
     def start_workers(self, workers_to_start: set[WorkerType] = WorkerType.all()):
         # Initialize all workers
@@ -102,12 +100,13 @@ class Vault:
                 self.initialise_worker_if_necessary(worker_type)
 
         logger.debug("Starting background workers...")
-        for worker in self._workers.values():
-            if worker.worker_type() in workers_to_start:
-                logger.info(f"Starting worker: {worker}")
+        for worker_type in workers_to_start:
+            worker = self._workers.get(worker_type)
+            if worker:
+                logger.info(f"Starting worker: {worker_type}")
                 worker.start()
             else:
-                logger.warning(f"Worker {worker} not found in vault workers.")
+                logger.warning(f"Worker {worker_type} not found in vault workers.")
 
     def notify(self, event_type: EventType):
         """
@@ -134,9 +133,30 @@ class Vault:
             picture_id_b (str): ID of the second picture.
         """
         likeness_worker: LikenessWorker = self._workers.get(WorkerType.LIKENESS)
-        if likeness_worker is None:
-            raise ValueError("LikenessWorker is not available in this vault.")
-        likeness_worker.queue_pair(picture_id_a, picture_id_b)
+        if likeness_worker:
+            likeness_worker.queue_pair(picture_id_a, picture_id_b)
+        else:
+            logger.warning("LikenessWorker not found in this vault. Can't queue work.")
+
+    def queue_likeness_calculation(self, pictures: list[Picture]):
+        """
+        Queue all unique pairs of pictures for likeness calculation.
+
+        Args:
+            pictures (list[Picture]): List of Picture objects to queue for likeness calculation.
+        """
+        likeness_worker: LikenessWorker = self._workers.get(WorkerType.LIKENESS)
+        if likeness_worker:
+            picture_ids = sorted([pic.id for pic in pictures])
+            # Query for all existing picture ids
+            existing_picture_ids = set(
+                self.db.run_task(lambda session: session.exec(select(Picture.id)).all())
+            )
+            for pic_id_a in picture_ids:
+                for pic_id_b in existing_picture_ids:
+                    likeness_worker.queue_pair(pic_id_a, pic_id_b)
+        else:
+            logger.warning("LikenessWorker not found in this vault. Can't queue work.")
 
     def queue_face_likeness_pair_calculation(self, face_id_a: int, face_id_b: int):
         """
