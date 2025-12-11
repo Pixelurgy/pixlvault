@@ -49,7 +49,7 @@ def test_face_likeness_worker():
             server.vault.start_workers({WorkerType.FACE})
             timeout = time.time() + 60
             for face_future in face_futures:
-                result = face_future.result(timeout=timeout - time.time())
+                face_future.result(timeout=timeout - time.time())
 
             server.vault.stop_workers({WorkerType.FACE})
 

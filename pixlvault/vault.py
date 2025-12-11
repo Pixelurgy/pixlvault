@@ -247,7 +247,7 @@ class Vault:
                 worker_type,
                 self.db,
                 self._picture_tagger,
-                event_callback=lambda et: self.notify(et),
+                event_callback=self.notify,
             )
             self._workers[worker_type] = worker_instance
 

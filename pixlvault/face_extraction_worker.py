@@ -65,7 +65,7 @@ class FaceExtractionWorker(BaseWorker):
             from insightface.app import FaceAnalysis
         except ImportError:
             logger.error("InsightFace is not installed. Skipping face extraction.")
-            return
+            return []
         if not hasattr(self, "_insightface_app"):
             logger.debug("initialising InsightFace with CPU only (ctx_id=-1)")
             self._insightface_app = FaceAnalysis()
