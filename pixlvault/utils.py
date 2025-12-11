@@ -30,6 +30,8 @@ def safe_model_dict(obj) -> dict:
         return obj
     result = {}
     for field, value in obj.__dict__.items():
+        if field.startswith("_sa"):
+            continue
         if isinstance(value, bytes):
             result[field] = base64.b64encode(value).decode("utf-8")
         elif field.endswith("_") and isinstance(value, str):

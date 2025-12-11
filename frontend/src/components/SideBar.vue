@@ -59,6 +59,7 @@ const nextCharacterNumber = ref(1);
 
 // --- Picture Sets State ---
 const pictureSets = ref([]);
+const referencePictureSetsByCharacter = ref({});
 
 // --- Character Editor State ---
 const characterEditorOpen = ref(false);
@@ -99,22 +100,6 @@ const selectedCharacterObj = computed(() => {
     return char;
   }
   return null;
-});
-
-// Use reference_picture_set_id from categoryCounts (populated from backend /category/summary)
-const referenceSetInfoByCharacter = computed(() => {
-  const map = {};
-  sortedCharacters.value.forEach((char) => {
-    // Find the reference set for this character by matching name and description
-    const set = pictureSets.value.find(
-      (s) =>
-        s.name === "reference_pictures" && s.description === String(char.id)
-    );
-    if (set) {
-      map[char.id] = set;
-    }
-  });
-  return map;
 });
 
 const sortModel = computed({
@@ -254,7 +239,7 @@ function toggleCharacterCollapse(charId) {
 }
 
 // --- Sidebar & Character Data ---
-async function fetchSidebarCounts() {
+async function fetchSidebarData() {
   // Fetch total image count for END key logic
   try {
     // All images summary
@@ -322,7 +307,7 @@ function refreshSidebar() {
   console.log("Refreshing sidebar");
   fetchCharacters();
   fetchPictureSets();
-  fetchSidebarCounts();
+  fetchSidebarData();
 }
 
 async function fetchCharacterThumbnail(characterId) {
@@ -382,6 +367,17 @@ async function fetchPictureSets() {
     if (!res.ok) throw new Error("Failed to fetch picture sets");
     const sets = await res.json();
     pictureSets.value = Array.isArray(sets) ? [...sets] : [];
+    console.log("Found picture sets:", pictureSets.value);
+    referencePictureSetsByCharacter.value = pictureSets.value.reduce(
+      (acc, set) => {
+        if (set.reference_character) {
+          acc[set.reference_character.id] = set;
+        }
+        return acc;
+      },
+      {}
+    );
+
   } catch (e) {
     console.error("Error fetching picture sets:", e);
     pictureSets.value = [...pictureSets.value]; // force reactivity on error
@@ -415,7 +411,7 @@ async function handleDeleteSet() {
     if (!res.ok) throw new Error("Failed to delete set");
     emit("select-set", null);
     await fetchPictureSets();
-    await fetchSidebarCounts();
+    await fetchSidebarData();
   } catch (e) {
     alert("Failed to delete set: " + (e.message || e));
   }
@@ -518,7 +514,7 @@ async function onCharacterDrop(characterId, event) {
       if (!res.ok) {
         throw new Error("Failed to assign faces to character");
       }
-      await fetchSidebarCounts();
+      await fetchSidebarData();
       await fetchCharacterThumbnail(characterId);
       //emit("faces-assigned-to-character", { characterId, faceIds});
       console.log(
@@ -550,7 +546,7 @@ async function onCharacterDrop(characterId, event) {
     if (!res.ok) {
       throw new Error("Failed to assign images to character");
     }
-    await fetchSidebarCounts();
+    await fetchSidebarData();
     await fetchCharacterThumbnail(characterId);
     //emit("faces-assigned-to-character", { characterId, imageIds });
     console.log(
@@ -575,7 +571,7 @@ async function removeFacesFromCharacter(characterId, faceIds) {
     if (!res.ok) {
       throw new Error("Failed to remove faces from character");
     }
-    await fetchSidebarCounts();
+    await fetchSidebarData();
     await fetchCharacterThumbnail(characterId);
     emit("faces-removed-from-character", { characterId, faceIds });
     console.log(
@@ -637,7 +633,7 @@ async function pictureSetSaved(setData) {
   }
   await fetchPictureSets();
   pictureSets.value = [...pictureSets.value]; // force reactivity
-  await fetchSidebarCounts();
+  await fetchSidebarData();
   closeSetEditor();
 }
 
@@ -829,7 +825,7 @@ defineExpose({ refreshSidebar });
               class="sidebar-character-details"
             >
               <div class="sidebar-reference-pictures">
-                <template v-if="referenceSetInfoByCharacter[char.id]">
+                <template v-if="referencePictureSetsByCharacter[char.id]">
                   <div
                     :class="[
                       'sidebar-list-item',
@@ -837,20 +833,20 @@ defineExpose({ refreshSidebar });
                       {
                         active:
                           selectedSet ===
-                          referenceSetInfoByCharacter[char.id].id,
+                          referencePictureSetsByCharacter[char.id].id,
                         droppable:
                           dragOverSet ===
-                          referenceSetInfoByCharacter[char.id].id,
+                          referencePictureSetsByCharacter[char.id].id,
                       },
                     ]"
-                    @click="selectSet(referenceSetInfoByCharacter[char.id].id)"
+                    @click="selectSet(referencePictureSetsByCharacter[char.id].id)"
                     @dragover.prevent="
-                      dragOverSetItem(referenceSetInfoByCharacter[char.id].id)
+                      dragOverSetItem(referencePictureSetsByCharacter[char.id].id)
                     "
                     @dragleave="dragLeaveSetItem"
                     @drop.prevent="
                       handleDropOnSet(
-                        referenceSetInfoByCharacter[char.id].id,
+                        referencePictureSetsByCharacter[char.id].id,
                         $event
                       )
                     "
@@ -906,7 +902,7 @@ defineExpose({ refreshSidebar });
         </div>
         <template
           v-for="(pset, idx) in pictureSets.filter(
-            (pset) => pset.name !== 'reference_pictures'
+            (pset) => pset.reference_character == null
           )"
           :key="pset.id"
         >

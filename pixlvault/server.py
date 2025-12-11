@@ -10,6 +10,7 @@ import concurrent.futures
 import sys
 import time
 
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from contextlib import asynccontextmanager
@@ -1029,10 +1030,12 @@ class Server:
             """List all picture sets."""
             from pixlvault.db_models import PictureSet, PictureSetMember
 
-            start = time.time()
-
             def fetch_sets(session):
-                sets = session.exec(select(PictureSet)).all()
+                sets = session.exec(
+                    select(PictureSet).options(
+                        selectinload(PictureSet.reference_character)
+                    )
+                ).all()
                 result = []
                 for s in sets:
                     # Count members
@@ -1040,14 +1043,15 @@ class Server:
                         select(PictureSetMember).where(PictureSetMember.set_id == s.id)
                     ).all()
                     count = len(members)
-                    set_dict = s.dict()
+                    set_dict = safe_model_dict(s)
                     set_dict["picture_count"] = count
                     result.append(set_dict)
                 return result
 
-            result = self.vault.db.run_task(fetch_sets, priority=DBPriority.IMMEDIATE)
-            elapsed = time.time() - start
-            print(f"[SERVER] get_picture_sets took {elapsed:.4f} seconds")
+            result = safe_model_dict(
+                self.vault.db.run_task(fetch_sets, priority=DBPriority.IMMEDIATE)
+            )
+            logger.info(f"Fetched picture set {result}")
             return result
 
         @self.api.post("/picture_sets")
@@ -1102,12 +1106,15 @@ class Server:
                 pics = session.exec(
                     select(Picture).where(Picture.id.in_(picture_ids))
                 ).all()
-                return [pic.dict(exclude={"file_path", "thumbnail"}) for pic in pics]
+                return [
+                    pic.dict(exclude={"file_path", "thumbnail", "text_embedding"})
+                    for pic in pics
+                ]
 
             pictures = self.vault.db.run_task(
                 fetch_pics, picture_ids, priority=DBPriority.IMMEDIATE
             )
-            return {"pictures": pictures, "set": picture_set.dict()}
+            return {"pictures": pictures, "set": safe_model_dict(picture_set)}
 
         @self.api.patch("/picture_sets/{id}")
         async def update_picture_set(id: int, payload: dict = Body(...)):
