@@ -1,4 +1,5 @@
 import base64
+import gc
 import uvicorn
 import io
 import os
@@ -63,6 +64,11 @@ class Server:
             config_path (str): Path to the image roots config file.
             server_config_path (str): Path to the server-only config file.
         """
+
+        # Ensure garbage collection before starting server to free up memory
+        # This is mainly to ensure repeated runs within the testing framework do not accumulate memory usage
+        gc.collect()
+
         self._config_path = config_path
 
         self._config = self._init_config(config_path)
