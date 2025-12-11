@@ -81,14 +81,14 @@ class FaceExtractionWorker(BaseWorker):
                 if img is not None:
                     faces = self._insightface_app.get(img)
                     logger.debug("Found %d faces in image %s", len(faces), file_path)
-                    for i, face in enumerate(faces):
+                    for face in faces:
                         expanded_bbox = Face.expand_face_bbox(
                             face.bbox, img.shape[1], img.shape[0], 0.1
                         )
                         face_objects.append(
                             Face(
                                 picture_id=pic.id,
-                                face_index=i,
+                                face_index=-1,  # will set after sorting
                                 bbox=expanded_bbox,
                                 character_id=None,
                                 frame_index=0,
@@ -111,14 +111,14 @@ class FaceExtractionWorker(BaseWorker):
                             )
                             continue
                         frame_faces = self._insightface_app.get(frame)
-                        for i, face in enumerate(frame_faces):
+                        for face in frame_faces:
                             expanded_bbox = Face.expand_face_bbox(
                                 face.bbox, frame.shape[1], frame.shape[0], 0.1
                             )
                             face_objects.append(
                                 Face(
                                     picture_id=pic.id,
-                                    face_index=i,
+                                    face_index=-1,  # will set after sorting
                                     bbox=expanded_bbox,
                                     character_id=None,
                                     frame_index=frame_index,
@@ -129,6 +129,15 @@ class FaceExtractionWorker(BaseWorker):
                 logger.warning(
                     f"Unsupported file extension for face extraction: {file_path}"
                 )
+
+            # Sort faces by bbox: (y0, x0, y1, x1)
+            face_objects.sort(
+                key=lambda f: (f.bbox[1], f.bbox[0], f.bbox[3], f.bbox[2])
+            )
+            # Assign face_index after sorting
+            for idx, face in enumerate(face_objects):
+                face.face_index = idx
+
             if not face_objects:
                 logger.warning(
                     f"No face found in {file_path} for picture {pic.id}. Inserting sentinel record."
