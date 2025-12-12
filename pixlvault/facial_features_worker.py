@@ -42,7 +42,7 @@ class FacialFeaturesWorker(BaseWorker):
                 pictures_missing_facial_features = (
                     self._fetch_pics_missing_facial_features(faces_missing_features)
                 )
-                logger.debug(
+                logger.info(
                     "FacialFeaturesWorker: It took %.2f seconds to fetch %d pictures needing facial features."
                     % (
                         time.time() - start,
@@ -56,11 +56,11 @@ class FacialFeaturesWorker(BaseWorker):
                     features_updated = self._generate_facial_features(
                         pictures_missing_facial_features
                     )
-                    logger.debug(
-                        f"Updated facial features for {features_updated} pictures."
+                    logger.info(
+                        f"Updated facial features for {features_updated} faces."
                     )
                 else:
-                    logger.debug(
+                    logger.info(
                         "FacialFeaturesWorker: No pictures need facial features. Sleeping."
                     )
                     self._wait()

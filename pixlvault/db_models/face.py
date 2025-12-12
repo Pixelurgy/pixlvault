@@ -103,11 +103,16 @@ class Face(SQLModel, table=True):
     def find(cls, session, **filters) -> Optional["Face"]:
         """
         Find faces by picture_id, frame_index, and/or face_index.
+        Supports passing a list for picture_id (uses IN_ if so).
         """
         query = select(cls).options(joinedload(cls.quality)).where(cls.face_index != -1)
         for attr, value in filters.items():
             if hasattr(cls, attr):
-                query = query.where(getattr(cls, attr) == value)
+                col = getattr(cls, attr)
+                if attr == "picture_id" and isinstance(value, list):
+                    query = query.where(col.in_(value))
+                else:
+                    query = query.where(col == value)
 
         faces = session.exec(query).all()
         return faces

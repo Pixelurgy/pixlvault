@@ -581,3 +581,17 @@ class PictureUtils:
             y2c = max(0, min(h, y2))
             crop_img = img[y1c:y2c, x1c:x2c]
             return crop_img
+
+    @staticmethod
+    def softmax_weighted_average(scores, alpha=5.0):
+        """
+        Compute a softmax-weighted average of likeness scores.
+        Args:
+            scores (list or np.ndarray): List of likeness scores (floats between 0 and 1).
+            alpha (float): Controls sharpness; higher alpha makes the max more dominant.
+        Returns:
+            float: Softmax-weighted average likeness.
+        """
+        scores = np.array(scores)
+        weights = np.exp(alpha * scores)
+        return float(np.sum(weights * scores) / np.sum(weights))

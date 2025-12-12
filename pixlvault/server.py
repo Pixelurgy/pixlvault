@@ -28,10 +28,12 @@ from pixlvault.db_models import (
     Conversation,
     Message,
     Picture,
+    PictureSet,
+    PictureSetMember,
     SortMechanism,
 )
 
-from pixlvault.db_models import PictureLikeness, FaceLikeness, PictureSet
+from pixlvault.db_models import PictureLikeness, FaceLikeness
 from pixlvault.picture_stack_utils import (
     order_stack_pictures,
     combined_picture_face_likeness,
@@ -1039,7 +1041,6 @@ class Server:
         @self.api.get("/picture_sets")
         async def get_picture_sets():
             """List all picture sets."""
-            from pixlvault.db_models import PictureSet, PictureSetMember
 
             def fetch_sets(session):
                 sets = session.exec(
@@ -1882,6 +1883,130 @@ class Server:
 
             if character_id is not None and character_id != "":
                 character_id = int(character_id)
+
+                if sort == SortMechanism.CHARACTER_LIKENESS.value:
+                    # List pictures by likeness to character
+                    # 1. Fetch reference faces from the reference pictures set for character
+                    # 2. Fetch all faces that are not assigned to character
+                    # 3. Order them by average likeness to reference faces
+                    # 4. Return pictures containing those faces in the same order as the faces
+                    def get_character_reference_faces(session, character_id):
+                        # Need to get pictures in the reference set for this character
+                        character = Character.find(session, id=character_id)
+                        reference_set = session.get(
+                            PictureSet, character[0].reference_picture_set_id
+                        )
+                        if not reference_set:
+                            return []
+                        members = session.exec(
+                            select(PictureSetMember).where(
+                                PictureSetMember.set_id == reference_set.id
+                            )
+                        ).all()
+                        picture_ids = [m.picture_id for m in members]
+                        if not picture_ids:
+                            logger.warning(
+                                f"No pictures in reference set id={reference_set.id} for character id={character_id}"
+                            )
+                            return []
+                        faces = Face.find(session, picture_id=picture_ids)
+                        return faces
+
+                    # 1. Get reference faces (use set of face IDs for uniqueness)
+                    reference_faces = self.vault.db.run_task(
+                        get_character_reference_faces, character_id
+                    )
+
+                    if not reference_faces:
+                        logger.warning(
+                            f"No reference faces found for character id={character_id}"
+                        )
+                        return []
+
+                    # 2. Get all faces not assigned to character
+                    def get_unassigned_faces(session, character_id):
+                        # Find faces not assigned to this character (character_id is None or not equal)
+                        faces = session.exec(
+                            select(Face).where(
+                                (Face.character_id != character_id)
+                                | (Face.character_id.is_(None))
+                            )
+                        ).all()
+                        return faces
+
+                    candidate_faces = self.vault.db.run_task(
+                        get_unassigned_faces, character_id
+                    )
+                    if not candidate_faces:
+                        logger.warning("No unassigned faces found")
+                        return []
+
+                    def face_likeness_lookup(session, face_a, face_b):
+                        # Always try min(face_a, face_b), max(face_a, face_b) to ensure consistent ordering
+                        min_id = min(face_a.id, face_b.id)
+                        max_id = max(face_a.id, face_b.id)
+                        row = session.exec(
+                            select(FaceLikeness).where(
+                                (
+                                    (FaceLikeness.face_id_a == min_id)
+                                    & (FaceLikeness.face_id_b == max_id)
+                                )
+                            )
+                        ).first()
+                        if row:
+                            return row.likeness
+                        return None
+
+                    character_likeness_map = {}
+                    for face in candidate_faces:
+                        scores = []
+                        for ref_face in reference_faces:
+                            likeness = self.vault.db.run_task(
+                                face_likeness_lookup, face, ref_face
+                            )
+                            if likeness is not None:
+                                scores.append(likeness)
+                        character_likeness_map[face.id] = (
+                            PictureUtils.softmax_weighted_average(scores, alpha=4.0)
+                            if scores
+                            else 0.0
+                        )
+                    # 3. Get unique picture IDs in that order
+                    # For each picture, use the maximum character_likeness among all its unassigned faces
+                    picture_likeness_map = {}
+                    for face in candidate_faces:
+                        pic_id = face.picture_id
+                        likeness = character_likeness_map.get(face.id, 0.0)
+                        if pic_id not in picture_likeness_map:
+                            picture_likeness_map[pic_id] = likeness
+                        else:
+                            picture_likeness_map[pic_id] = max(
+                                picture_likeness_map[pic_id], likeness
+                            )
+
+                    # Fetch Picture objects
+                    candidate_pics = self.vault.db.run_task(
+                        Picture.find,
+                        id=list(picture_likeness_map.keys()),
+                        select_fields=Picture.metadata_fields(),
+                    )
+
+                    # Assign character_likeness to pictures
+                    dicts = []
+                    for pic in candidate_pics:
+                        pic_dict = safe_model_dict(pic)
+                        pic_id = pic_dict["id"]
+                        pic_dict["character_likeness"] = picture_likeness_map.get(
+                            pic_id, 0.0
+                        )
+                        dicts.append(pic_dict)
+
+                    # Sort by character_likeness descending
+                    dicts.sort(key=lambda x: x["character_likeness"], reverse=True)
+
+                    # Apply offset and limit
+                    selected_pics = dicts[offset : offset + limit]
+                    return selected_pics
 
                 # Find all faces for this character
                 def get_picture_ids_for_character(session, character_id):

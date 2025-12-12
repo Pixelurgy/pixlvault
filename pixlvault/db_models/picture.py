@@ -34,6 +34,7 @@ class SortMechanism(str, Enum):
     DATE_ASC = "created_at asc"
     SCORE_DESC = "score desc"
     SCORE_ASC = "score asc"
+    CHARACTER_LIKENESS = "character_likeness"
     SEARCH_LIKENESS = "search_likeness desc"
     SHARPNESS_DESC = "sharpness desc"
     SHARPNESS_ASC = "sharpness asc"
