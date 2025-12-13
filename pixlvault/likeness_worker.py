@@ -222,5 +222,5 @@ class LikenessWorker(BaseWorker):
         if exists:
             return
         session.add(LikenessWorkQueue(picture_id_a=a, picture_id_b=b))
-        logger.info("Added likeness pair to queue: (%s, %s)", a, b)
+        logger.debug("Added likeness pair to queue: (%s, %s)", a, b)
         session.commit()

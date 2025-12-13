@@ -122,7 +122,7 @@ class Vault:
                 logger.debug(f"Notifying worker {worker_type} for event {event_type}")
                 worker.notify()
             else:
-                logger.warning(f"Worker {worker_type} not found for event {event_type}")
+                logger.debug(f"Worker {worker_type} not found for event {event_type}")
 
     def queue_likeness_pair_calculation(self, picture_id_a: str, picture_id_b: str):
         """
@@ -135,8 +135,6 @@ class Vault:
         likeness_worker: LikenessWorker = self._workers.get(WorkerType.LIKENESS)
         if likeness_worker:
             likeness_worker.queue_pair(picture_id_a, picture_id_b)
-        else:
-            logger.warning("LikenessWorker not found in this vault. Can't queue work.")
 
     def queue_likeness_calculation(self, pictures: list[Picture]):
         """
@@ -155,8 +153,6 @@ class Vault:
             for pic_id_a in picture_ids:
                 for pic_id_b in existing_picture_ids:
                     likeness_worker.queue_pair(pic_id_a, pic_id_b)
-        else:
-            logger.warning("LikenessWorker not found in this vault. Can't queue work.")
 
     def queue_face_likeness_pair_calculation(self, face_id_a: int, face_id_b: int):
         """

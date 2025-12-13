@@ -324,7 +324,7 @@ class Server:
                 file_entry, sha = args
                 img_bytes, ext = file_entry
                 pic_id = str(uuid.uuid4()) + ext
-                logger.info(f"Importing picture from uploaded bytes as id={pic_id}")
+                logger.debug(f"Importing picture from uploaded bytes as id={pic_id}")
                 return PictureUtils.create_picture_from_bytes(
                     image_root_path=dest_folder,
                     image_bytes=img_bytes,
@@ -1743,7 +1743,7 @@ class Server:
             """
 
             dest_folder = self.vault.image_root
-            logger.info("Importing pictures to folder: " + str(dest_folder))
+            logger.debug("Importing pictures to folder: " + str(dest_folder))
             os.makedirs(dest_folder, exist_ok=True)
             uploaded_files = []
             # Collect files to import
@@ -1782,7 +1782,7 @@ class Server:
                 uploaded_files, dest_folder
             )
 
-            logger.info(
+            logger.debug(
                 f"Importing {len(new_pictures)} new pictures out of {len(uploaded_files)} uploaded."
             )
 
@@ -1967,7 +1967,7 @@ class Server:
                             if likeness is not None:
                                 scores.append(likeness)
                         character_likeness_map[face.id] = (
-                            PictureUtils.softmax_weighted_average(scores, alpha=4.0)
+                            PictureUtils.softmax_weighted_average(scores)
                             if scores
                             else 0.0
                         )

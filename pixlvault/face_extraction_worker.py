@@ -1,7 +1,7 @@
 from typing import List
 import cv2
 import os
-import time
+from insightface.app import FaceAnalysis
 
 from sqlmodel import select
 from pixlvault.database import DBPriority
@@ -10,19 +10,24 @@ from pixlvault.pixl_logging import get_logger
 from pixlvault.worker_registry import BaseWorker, WorkerType
 from pixlvault.db_models.face import Face
 from pixlvault.db_models.picture import Picture
+from pixlvault.picture_tagger import PictureTagger
 
 logger = get_logger(__name__)
 
 
 class FaceExtractionWorker(BaseWorker):
-    INSIGHTFACE_CLEANUP_TIMEOUT = 20  # seconds
+    INSIGHTFACE_CLEANUP_TIMEOUT = 60  # seconds
 
     def worker_type(self) -> WorkerType:
         return WorkerType.FACE
 
+    def __init__(self, database, picture_tagger, event_callback):
+        super().__init__(database, picture_tagger, event_callback)
+        self._init_insightface_app()
+
     def _run(self):
         logger.info("FaceExtractionWorker: Worker thread started and running.")
-        time.sleep(1.25)  # Stagger start times for multiple workers
+
         while not self._stop.is_set():
             try:
                 logger.debug("FaceExtractionWorker: Starting iteration...")
@@ -37,11 +42,15 @@ class FaceExtractionWorker(BaseWorker):
                 if updates:
                     self._notify_ids_processed(updates)
                     self._notify_others(EventType.CHANGED_FACES)
-
-                logger.debug(
-                    "FaceExtractionWorker: Done with iteration having processed %d pictures.",
-                    len(updates),
-                )
+                    logger.debug(
+                        "FaceExtractionWorker: Done with iteration having processed %d pictures.",
+                        len(updates),
+                    )
+                else:
+                    logger.debug(
+                        "FaceExtractionWorker: Done with iteration but no pictures were processed."
+                    )
+                    self._wait()
             except Exception as e:
                 import traceback
 
@@ -60,17 +69,21 @@ class FaceExtractionWorker(BaseWorker):
             ).all()
         )
 
-    def _extract_faces(self, pics) -> List[tuple]:
-        try:
-            from insightface.app import FaceAnalysis
-        except ImportError:
-            logger.error("InsightFace is not installed. Skipping face extraction.")
-            return []
+    def _init_insightface_app(self):
         if not hasattr(self, "_insightface_app"):
             logger.debug("initialising InsightFace with CPU only (ctx_id=-1)")
-            self._insightface_app = FaceAnalysis()
-            self._insightface_app.prepare(ctx_id=-1, det_thresh=0.25)
+            self._insightface_app = FaceAnalysis(
+                providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+            )
+            self._insightface_app.prepare(
+                ctx_id=0 if not PictureTagger.FORCE_CPU else -1, det_thresh=0.25
+            )
+
+    def _extract_faces(self, pics) -> List[tuple]:
+        self._init_insightface_app()
+
         updates = []
+
         for pic in pics:
             logger.debug("Looking for faces in picture %s %s", pic.id, pic.description)
             file_path = pic.file_path
