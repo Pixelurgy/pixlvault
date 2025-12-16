@@ -355,3 +355,11 @@ class Picture(SQLModel, table=True):
                 except Exception:
                     d[field] = None
         return d
+
+    @classmethod
+    def clear_field(cls, session, picture_ids, field_name: str):
+        pictures = cls.find(session=session, id=picture_ids, select_fields=[field_name])
+        for pic in pictures:
+            setattr(pic, field_name, None)
+            session.add(pic)
+        session.commit()

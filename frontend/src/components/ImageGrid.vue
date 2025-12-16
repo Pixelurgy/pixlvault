@@ -275,7 +275,7 @@
           <div class="thumbnail-info-row">
             <div
               v-if="
-                props.selectedSort === 'search_likeness' &&
+                props.selectedSort === 'search_likeness desc' &&
                 img.likeness_score !== undefined
               "
               class="likeness-score"
@@ -479,7 +479,8 @@ function getFaceBboxOverlays(img) {
     }
     const el = thumbnailRefs[img.id];
     if (!el) return [];
-    return img.faces.map((face, fidx) => ({
+    const firstFrameFaces = img.faces.filter((f) => f.frame_index === 0);
+    return firstFrameFaces.map((face, fidx) => ({
       style: getFaceBboxStyle(face.bbox, fidx, img, el),
       idx: fidx,
     }));
@@ -752,7 +753,9 @@ async function updateSelectedGroupName() {
     props.selectedSet !== `${props.unassignedPicturesId}`
   ) {
     try {
-      const res = await fetch(`${props.backendUrl}/sets/${props.selectedSet}`);
+      const res = await fetch(
+        `${props.backendUrl}/picture_sets/${props.selectedSet}`
+      );
       if (res.ok) {
         const set = await res.json();
         name = set.name || "";
@@ -999,7 +1002,7 @@ function buildPictureIdsQueryParams() {
     props.selectedCharacter !== "" &&
     props.selectedCharacter !== props.allPicturesId
   ) {
-      params.append("character_id", props.selectedCharacter);
+    params.append("character_id", props.selectedCharacter);
   }
 
   if (props.searchQuery && props.searchQuery.trim()) {
@@ -1101,10 +1104,16 @@ watch(
 );
 
 watch([() => props.mediaTypeFilter], () => {
-  // Reset loaded ranges and thumbnails when filters change
+  // Reset loaded ranges, thumbnails, pagination, and fetch new count/images for filter
   loadedRanges.value = [];
   selectedImageIds.value = [];
   lastSelectedIndex = null;
+  visibleStart.value = 0;
+  visibleEnd.value = 0;
+  allGridImages.value = [];
+  fetchTotalImageCount().then(() => {
+    updateVisibleThumbnails();
+  });
 });
 
 // Track loaded batch ranges to avoid duplicate requests
@@ -1165,17 +1174,19 @@ const gridImagesToRender = computed(() => {
   if (props.mediaTypeFilter === "images") {
     filtered = filtered.filter((img) => {
       if (!img) return false;
-      const name = img.filename || img.name || img.id || "";
-      const format = (img.format || "").toLowerCase();
-      const result = isSupportedImageFile(name) || isSupportedImageFile(format);
-      return result;
+      // Try all possible fields for extension detection
+      const candidates = [img.filename, img.name, img.id, img.format]
+        .filter(Boolean)
+        .map((v) => (typeof v === "string" ? v : ""));
+      return candidates.some((val) => isSupportedImageFile(val));
     });
   } else if (props.mediaTypeFilter === "videos") {
     filtered = filtered.filter((img) => {
       if (!img) return false;
-      const name = img.filename || img.name || img.id || "";
-      const format = (img.format || "").toLowerCase();
-      return isSupportedVideoFile(name) || isSupportedVideoFile(format);
+      const candidates = [img.filename, img.name, img.id, img.format]
+        .filter(Boolean)
+        .map((v) => (typeof v === "string" ? v : ""));
+      return candidates.some((val) => isSupportedVideoFile(val));
     });
   } // else 'all' or 'both' shows everything
   return filtered.slice(renderStart.value, renderEnd.value);
@@ -1310,7 +1321,8 @@ function updateVisibleThumbnails() {
     visibleStart.value,
     visibleEnd.value,
     "Total:",
-    totalImageCount.value
+    totalImageCount.value,
+    allGridImages.value.length
   );
 
   // Debounce fetches to avoid excessive requests
@@ -1524,9 +1536,9 @@ function handleKeyDown(event) {
 watch(
   () => props.thumbnailSize,
   () => {
-    updateColumns();
     // Recalculate visibleStart and visibleEnd after columns/rowHeight update
     nextTick(() => {
+      updateColumns();
       const el = scrollWrapper.value;
       if (!el) return;
       let cardHeight = rowHeight.value;
@@ -1556,7 +1568,24 @@ defineExpose({
   onGlobalKeyPress,
   updateVisibleThumbnails,
   exportCurrentViewToZip,
+  removeImagesById,
 });
+
+// Remove images by ID (for event-driven removal)
+function removeImagesById(imageIds) {
+  if (!Array.isArray(imageIds) || !imageIds.length) {
+    console.log("No image IDs provided for removal.");
+    return;
+  }
+  console.log("Removing images by ID:", imageIds);
+  allGridImages.value = allGridImages.value.filter(
+    (img) => !imageIds.includes(img.id)
+  );
+  selectedImageIds.value = selectedImageIds.value.filter(
+    (id) => !imageIds.includes(id)
+  );
+  updateVisibleThumbnails();
+}
 
 // --- Export to Zip ---
 async function exportCurrentViewToZip() {

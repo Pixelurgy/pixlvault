@@ -109,11 +109,7 @@ class DescriptionWorker(BaseWorker):
         descriptions_generated = []
         for pic in batch:
             try:
-                characters = pic.characters
-                character_names = [c.name for c in characters if c.name]
-                description = picture_tagger.generate_description(
-                    picture=pic, character_names=character_names
-                )
+                description = picture_tagger.generate_description(picture=pic)
                 logger.debug("[DESCRIPTION WORKER] Got description: " + description)
 
                 def set_description(session: Session, pic_id, description):

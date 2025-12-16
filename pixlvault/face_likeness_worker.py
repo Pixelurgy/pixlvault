@@ -62,7 +62,7 @@ class FaceLikenessWorker(BaseWorker):
                 self._wait()
                 continue
 
-            logger.info(f"FaceLikenessWorker: Processing {len(bs)} pairs.")
+            logger.debug(f"FaceLikenessWorker: Processing {len(bs)} pairs.")
 
             face_ids_needed = set()
             for b in bs:
@@ -91,9 +91,6 @@ class FaceLikenessWorker(BaseWorker):
                     or face_a.features is None
                     or face_b.features is None
                 ):
-                    logger.warning(
-                        f"FaceLikenessWorker: Missing features for pair ({a}, {b}), skipping."
-                    )
                     continue
                 arr_a_list.append(np.frombuffer(face_a.features, dtype=np.float32))
                 arr_b_list.append(np.frombuffer(face_b.features, dtype=np.float32))
@@ -146,11 +143,11 @@ class FaceLikenessWorker(BaseWorker):
             elapsed = time.time() - start
             if processed_notify_ids:
                 self._notify_ids_processed(processed_notify_ids)
-                logger.info(
+                logger.debug(
                     f"FaceLikenessWorker: Processed {len(processed_notify_ids)} pairs in {elapsed:.2f} seconds."
                 )
             else:
-                logger.info(
+                logger.debug(
                     f"FaceLikenessWorker: No valid pairs processed in {elapsed:.2f} seconds. Sleeping..."
                 )
                 self._wait()

@@ -298,7 +298,13 @@ function handleGlobalKeydown(e) {
 }
 
 async function handleImagesAssignedToCharacter({ characterId, imageIds }) {
-  refreshGridVersion();
+  // Forward to ImageGrid via ref
+  if (
+    gridContainer.value &&
+    typeof gridContainer.value.removeImagesById === "function"
+  ) {
+    gridContainer.value.removeImagesById(imageIds);
+  }
 }
 
 function handleImagesUploaded() {

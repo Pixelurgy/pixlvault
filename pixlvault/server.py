@@ -806,13 +806,16 @@ class Server:
                                 best_face = face
                                 break
                         if best_pic and best_face:
+                            logger.info("Found thumbnail from reference set!")
                             break
                 # Fallback: use faces from char.faces, query their pictures
                 if not best_pic or not best_face:
                     for face in char.faces:
                         # Query picture for this face
                         pic = self.vault.db.run_immediate_read_task(
-                            lambda session: session.get(Picture, face.picture_id)
+                            Picture.find,
+                            id=face.picture_id,
+                            sort=SortMechanism.SCORE_DESC,
                         )
                         if pic:
                             best_pic = pic
@@ -968,6 +971,7 @@ class Server:
                 character_id,
                 priority=DBPriority.IMMEDIATE,
             )
+            self.vault.db.run_task(Picture.clear_field, picture_ids, "text_embedding")
             for face in faces:
                 if face.character_id != character_id:
                     raise HTTPException(
@@ -1028,6 +1032,8 @@ class Server:
                 picture_ids,
                 priority=DBPriority.IMMEDIATE,
             )
+
+            self.vault.db.run_task(Picture.clear_field, picture_ids, "text_embedding")
             self.vault.notify(EventType.CHANGED_CHARACTERS)
             self.vault.notify(EventType.CHANGED_FACES)
             return {
@@ -1644,7 +1650,19 @@ class Server:
                 raise HTTPException(status_code=404, detail="Picture not found")
             pic = pics[0]
 
-            return pic.dict()
+            pic_tags = self.vault.db.run_task(
+                Picture.find, id=id, select_fields=["tags"]
+            )
+            pic_tags = pic_tags[0].tags if pic_tags else []
+            pic_dict = safe_model_dict(pic)
+            tags = []
+            for tag in pic_tags:
+                tags.append(tag.tag)
+
+            pic_dict["tags"] = tags
+
+            logger.info("Returning dict: " + str(pic_dict))
+            return pic_dict
 
         @self.api.get("/pictures/{id}/{field}")
         async def get_picture_field(id: str, field: str):

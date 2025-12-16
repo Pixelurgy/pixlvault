@@ -26,6 +26,7 @@ const emit = defineEmits([
   "set-error",
   "set-loading",
   "images-assigned-to-character",
+  "images-moved",
   "search-images",
 ]);
 
@@ -377,7 +378,6 @@ async function fetchPictureSets() {
       },
       {}
     );
-
   } catch (e) {
     console.error("Error fetching picture sets:", e);
     pictureSets.value = [...pictureSets.value]; // force reactivity on error
@@ -455,6 +455,9 @@ async function handleDropOnSet(setId, event) {
 
     // Refresh the picture sets to update counts
     await fetchPictureSets();
+
+    // Emit event to parent to remove images from grid
+    emit("images-moved", { imageIds: draggedIds });
 
     console.log(
       `Added ${draggedIds.length} image(s) to set "${targetSet.name}"`
@@ -552,6 +555,7 @@ async function onCharacterDrop(characterId, event) {
     console.log(
       `Assigned ${imageIds.length} image(s) to character ${characterId}`
     );
+    emit("images-assigned-to-character", { characterId, imageIds });
   } catch (e) {
     alert("Failed to assign images to character: " + (e.message || e));
   }
@@ -839,9 +843,13 @@ defineExpose({ refreshSidebar });
                           referencePictureSetsByCharacter[char.id].id,
                       },
                     ]"
-                    @click="selectSet(referencePictureSetsByCharacter[char.id].id)"
+                    @click="
+                      selectSet(referencePictureSetsByCharacter[char.id].id)
+                    "
                     @dragover.prevent="
-                      dragOverSetItem(referencePictureSetsByCharacter[char.id].id)
+                      dragOverSetItem(
+                        referencePictureSetsByCharacter[char.id].id
+                      )
                     "
                     @dragleave="dragLeaveSetItem"
                     @drop.prevent="
