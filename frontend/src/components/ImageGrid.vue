@@ -284,7 +284,7 @@
             </div>
             <div
               v-else-if="
-                props.selectedSort.includes('created_at') && img.created_at
+                typeof props.selectedSort === 'string' && props.selectedSort.includes('created_at') && img.created_at
               "
               class="thumbnail-info"
             >
@@ -339,6 +339,8 @@ const props = defineProps({
   selectedSet: { type: [Number, String, null], default: null },
   searchQuery: String,
   selectedSort: String,
+  selectedDescending: Boolean,
+  similarityCharacter: { type: [String, Number, null], default: null },
   showStars: Boolean,
   showFaceBboxes: Boolean,
   allPicturesId: String,
@@ -997,6 +999,10 @@ function buildPictureIdsQueryParams() {
   ) {
     params.append("set_id", props.selectedSet);
   } else if (
+    props.selectedSort === "character_likeness" && props.similarityCharacter
+  ) {
+    params.append("character_id", props.similarityCharacter);
+  } else if (
     props.selectedCharacter !== undefined &&
     props.selectedCharacter !== null &&
     props.selectedCharacter !== "" &&
@@ -1010,6 +1016,9 @@ function buildPictureIdsQueryParams() {
   }
   if (props.selectedSort && props.selectedSort.trim()) {
     params.append("sort", props.selectedSort.trim());
+  }
+  if (typeof props.selectedDescending === "boolean") {
+    params.append("descending", props.selectedDescending ? "true" : "false");
   }
   // Add format filter for backend media type filtering
   if (props.mediaTypeFilter === "images") {

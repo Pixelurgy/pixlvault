@@ -1,3 +1,8 @@
+const selectedSimilarityCharacter = ref(null);
+function handleUpdateSimilarityCharacter(val) {
+  selectedSimilarityCharacter.value = val;
+  refreshGridVersion();
+}
 <script setup>
 import nlp from "compromise";
 import {
@@ -31,6 +36,7 @@ const sidebarRef = ref(null);
 const selectedCharacter = ref(ALL_PICTURES_ID);
 const selectedSet = ref(null);
 const selectedSort = ref("");
+const selectedDescending = ref(false);
 
 // --- Search & Filtering State ---
 const searchQuery = ref("");
@@ -110,8 +116,10 @@ async function handleUpdateSearchQuery(value) {
   handleSwitchToGrid();
 }
 
-async function handleUpdateSelectedSort(value) {
-  selectedSort.value = value;
+
+async function handleUpdateSelectedSort({ sort, descending }) {
+  selectedSort.value = sort;
+  selectedDescending.value = descending;
   handleSwitchToGrid();
 }
 
@@ -224,6 +232,7 @@ async function patchConfigUIOptions() {
   // Only include fields the backend expects and that are not undefined/null/empty
   const patch = {};
   if (selectedSort.value) patch.sort = selectedSort.value;
+  patch.descending = selectedDescending.value;
   if (thumbnailSize.value) patch.thumbnail = thumbnailSize.value;
   if (typeof showStars.value === "boolean") patch.show_stars = showStars.value;
   if (typeof config.likeness_threshold === "number")
@@ -357,8 +366,10 @@ watch(settingsDialog, (val) => {
   if (val) fetchConfig();
 });
 
-watch(selectedSort, () => {
+
+watch([selectedSort, selectedDescending], () => {
   patchConfigUIOptions();
+  refreshGridVersion();
 });
 
 watch(thumbnailSize, () => {

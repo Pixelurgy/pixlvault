@@ -13,6 +13,7 @@ const props = defineProps({
   selectedSet: { type: [Number, null], default: null },
   searchQuery: { type: String, default: "" },
   selectedSort: { type: String, default: "" },
+  selectedDescending: { type: Boolean, default: false },
   backendUrl: { type: String, required: true },
 });
 
@@ -28,7 +29,49 @@ const emit = defineEmits([
   "images-assigned-to-character",
   "images-moved",
   "search-images",
+  "update:similarity-character",
 ]);
+// --- Similarity Character Dropdown State ---
+const SIMILARITY_SORT_KEY = "CHARACTER_LIKENESS"; // Adjust if backend uses a different key
+const similarityCharacter = ref(null);
+
+const similarityCharacterOptions = computed(() => {
+  let options = [];
+  // If current character is not ALL or UNASSIGNED, add 'Current character' at the top
+  if (
+    props.selectedCharacter &&
+    props.selectedCharacter !== props.allPicturesId &&
+    props.selectedCharacter !== props.unassignedPicturesId
+  ) {
+    const currentChar = characters.value.find(
+      (c) => c.id === props.selectedCharacter
+    );
+    if (currentChar) {
+      options.push({
+        text: `Current character (${currentChar.name})`,
+        value: currentChar.id,
+      });
+    }
+  }
+  // Add all other characters
+  options = options.concat(
+    characters.value.map((c) => ({
+      text: c.name,
+      value: c.id,
+    }))
+  );
+  // Remove duplicates (if current character is also in the list)
+  const seen = new Set();
+  return options.filter((opt) => {
+    if (seen.has(opt.value)) return false;
+    seen.add(opt.value);
+    return true;
+  });
+});
+
+watch(similarityCharacter, (val) => {
+  emit("update:similarity-character", val);
+});
 
 const dragOverSet = ref(null);
 
@@ -103,9 +146,19 @@ const selectedCharacterObj = computed(() => {
   return null;
 });
 
+
+const descendingModel = computed({
+  get: () => props.selectedDescending,
+  set: (value) => {
+    emit("update:selected-sort", { sort: sortModel.value, descending: value });
+    // Optionally, force a grid refresh if needed:
+    // emit('refresh-grid');
+  },
+});
+
 const sortModel = computed({
   get: () => props.selectedSort,
-  set: (value) => emit("update:selected-sort", value ?? ""),
+  set: (value) => emit("update:selected-sort", { sort: value != null ? String(value) : "", descending: descendingModel.value }),
 });
 
 const searchModel = computed({
@@ -338,26 +391,20 @@ async function fetchSortOptions() {
     if (!res.ok) throw new Error("Failed to fetch sort mechanisms");
     const options = await res.json();
     console.log("Fetched sort options:", options);
-    sortOptions.value = options;
-
-    // Use backend-provided values directly
-    /* sortOptions.value = options.map((opt) => ({
-      label: opt.label,
-      value: opt.id,
-    }));
+    // Only use options with a string key (never a number)
+    sortOptions.value = options
+      .filter(opt => typeof opt.key === 'string' && !!opt.key)
+      .map(opt => ({
+        label: opt.description,
+        value: opt.key,
+      }));
+    // Set default if not set
     if (!sortModel.value && sortOptions.value.length) {
       sortModel.value = sortOptions.value[0].value;
-    } */
+    }
   } catch (e) {
-    // Fallback to hardcoded options only if backend fails
-    sortOptions.value = [
-      { label: "Date: Latest First", value: "created_at DESC" },
-      { label: "Date: Oldest First", value: "created_at ASC" },
-      { label: "Score: Highest First", value: "score DESC" },
-      { label: "Score: Lowest First", value: "score ASC" },
-      { label: "Search Likeness", value: "search_likeness" },
-    ];
-    if (!selectedSort.value) selectedSort.value = sortOptions.value[0].value;
+    console.error("Error fetching sort options:", e);
+    sortOptions.value = [];
   }
 }
 
@@ -973,7 +1020,7 @@ defineExpose({ refreshSidebar });
             @search="searchImages"
           />
         </div>
-        <div class="sidebar-searchbar-wrapper">
+        <div class="sidebar-searchbar-wrapper" style="display: flex; flex-direction: column; gap: 8px; align-items: stretch;">
           <v-select
             v-model="sortModel"
             :items="sortOptions"
@@ -983,7 +1030,36 @@ defineExpose({ refreshSidebar });
             label="Sort by"
             dense
             hide-details
+            style="min-width: 0;"
           />
+          <v-select
+            v-if="sortModel === SIMILARITY_SORT_KEY"
+            v-model="similarityCharacter"
+            :items="similarityCharacterOptions"
+            class="sidebar-sort-select"
+            label="Similarity to Character"
+            dense
+            hide-details
+            style="min-width: 0; margin-top: -4px;"
+            item-title="text"
+            item-value="value"
+          />
+          <div style="display: flex; gap: 8px; align-items: center; margin-top: 4px;">
+            <v-select
+              v-model="descendingModel"
+              :items="[
+                { text: 'Ascending', value: false },
+                { text: 'Descending', value: true }
+              ]"
+              class="sidebar-sort-select"
+              label="Order"
+              dense
+              hide-details
+              style="flex: 1 1 0; min-width: 0;"
+              item-title="text"
+              item-value="value"
+            />
+          </div>
         </div>
       </div>
     </transition>

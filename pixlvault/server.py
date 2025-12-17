@@ -10,6 +10,7 @@ import mimetypes
 import concurrent.futures
 import sys
 import time
+import zipfile
 
 from collections import defaultdict, deque
 from sqlalchemy.orm import selectinload
@@ -18,7 +19,7 @@ from sqlmodel import Session, select
 from contextlib import asynccontextmanager
 from fastapi import Body, FastAPI, File, Request, UploadFile, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pillow_heif import register_heif_opener
 from typing import List
 
@@ -160,7 +161,8 @@ class Server:
             "image_roots": [default_image_root],
             "selected_image_root": default_image_root,
             "description": DEFAULT_DESCRIPTION,
-            "sort": SortMechanism.DATE_ASC.value,
+            "sort": SortMechanism.Keys.DATE,
+            "descending": True,
             "thumbnail": "default",
             "thumbnail_size": "default",
             "show_stars": True,
@@ -370,8 +372,9 @@ class Server:
         @self.api.get("/sort_mechanisms")
         async def get_pictures_sort_mechanisms():
             """Return available sorting mechanisms for pictures."""
-            labels = [label for label in SortMechanism]
-            return labels
+            result = SortMechanism.all()
+            logger.info("Returning sort mechanisms: {}".format(result))
+            return result
 
         ###############################
         # Chat endpoints              #
@@ -815,7 +818,7 @@ class Server:
                         pic = self.vault.db.run_immediate_read_task(
                             Picture.find,
                             id=face.picture_id,
-                            sort=SortMechanism.SCORE_DESC,
+                            sort_field="score",
                         )
                         if pic:
                             best_pic = pic
@@ -1459,27 +1462,15 @@ class Server:
             request: Request,
             query: str = Query(None),
             set_id: int = Query(None),
-            sort: str = Query(None),
             threshold: float = Query(0.0),
         ):
             """
             Export pictures matching the filters as a zip file.
             Uses same filter logic as /pictures endpoint, but returns a zip.
             """
-            import zipfile
-            from fastapi.responses import StreamingResponse
-            from collections import defaultdict
-            from pixlvault.db_models import (
-                Picture,
-                PictureSet,
-                PictureSetMember,
-                SortMechanism,
-            )
-
             query_params = dict(request.query_params)
             query_params.pop("query", None)
             query_params.pop("set_id", None)
-            query_params.pop("sort", None)
             query_params.pop("threshold", None)
 
             pics = []
@@ -1522,7 +1513,6 @@ class Server:
                 # Fallback to filter-based search
                 pics = self.vault.db.run_task(
                     Picture.find,
-                    sort=SortMechanism(sort.lower()) if sort else None,
                     offset=0,
                     limit=sys.maxsize,
                     select_fields=Picture.metadata_fields(),
@@ -1575,7 +1565,6 @@ class Server:
         async def search_pictures(
             request: Request,
             query: str,
-            sort: str = Query(SortMechanism.SEARCH_LIKENESS.value),
             offset: int = Query(0),
             limit: int = Query(sys.maxsize),
             threshold: float = Query(0.5),
@@ -1584,7 +1573,6 @@ class Server:
             if request.query_params:
                 query_params = dict(request.query_params)
                 query = query_params.pop("query", query)
-                sort = query_params.pop("sort", sort)
                 offset = int(query_params.pop("offset", offset))
                 limit = int(query_params.pop("limit", limit))
 
@@ -1914,6 +1902,7 @@ class Server:
         async def list_pictures(
             request: Request,
             sort: str = Query(None),
+            descending: bool = Query(True),
             offset: int = Query(0),
             limit: int = Query(sys.maxsize),
         ):
@@ -1921,10 +1910,25 @@ class Server:
             if request.query_params:
                 query_params = dict(request.query_params)
                 sort = query_params.pop("sort", sort)
+                desc_val = query_params.pop("descending", descending)
+                if isinstance(desc_val, str):
+                    descending = desc_val.lower() == "true"
+                else:
+                    descending = bool(desc_val)
                 offset = int(query_params.pop("offset", offset))
                 limit = int(query_params.pop("limit", limit))
             character_id = query_params.pop("character_id", None)
 
+            logger.warning("SORTING ORDER: " + str(sort) + " DESC: " + str(descending))
+            try:
+                sort_mech = (
+                    SortMechanism.from_string(sort, descending=descending)
+                    if sort
+                    else None
+                )
+            except ValueError as ve:
+                logger.error(f"Invalid sort mechanism: {sort} - {ve}")
+                raise HTTPException(status_code=400, detail=str(ve))
             if character_id == "UNASSIGNED":
 
                 def find_unassigned(session: Session):
@@ -1937,7 +1941,7 @@ class Server:
                 pics = self.vault.db.run_task(
                     Picture.find,
                     id=picture_ids,
-                    sort=SortMechanism(sort.lower()) if sort else None,
+                    sort=sort_mech,
                     offset=offset,
                     limit=limit,
                     select_fields=Picture.metadata_fields(),
@@ -1950,7 +1954,7 @@ class Server:
             if character_id is not None and character_id != "":
                 character_id = int(character_id)
 
-                if sort == SortMechanism.CHARACTER_LIKENESS.value:
+                if sort_mech and sort_mech.key == SortMechanism.Keys.CHARACTER_LIKENESS:
                     # List pictures by likeness to character
                     # 1. Fetch reference faces from the reference pictures set for character
                     # 2. Fetch all faces that are not assigned to character
@@ -2091,7 +2095,7 @@ class Server:
                 pics = self.vault.db.run_task(
                     Picture.find,
                     id=picture_ids,
-                    sort=SortMechanism(sort.lower()) if sort else None,
+                    sort=sort_mech,
                     offset=offset,
                     limit=limit,
                     select_fields=Picture.metadata_fields(),
@@ -2100,7 +2104,7 @@ class Server:
             else:
                 pics = self.vault.db.run_task(
                     Picture.find,
-                    sort=SortMechanism(sort.lower()) if sort else None,
+                    sort=sort_mech,
                     offset=offset,
                     limit=limit,
                     select_fields=Picture.metadata_fields(),
