@@ -829,6 +829,10 @@ class Server:
                 from pixlvault.picture_utils import PictureUtils
 
                 bbox = best_face.bbox
+
+                if isinstance(best_pic, list):
+                    best_pic = best_pic[0]
+
                 crop = PictureUtils.crop_face_bbox_exact(best_pic.file_path, bbox)
                 if crop is None:
                     raise HTTPException(
