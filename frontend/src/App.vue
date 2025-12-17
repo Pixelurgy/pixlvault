@@ -1,8 +1,3 @@
-const selectedSimilarityCharacter = ref(null);
-function handleUpdateSimilarityCharacter(val) {
-  selectedSimilarityCharacter.value = val;
-  refreshGridVersion();
-}
 <script setup>
 import nlp from "compromise";
 import {
@@ -116,11 +111,21 @@ async function handleUpdateSearchQuery(value) {
   handleSwitchToGrid();
 }
 
-
 async function handleUpdateSelectedSort({ sort, descending }) {
   selectedSort.value = sort;
   selectedDescending.value = descending;
+  console.log("[App.vue] Updated selectedSort:", selectedSort.value);
+  console.log(
+    "[App.vue] Updated selectedDescending:",
+    selectedDescending.value
+  );
   handleSwitchToGrid();
+}
+
+const selectedSimilarityCharacter = ref(null);
+function handleUpdateSimilarityCharacter(val) {
+  selectedSimilarityCharacter.value = val;
+  refreshGridVersion();
 }
 
 // --- Settings & Config ---
@@ -247,11 +252,17 @@ async function patchConfigUIOptions() {
   if (config.selected_image_root)
     patch.selected_image_root = config.selected_image_root;
   console.log("PATCH /config payload:", patch);
-  await fetch(`${BACKEND_URL}/config`, {
+  const response = await fetch(`${BACKEND_URL}/config`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
+  if (response.ok) {
+    const updatedConfig = await response.json();
+    console.log("PATCH /config response:", updatedConfig);
+  } else {
+    console.error("PATCH /config failed with status:", response.status);
+  }
 }
 
 function selectImageRoot(root) {
@@ -365,7 +376,6 @@ watch(currentView, (val) => {
 watch(settingsDialog, (val) => {
   if (val) fetchConfig();
 });
-
 
 watch([selectedSort, selectedDescending], () => {
   patchConfigUIOptions();

@@ -146,19 +146,50 @@ const selectedCharacterObj = computed(() => {
   return null;
 });
 
+const reactiveSelectedDescending = ref(props.selectedDescending);
+
+watch(
+  () => props.selectedDescending,
+  (newValue, oldValue) => {
+    console.log(
+      "[SideBar.vue] Prop selectedDescending changed from",
+      oldValue,
+      "to",
+      newValue
+    );
+    reactiveSelectedDescending.value = newValue;
+  }
+);
 
 const descendingModel = computed({
-  get: () => props.selectedDescending,
+  get: () => {
+    console.log(
+      "[SideBar.vue] descendingModel.get() called. Current value:",
+      reactiveSelectedDescending.value
+    );
+    return reactiveSelectedDescending.value;
+  },
   set: (value) => {
+    console.log(
+      "[SideBar.vue] descendingModel.set() called. New value:",
+      value
+    );
+    reactiveSelectedDescending.value = value;
     emit("update:selected-sort", { sort: sortModel.value, descending: value });
-    // Optionally, force a grid refresh if needed:
-    // emit('refresh-grid');
+    console.log(
+      "[SideBar.vue] descendingModel.set() completed. Updated reactiveSelectedDescending:",
+      reactiveSelectedDescending.value
+    );
   },
 });
 
 const sortModel = computed({
   get: () => props.selectedSort,
-  set: (value) => emit("update:selected-sort", { sort: value != null ? String(value) : "", descending: descendingModel.value }),
+  set: (value) =>
+    emit("update:selected-sort", {
+      sort: value != null ? String(value) : "",
+      descending: descendingModel.value,
+    }),
 });
 
 const searchModel = computed({
@@ -393,8 +424,8 @@ async function fetchSortOptions() {
     console.log("Fetched sort options:", options);
     // Only use options with a string key (never a number)
     sortOptions.value = options
-      .filter(opt => typeof opt.key === 'string' && !!opt.key)
-      .map(opt => ({
+      .filter((opt) => typeof opt.key === "string" && !!opt.key)
+      .map((opt) => ({
         label: opt.description,
         value: opt.key,
       }));
@@ -692,6 +723,10 @@ onMounted(() => {
   fetchSortOptions();
   fetchCharacters();
   fetchPictureSets();
+  console.log(
+    "[SideBar.vue] Initial descendingModel value:",
+    descendingModel.value
+  );
 });
 
 defineExpose({ refreshSidebar });
@@ -1020,7 +1055,15 @@ defineExpose({ refreshSidebar });
             @search="searchImages"
           />
         </div>
-        <div class="sidebar-searchbar-wrapper" style="display: flex; flex-direction: column; gap: 8px; align-items: stretch;">
+        <div
+          class="sidebar-searchbar-wrapper"
+          style="
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: stretch;
+          "
+        >
           <v-select
             v-model="sortModel"
             :items="sortOptions"
@@ -1030,7 +1073,7 @@ defineExpose({ refreshSidebar });
             label="Sort by"
             dense
             hide-details
-            style="min-width: 0;"
+            style="min-width: 0"
           />
           <v-select
             v-if="sortModel === SIMILARITY_SORT_KEY"
@@ -1040,24 +1083,36 @@ defineExpose({ refreshSidebar });
             label="Similarity to Character"
             dense
             hide-details
-            style="min-width: 0; margin-top: -4px;"
+            style="min-width: 0; margin-top: -4px"
             item-title="text"
             item-value="value"
           />
-          <div style="display: flex; gap: 8px; align-items: center; margin-top: 4px;">
+          <div
+            style="
+              display: flex;
+              gap: 8px;
+              align-items: center;
+              margin-top: 4px;
+            "
+          >
             <v-select
+              :key="reactiveSelectedDescending"
               v-model="descendingModel"
               :items="[
                 { text: 'Ascending', value: false },
-                { text: 'Descending', value: true }
+                { text: 'Descending', value: true },
               ]"
               class="sidebar-sort-select"
               label="Order"
               dense
               hide-details
-              style="flex: 1 1 0; min-width: 0;"
+              style="flex: 1 1 0; min-width: 0"
               item-title="text"
               item-value="value"
+              @change="
+                (value) =>
+                  console.log('[SideBar.vue] v-select changed to:', value)
+              "
             />
           </div>
         </div>

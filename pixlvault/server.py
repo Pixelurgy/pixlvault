@@ -552,6 +552,7 @@ class Server:
                     # Allow adding 'sort', 'thumbnail', 'show_stars' keys if missing
                     if key in (
                         "sort",
+                        "descending",
                         "thumbnail",
                         "show_stars",
                         "likeness_threshold",
@@ -1908,6 +1909,7 @@ class Server:
         ):
             query_params = {}
             if request.query_params:
+                logger.info("Received query params: " + str(request.query_params))
                 query_params = dict(request.query_params)
                 sort = query_params.pop("sort", sort)
                 desc_val = query_params.pop("descending", descending)

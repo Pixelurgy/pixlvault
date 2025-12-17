@@ -37,6 +37,7 @@ class FaceLikeness(SQLModel, table=True):
     likeness: float = Field(default=None, index=True)
     metric: str = Field(default=None)
 
+    # Relationships
     face_a: Optional["Face"] = Relationship(
         back_populates="likeness_a",
         sa_relationship_kwargs={"foreign_keys": "[FaceLikeness.face_id_a]"},

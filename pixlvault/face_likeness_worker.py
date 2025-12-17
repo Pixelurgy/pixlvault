@@ -152,7 +152,7 @@ class FaceLikenessWorker(BaseWorker):
                 )
                 self._wait()
 
-    logger.info("FaceLikenessWorker: Face likeness worker stopped.")
+        logger.info("FaceLikenessWorker: Face likeness worker stopped.")
 
     def _cosine_similarity_batch(self, arr_a_list, arr_b_list):
         """

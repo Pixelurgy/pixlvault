@@ -22,6 +22,7 @@ from pixlvault.pixl_logging import get_logger
 
 if TYPE_CHECKING:
     from .character import Character
+    from .picture_likeness import PictureLikeness
 
 
 # Configure logging for the module
@@ -136,6 +137,23 @@ class Picture(SQLModel, table=True):
     )
     picture_sets: List["PictureSet"] = Relationship(
         back_populates="members", link_model=PictureSetMember
+    )
+
+    likeness_a: List["PictureLikeness"] = Relationship(
+        back_populates="picture_a",
+        sa_relationship_kwargs={
+            "primaryjoin": "Picture.id==PictureLikeness.picture_id_a",
+            "cascade": "all, delete-orphan",
+            "passive_deletes": True,
+        },
+    )
+    likeness_b: List["PictureLikeness"] = Relationship(
+        back_populates="picture_b",
+        sa_relationship_kwargs={
+            "primaryjoin": "Picture.id==PictureLikeness.picture_id_b",
+            "cascade": "all, delete-orphan",
+            "passive_deletes": True,
+        },
     )
 
     class Config:

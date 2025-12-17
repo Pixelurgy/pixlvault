@@ -284,7 +284,9 @@
             </div>
             <div
               v-else-if="
-                typeof props.selectedSort === 'string' && props.selectedSort.includes('created_at') && img.created_at
+                typeof props.selectedSort === 'string' &&
+                props.selectedSort.includes('created_at') &&
+                img.created_at
               "
               class="thumbnail-info"
             >
@@ -361,6 +363,10 @@ function triggerFaceOverlayRedraw() {
 
 onMounted(() => {
   window.addEventListener("resize", triggerFaceOverlayRedraw);
+  console.log(
+    "[ImageGrid.vue] Mounted with selectedDescending:",
+    props.selectedDescending
+  );
 });
 onUnmounted(() => {
   window.removeEventListener("resize", triggerFaceOverlayRedraw);
@@ -999,7 +1005,8 @@ function buildPictureIdsQueryParams() {
   ) {
     params.append("set_id", props.selectedSet);
   } else if (
-    props.selectedSort === "character_likeness" && props.similarityCharacter
+    props.selectedSort === "character_likeness" &&
+    props.similarityCharacter
   ) {
     params.append("character_id", props.similarityCharacter);
   } else if (
@@ -1018,7 +1025,16 @@ function buildPictureIdsQueryParams() {
     params.append("sort", props.selectedSort.trim());
   }
   if (typeof props.selectedDescending === "boolean") {
+    console.log(
+      "[ImageGrid.vue] Constructing query with descending:",
+      props.selectedDescending
+    );
     params.append("descending", props.selectedDescending ? "true" : "false");
+  } else {
+    console.warn(
+      "[ImageGrid.vue] selectedDescending is not boolean, skipping param. Type:",
+      typeof props.selectedDescending
+    );
   }
   // Add format filter for backend media type filtering
   if (props.mediaTypeFilter === "images") {

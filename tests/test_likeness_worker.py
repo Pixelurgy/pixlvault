@@ -80,7 +80,7 @@ def test_likeness_worker():
             timeout = time.time() + 60
             for key, future in futures.items():
                 key, result = future.result(timeout=timeout - time.time())
-                result == key
+                assert result == key
                 assert result >= 0.0, f"Likeness score for pair {key} is negative."
             server.vault.stop_workers({WorkerType.LIKENESS})
             # Check that all likeness results are present

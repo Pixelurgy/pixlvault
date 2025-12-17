@@ -1,5 +1,5 @@
 from sqlalchemy import Column, ForeignKey, Index, text
-from sqlmodel import CheckConstraint, SQLModel, Field, Session, select
+from sqlmodel import CheckConstraint, SQLModel, Field, Relationship, Session, select
 from typing import List, Optional, Tuple
 
 from .picture import Picture
@@ -30,6 +30,16 @@ class PictureLikeness(SQLModel, table=True):
     )
     likeness: float = Field(default=None)
     metric: str = Field(default=None)
+
+    # Relationships
+    picture_a: Optional["Picture"] = Relationship(
+        back_populates="likeness_a",
+        sa_relationship_kwargs={"foreign_keys": "[PictureLikeness.picture_id_a]"},
+    )
+    picture_b: Optional["Picture"] = Relationship(
+        back_populates="likeness_b",
+        sa_relationship_kwargs={"foreign_keys": "[PictureLikeness.picture_id_b]"},
+    )
 
     # Table-level constraints and indexes
     __table_args__ = (

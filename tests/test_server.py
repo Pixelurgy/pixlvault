@@ -674,7 +674,6 @@ def test_semantic_search():
             server.vault.start_workers(
                 {
                     WorkerType.FACE,
-                    WorkerType.TEXT_EMBEDDING,
                     WorkerType.TAGGER,
                 }
             )

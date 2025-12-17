@@ -401,7 +401,7 @@ def test_character_likeness():
             start = time()
             pics_resp = client.get(
                 "/pictures",
-                params={"sort": "character_likeness", "character_id": char_id},
+                params={"sort": "CHARACTER_LIKENESS", "character_id": char_id},
             )
             end = time()
             assert pics_resp.status_code == 200, (
