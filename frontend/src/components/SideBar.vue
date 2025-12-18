@@ -31,47 +31,6 @@ const emit = defineEmits([
   "search-images",
   "update:similarity-character",
 ]);
-// --- Similarity Character Dropdown State ---
-const SIMILARITY_SORT_KEY = "CHARACTER_LIKENESS"; // Adjust if backend uses a different key
-const similarityCharacter = ref(null);
-
-const similarityCharacterOptions = computed(() => {
-  let options = [];
-  // If current character is not ALL or UNASSIGNED, add 'Current character' at the top
-  if (
-    props.selectedCharacter &&
-    props.selectedCharacter !== props.allPicturesId &&
-    props.selectedCharacter !== props.unassignedPicturesId
-  ) {
-    const currentChar = characters.value.find(
-      (c) => c.id === props.selectedCharacter
-    );
-    if (currentChar) {
-      options.push({
-        text: `Current character (${currentChar.name})`,
-        value: currentChar.id,
-      });
-    }
-  }
-  // Add all other characters
-  options = options.concat(
-    characters.value.map((c) => ({
-      text: c.name,
-      value: c.id,
-    }))
-  );
-  // Remove duplicates (if current character is also in the list)
-  const seen = new Set();
-  return options.filter((opt) => {
-    if (seen.has(opt.value)) return false;
-    seen.add(opt.value);
-    return true;
-  });
-});
-
-watch(similarityCharacter, (val) => {
-  emit("update:similarity-character", val);
-});
 
 const dragOverSet = ref(null);
 
@@ -144,6 +103,22 @@ const selectedCharacterObj = computed(() => {
     return char;
   }
   return null;
+});
+
+// --- Similarity Character Dropdown State ---
+const SIMILARITY_SORT_KEY = "CHARACTER_LIKENESS"; // Adjust if backend uses a different key
+const similarityCharacter = ref(null);
+
+const similarityCharacterOptions = computed(() => {
+  let options = sortedCharacters.value.map((c) => ({
+    text: c.name,
+    value: c.id,
+  }));
+  return options;
+});
+
+watch(similarityCharacter, (val) => {
+  emit("update:similarity-character", val);
 });
 
 const reactiveSelectedDescending = ref(props.selectedDescending);
@@ -411,20 +386,40 @@ async function fetchSortOptions() {
     if (!res.ok) throw new Error("Failed to fetch sort mechanisms");
     const options = await res.json();
     console.log("Fetched sort options:", options);
-    // Only use options with a string key (never a number)
-    sortOptions.value = options
-      .filter((opt) => typeof opt.key === "string" && !!opt.key)
-      .map((opt) => ({
-        label: opt.description,
-        value: opt.key,
-      }));
-    // Set default if not set
-    if (!sortModel.value && sortOptions.value.length) {
-      sortModel.value = sortOptions.value[0].value;
+
+    // Filter out CHARACTER_LIKENESS if there are no characters
+    const filteredOptions = options.filter((opt) => {
+      if (opt.key === SIMILARITY_SORT_KEY) {
+        return sortedCharacters.value.length > 0; // Only include if characters exist
+      }
+      return true;
+    });
+
+    // Map options to the desired format
+    sortOptions.value = filteredOptions.map((opt) => ({
+      label: opt.description,
+      value: opt.key,
+    }));
+
+    // Reset sortModel if it is not in the available options
+    if (!sortOptions.value.some((opt) => opt.value === sortModel.value)) {
+      sortModel.value = sortOptions.value.length
+        ? sortOptions.value[0].value
+        : null;
     }
   } catch (e) {
     console.error("Error fetching sort options:", e);
     sortOptions.value = [];
+  }
+}
+
+// Ensure sortedCharacters is fetched before fetchSortOptions
+async function fetchSortedCharactersAndSortOptions() {
+  try {
+    await fetchCharacters(); // Fetch characters first
+    await fetchSortOptions(); // Then fetch sort options
+  } catch (e) {
+    console.error("Error fetching sorted characters and sort options:", e);
   }
 }
 
@@ -687,7 +682,8 @@ async function characterSaved() {
     // New character was created, increment nextCharacterNumber
     nextCharacterNumber.value++;
   }
-  fetchCharacters();
+  await fetchCharacters(); // Refresh characters
+  await fetchPictureSets(); // Refresh picture sets to include reference sets
   closeCharacterEditor();
 }
 
@@ -709,14 +705,33 @@ async function pictureSetSaved(setData) {
 }
 
 onMounted(() => {
-  fetchSortOptions();
-  fetchCharacters();
+  fetchSortedCharactersAndSortOptions(); // Ensure proper order of fetching
   fetchPictureSets();
   console.log(
     "[SideBar.vue] Initial descendingModel value:",
     descendingModel.value
   );
 });
+
+// Ensure similarityCharacter is valid when switching to CHARACTER_LIKENESS
+watch(
+  () => sortModel.value,
+  (newSort) => {
+    if (newSort === SIMILARITY_SORT_KEY) {
+      // Check if the current similarityCharacter is valid
+      if (
+        !sortedCharacters.value.some(
+          (char) => char.id === similarityCharacter.value
+        )
+      ) {
+        similarityCharacter.value =
+          sortedCharacters.value.length > 0
+            ? sortedCharacters.value[0].id
+            : null; // Default to the first character or null
+      }
+    }
+  }
+);
 
 defineExpose({ refreshSidebar });
 </script>

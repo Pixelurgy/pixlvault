@@ -33,7 +33,7 @@ class FaceCharacterLikeness(SQLModel, table=True):
         likeness_results: list of FaceCharacterLikeness objects or dicts.
         """
         if not likeness_results:
-            return
+            return 0
 
         # Prepare rows as dicts
         rows = [
