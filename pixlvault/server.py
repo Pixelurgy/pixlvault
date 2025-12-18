@@ -838,7 +838,6 @@ class Server:
             description = data.get("description")
             char = None
             try:
-
                 def alter_char(session: Session, id: int, name: str, description: str):
                     character = session.get(Character, id)
                     if character is None:
@@ -853,7 +852,7 @@ class Server:
                     if updated:
                         session.add(character)
 
-                        pictures = Picture.find(character_id=id)
+                        pictures = Picture.find(session, character_id=id)
                         for pic in pictures:
                             pic.description = None
                             pic.text_embedding = None
@@ -863,9 +862,7 @@ class Server:
                     return character
 
                 char = self.vault.db.run_task(
-                    lambda session: alter_char(
-                        session, id, name, description, priority=DBPriority.IMMEDIATE
-                    )
+                    alter_char, id, name, description, priority=DBPriority.IMMEDIATE
                 )
                 self.vault.notify(EventType.CHANGED_CHARACTERS)
 
@@ -878,11 +875,23 @@ class Server:
         async def delete_character(id: int):
             # Delete the character
             try:
+                def clear_character_and_nullify_faces(session: Session, character_id: int):
+                    character = session.get(Character, character_id)
+                    if character is None:
+                        raise KeyError("Character not found")
+                    # Nullify character_id on all faces linked to this character
+                    faces = session.exec(
+                        select(Face).where(Face.character_id == character_id)
+                    ).all()
+                    for face in faces:
+                        face.character_id = None
+                        session.add(face)
+                    session.commit()
+                    session.delete(character)
+                    session.commit()
                 self.vault.db.run_task(
-                    lambda session: (
-                        session.delete(session.get(Character, id)),
-                        session.commit(),
-                    ),
+                    clear_character_and_nullify_faces,
+                    id,
                     priority=DBPriority.IMMEDIATE,
                 )
                 self.vault.notify(EventType.CHANGED_CHARACTERS)
