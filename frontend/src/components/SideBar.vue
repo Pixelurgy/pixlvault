@@ -308,17 +308,6 @@ watch(
   { immediate: true }
 );
 
-() => sortedCharacters.value,
-  (chars) => {
-    // Initialize collapse state for all characters to true (collapsed by default)
-    chars.forEach((char) => {
-      if (!(char.id in collapsedCharacters.value)) {
-        collapsedCharacters.value[char.id] = true;
-      }
-    });
-  },
-  { immediate: true };
-
 function toggleCharacterCollapse(charId) {
   collapsedCharacters.value[charId] = !collapsedCharacters.value[charId];
 }
@@ -1083,7 +1072,9 @@ defineExpose({ refreshSidebar });
               style="margin-left: auto"
             >
               <v-icon>
-                {{ descendingModel ? "mdi-sort-descending" : "mdi-sort-ascending" }}
+                {{
+                  descendingModel ? "mdi-sort-descending" : "mdi-sort-ascending"
+                }}
               </v-icon>
             </v-btn>
           </div>

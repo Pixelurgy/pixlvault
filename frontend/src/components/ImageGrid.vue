@@ -274,7 +274,8 @@
           <!-- Info row absolutely positioned below thumbnail -->
           <div class="thumbnail-info-row">
             <div
-              v-if="typeof props.selectedSort === 'string' &&
+              v-if="
+                typeof props.selectedSort === 'string' &&
                 props.selectedSort.includes('CHARACTER_LIKENESS') &&
                 img.character_likeness !== undefined
               "
@@ -488,6 +489,9 @@ function getFaceBboxOverlays(img) {
     const el = thumbnailRefs[img.id];
     if (!el) return [];
     const firstFrameFaces = img.faces.filter((f) => f.frame_index === 0);
+    for (const face of firstFrameFaces) {
+      console.debug("Face bbox:", face.bbox, "Character:", face.character_id);
+    }
     return firstFrameFaces.map((face, fidx) => ({
       style: getFaceBboxStyle(face.bbox, fidx, img, el),
       idx: fidx,
@@ -1005,17 +1009,19 @@ function buildPictureIdsQueryParams() {
   ) {
     params.append("set_id", props.selectedSet);
   } else if (
-    props.selectedSort === "CHARACTER_LIKENESS" &&
-    props.similarityCharacter
-  ) {
-    params.append("character_id", props.similarityCharacter);
-  } else if (
     props.selectedCharacter !== undefined &&
     props.selectedCharacter !== null &&
     props.selectedCharacter !== "" &&
     props.selectedCharacter !== props.allPicturesId
   ) {
     params.append("character_id", props.selectedCharacter);
+  }
+
+  if (
+    props.selectedSort === "CHARACTER_LIKENESS" &&
+    props.similarityCharacter
+  ) {
+    params.append("reference_character_id", props.similarityCharacter);
   }
 
   if (props.searchQuery && props.searchQuery.trim()) {

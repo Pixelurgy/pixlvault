@@ -394,13 +394,13 @@ async function fetchFaceBboxes(imageId) {
     const faces = await res.json();
     console.log("Faces: ", faces);
     const faceArray = Array.isArray(faces) ? faces : faces.faces;
-    // Store the full face object for each face in frame 0 with a valid bbox
     const firstFrameFaces = faceArray.filter(
       (f) => f.frame_index === 0 && Array.isArray(f.bbox) && f.bbox.length === 4
     );
     // For each face, fetch character name if character_id is present
     await Promise.all(
       firstFrameFaces.map(async (face) => {
+        console.log("Processing face:", face);
         if (face.character_id) {
           try {
             const res = await fetch(
@@ -409,20 +409,32 @@ async function fetchFaceBboxes(imageId) {
             if (res.ok) {
               const data = await res.json();
               face.character_name = data.name || null;
+              console.log(
+                `Fetched character_name for character_id ${face.character_id}:`,
+                face.character_name
+              );
             } else {
               face.character_name = null;
+              console.warn(
+                `Failed to fetch character_name for character_id ${face.character_id}`
+              );
             }
           } catch (e) {
             face.character_name = null;
+            console.error(
+              `Error fetching character_name for character_id ${face.character_id}:`,
+              e
+            );
           }
         } else {
           face.character_name = null;
+          console.warn("Face is missing character_id:", face);
         }
       })
     );
     faceBboxes.value = firstFrameFaces;
   } catch (e) {
-    console.error("[ImageOverlay] fetchFaceBboxes error:", e);
+    console.error("Error in fetchFaceBboxes:", e);
     faceBboxes.value = [];
   }
 }

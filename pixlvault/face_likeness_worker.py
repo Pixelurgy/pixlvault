@@ -296,10 +296,6 @@ class FaceCharacterLikenessWorker(BaseWorker):
 
                 elapsed = time.time() - start
                 if processed_notify_ids:
-                    for pair in processed_notify_ids:
-                        logger.info(
-                            f"FaceCharacterLikenessWorker: Notifying processed Face-Character pair: {pair}"
-                        )
                     self._notify_ids_processed(processed_notify_ids)
                     logger.info(
                         f"FaceCharacterLikenessWorker: Processed {len(processed_notify_ids)} Face-Character pairs in {elapsed:.2f}"
