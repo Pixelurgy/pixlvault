@@ -306,15 +306,24 @@
         ></div>
       </div>
     </div>
-    <!-- Clear Search button outside the grid -->
-    <v-btn v-if="props.searchQuery && props.searchQuery.length > 0"
-      class="clear-search-btn"
-      color="primary"
-      @click="clearSearchQuery"
-      style="position: absolute; bottom: 64px; left: 16px; z-index: 1000"
+
+    <!-- Search Result Bar -->
+    <div
+      v-if="props.searchQuery && props.searchQuery.length > 0"
+      class="search-result-bar"
+      style="position: absolute; bottom: 64px; left: 0; width: 100%; z-index: 1000; background-color: #f5f5f5; display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);"
     >
-      Clear Search
-    </v-btn>
+      <span>
+        Search result found {{
+          allGridImages && allGridImages.value
+            ? (console.log("allGridImages:", allGridImages.value),
+              console.log("gridImagesToRender:", gridImagesToRender.value),
+              gridImagesToRender.value.length)
+            : 0
+        }} items
+      </span>
+      <v-btn color="primary" @click="clearSearchQuery">Clear</v-btn>
+    </div>
   </div>
 </template>
 
@@ -1205,7 +1214,16 @@ const bottomSpacerHeight = computed(() => {
 // Compute grid images (id, idx, thumbnail)
 const allGridImages = ref([]);
 
+watch(allGridImages, (newVal, oldVal) => {
+  console.log("allGridImages updated:", newVal);
+});
+
 const gridImagesToRender = computed(() => {
+  if (!allGridImages.value) {
+    console.warn("allGridImages is undefined");
+    return [];
+  }
+
   // Only render a window of placeholders/images for performance
   if (allGridImages.value.length < allGridImages.value.length) {
     for (
@@ -1216,12 +1234,11 @@ const gridImagesToRender = computed(() => {
       allGridImages.value[i] = { id: null, thumbnail: null, idx: i };
     }
   }
-  // Accept both 'all' and 'both' as showing all media
+
   let filtered = allGridImages.value;
   if (props.mediaTypeFilter === "images") {
     filtered = filtered.filter((img) => {
       if (!img) return false;
-      // Try all possible fields for extension detection
       const candidates = [img.filename, img.name, img.id, img.format]
         .filter(Boolean)
         .map((v) => (typeof v === "string" ? v : ""));
@@ -1235,7 +1252,7 @@ const gridImagesToRender = computed(() => {
         .map((v) => (typeof v === "string" ? v : ""));
       return candidates.some((val) => isSupportedVideoFile(val));
     });
-  } // else 'all' or 'both' shows everything
+  }
   return filtered.slice(renderStart.value, renderEnd.value);
 });
 
@@ -1681,11 +1698,22 @@ watch(searchQuery, (newQuery) => {
 
 // Function to clear searchQuery
 function clearSearchQuery() {
-  console.log("Clearing search query");
-  searchQuery.value = "";
+  console.log("[ImageGrid.vue] clearSearchQuery called");
   emit("clear-search", "");
-  updateVisibleThumbnails();
 }
+
+// Watch for changes in allGridImages and log the length asynchronously
+watch(
+  () => allGridImages.value,
+  async (newImages) => {
+    if (newImages) {
+      const resultCount = newImages.length;
+      console.log("Number of search results:", resultCount);
+      // Perform any additional asynchronous operations here
+      await someAsyncOperation(resultCount);
+    }
+  }
+);
 </script>
 
 <style scoped>
@@ -1902,5 +1930,19 @@ function clearSearchQuery() {
   background-color: red !important; /* Temporary debug styling */
   color: white;
   border: 2px solid black;
+}
+
+.search-result-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  z-index: 1000;
+  background-color: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
 }
 </style>
