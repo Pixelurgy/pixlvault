@@ -65,9 +65,6 @@
           v-for="(img, idx) in gridImagesToRender"
           :key="img.id ? `img-${img.id}` : `placeholder-${img.idx}`"
           class="image-card"
-          :draggable="isImageSelected(img.id)"
-          @dragstart="onImageDragStart(img, img.idx, $event)"
-          @pointerdown="primeImageDragPayload(img)"
           @click="handleImageCardClick(img, img.idx, $event)"
           @mouseenter="handleImageMouseEnter(img)"
           @mouseleave="handleImageMouseLeave(img)"
@@ -135,6 +132,8 @@
                   class="thumbnail-img"
                   :src="getImageDownloadUrl(img)"
                   :ref="(el) => setVideoRef(img.id, el)"
+                  draggable="true"
+                  @dragstart="handleVideoDragStart(img)"
                   @load="
                     () => {
                       setThumbnailRef(img.id, el);
@@ -174,6 +173,9 @@
                   :src="img.thumbnail"
                   class="thumbnail-img"
                   :ref="(el) => setThumbnailRef(img.id, el)"
+                  draggable="true"
+                  @dragstart="handleThumbnailNativeDragStart(img, $event)"
+                  @dragend="handleThumbnailNativeDragEnd($event)"
                   @load="
                     () => {
                       setThumbnailRef(img.id, el);
@@ -538,7 +540,6 @@ const hoveredImageIdx = ref(null);
 function handleImageMouseEnter(img) {
   img._showRes = true;
   hoveredImageIdx.value = img.idx;
-  prefetchFullImageBlob(img);
 }
 function handleImageMouseLeave(img) {
   img._showRes = false;
@@ -555,28 +556,6 @@ function formatIsoDate(dateStr) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
     d.getHours()
   )}:${pad(d.getMinutes())}`;
-}
-
-const EXTENSION_MIME_MAP = {
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  webp: "image/webp",
-  gif: "image/gif",
-  bmp: "image/bmp",
-  tif: "image/tiff",
-  tiff: "image/tiff",
-  heic: "image/heic",
-  heif: "image/heif",
-  mp4: "video/mp4",
-  mov: "video/quicktime",
-};
-
-function inferMimeType(img, filename = "") {
-  if (img && img.mime_type) return img.mime_type;
-  const name = filename.toLowerCase();
-  const ext = name.includes(".") ? name.split(".").pop() : "";
-  return (ext && EXTENSION_MIME_MAP[ext]) || "application/octet-stream";
 }
 
 function getImageFormatExtension(img) {
@@ -611,156 +590,50 @@ function getImageDownloadUrl(img) {
   return `${props.backendUrl}/pictures/${img.id}${suffix}`;
 }
 
-const dragBinaryCache = new Map();
-const dragPrefetchPromises = new Map();
-
-function getImageCacheKey(img) {
-  if (!img) return null;
-  return img.id || img.filename || img.original_filename || null;
-}
-
-function dataUrlToBlob(dataUrl, fallbackType = "application/octet-stream") {
-  if (!dataUrl || !dataUrl.startsWith("data:")) return null;
-  const parts = dataUrl.split(",");
-  if (parts.length < 2) return null;
-  const header = parts[0];
-  const base64Data = parts[1];
-  const mimeMatch = header.match(/data:(.*?);base64/);
-  const type = mimeMatch ? mimeMatch[1] : fallbackType;
-  const byteString = atob(base64Data);
-  const len = byteString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i += 1) {
-    bytes[i] = byteString.charCodeAt(i);
+function debugLogDataTransfer(label, dataTransfer) {
+  if (!dataTransfer) {
+    console.debug(`[DRAG] ${label}: no dataTransfer available`);
+    return;
   }
-  return new Blob([bytes], { type: type || fallbackType });
-}
+  const types = Array.from(dataTransfer.types || []);
+  console.debug(`[DRAG] ${label}: types`, types);
 
-function arrayBufferToBase64(buffer) {
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const subArray = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode.apply(null, subArray);
+  const itemsSummary = dataTransfer.items
+    ? Array.from(dataTransfer.items).map((item, idx) => ({
+        idx,
+        kind: item.kind,
+        type: item.type,
+      }))
+    : [];
+  if (itemsSummary.length) {
+    console.debug(`[DRAG] ${label}: items`, itemsSummary);
   }
-  return btoa(binary);
-}
 
-function bufferToDataUrl(buffer, mimeType) {
-  const base64 = arrayBufferToBase64(buffer);
-  return `data:${mimeType};base64,${base64}`;
-}
+  const interestingTypes = new Set([
+    "text/uri-list",
+    "text/html",
+    "text/plain",
+    "public.url",
+    "public.url-name",
+    "com.apple.pasteboard.promised-file-url",
+    "com.apple.pasteboard.promised-file-content-type",
+    "com.apple.pasteboard.promised-file-extension",
+  ]);
 
-function createBinaryEntry(buffer, mimeType, cacheKey) {
-  const resolvedType = mimeType || "application/octet-stream";
-  const blob = new Blob([buffer], { type: resolvedType });
-  const dataUrl = bufferToDataUrl(buffer, resolvedType);
-  const entry = { blob, dataUrl, mimeType: resolvedType };
-  if (cacheKey) {
-    dragBinaryCache.set(cacheKey, entry);
-  }
-  return entry;
-}
-
-function getCachedBinaryEntry(img) {
-  const key = getImageCacheKey(img);
-  if (!key) return null;
-  return dragBinaryCache.get(key) || null;
-}
-
-function prefetchFullImageBlob(img) {
-  const key = getImageCacheKey(img);
-  const fileUrl = getImageDownloadUrl(img);
-  if (!key || !fileUrl) return;
-  if (dragBinaryCache.has(key) || dragPrefetchPromises.has(key)) return;
-
-  const promise = fetch(fileUrl, { cache: "no-store" })
-    .then(async (response) => {
-      if (!response.ok) {
-        throw new Error(`Prefetch failed with status ${response.status}`);
-      }
-      const buffer = await response.arrayBuffer();
-      const headerType = response.headers.get("Content-Type") || inferMimeType(img);
-      const entry = createBinaryEntry(buffer, headerType, key);
-      dragPrefetchPromises.delete(key);
-      return entry;
-    })
-    .catch((err) => {
-      dragPrefetchPromises.delete(key);
-      console.warn("[DRAG] Prefetch failed", err);
-      throw err;
-    });
-
-  dragPrefetchPromises.set(key, promise);
-}
-
-function fetchBinarySync(fileUrl, mimeType, cacheKey) {
-  if (!fileUrl) return null;
-  try {
-    const xhr = new XMLHttpRequest();
-    xhr.open("GET", fileUrl, false);
-    xhr.responseType = "arraybuffer";
-    xhr.send();
-    if (xhr.status >= 200 && xhr.status < 300) {
-      const buffer = xhr.response;
-      const type = xhr.getResponseHeader("Content-Type") || mimeType;
-      return createBinaryEntry(
-        buffer,
-        type || "application/octet-stream",
-        cacheKey
-      );
-    }
-    console.warn("[DRAG] Synchronous fetch failed", xhr.status, fileUrl);
-  } catch (err) {
-    console.error("[DRAG] Synchronous fetch error", err);
-  }
-  return null;
-}
-
-function ensureBinaryEntry(img, fileUrl, mimeType) {
-  const cacheKey = getImageCacheKey(img);
-  let entry = cacheKey ? dragBinaryCache.get(cacheKey) : null;
-  if (entry) return entry;
-
-  entry = fetchBinarySync(fileUrl, mimeType, cacheKey);
-  if (entry) return entry;
-
-  if (img?.thumbnail) {
-    const thumbBlob = dataUrlToBlob(img.thumbnail, mimeType || "image/png");
-    if (thumbBlob) {
-      entry = { blob: thumbBlob, dataUrl: img.thumbnail, mimeType: thumbBlob.type };
-      if (cacheKey) dragBinaryCache.set(cacheKey, entry);
+  for (const type of types) {
+    if (typeof type !== "string") continue;
+    const shouldRead = type.startsWith("text/") || interestingTypes.has(type);
+    if (!shouldRead) continue;
+    try {
+      const value = dataTransfer.getData(type) || "";
+      const truncated = value.length > 200 ? `${value.slice(0, 200)}…` : value;
+      console.debug(`[DRAG] ${label}: payload (${type})`, truncated);
+    } catch (err) {
+      console.debug(`[DRAG] ${label}: unable to read ${type}`, err);
     }
   }
-  return entry || null;
 }
 
-function attachFullFileToDrag(event, img, fileUrl, filename, mimeType, entry) {
-  if (!event?.dataTransfer?.items) return null;
-
-  const resolvedEntry = entry || ensureBinaryEntry(img, fileUrl, mimeType);
-  if (!resolvedEntry) {
-    console.warn("[DRAG] No binary data available for drag payload");
-    return null;
-  }
-
-  try {
-    const resolvedType =
-      resolvedEntry.mimeType || mimeType || resolvedEntry.blob.type || "application/octet-stream";
-    const file = new File([resolvedEntry.blob], filename, { type: resolvedType });
-    event.dataTransfer.items.add(file);
-    console.debug("[DRAG] Added binary payload to dataTransfer.items", {
-      name: filename,
-      type: resolvedType,
-      size: file.size,
-    });
-    return resolvedEntry;
-  } catch (err) {
-    console.error("[DRAG] Unable to attach binary file to drag payload", err);
-    return resolvedEntry;
-  }
-}
 
 function clearSelection() {
   selectedImageIds.value = [];
@@ -787,9 +660,6 @@ function pauseVideo(id) {
   }
 }
 
-function primeImageDragPayload(img) {
-  prefetchFullImageBlob(img);
-}
 function isVideo(img) {
   if (!img) return false;
   let name = "";
@@ -1185,6 +1055,7 @@ function handleGridDragLeave(e) {
 
 function handleGridDrop(e) {
   dragOverlayVisible.value = false;
+  debugLogDataTransfer("drop", e.dataTransfer);
 
   // Ignore drag-and-drop if the source is the grid itself
   if (dragSource.value === "grid" || e.dataTransfer.types.includes("application/json")) {
@@ -1666,77 +1537,38 @@ const columns = ref(1);
 const isImageSelected = (id) =>
   selectedImageIds.value && selectedImageIds.value.includes(id);
 
-// Event handlers: these should emit events or call parent-provided functions
-const onImageDragStart = (img, idx, event) => {
-  if (!event || !event.dataTransfer || !img) return;
-
-  const fileUrl = getImageDownloadUrl(img);
-  if (!fileUrl) {
-    console.warn("[DRAG] Unable to resolve file URL for image", img);
-    return;
-  }
-
+function handleThumbnailNativeDragStart(img, event) {
   dragSource.value = "grid";
-
-  const baseFilename = getImageFilename(img);
-  const downloadDescriptor = buildDownloadDescriptor(
-    img,
-    fileUrl,
-    baseFilename,
-    inferMimeType(img, baseFilename)
-  );
-  const filename = downloadDescriptor.filename;
-  const mimeType = downloadDescriptor.mimeType;
-  const binaryEntry = ensureBinaryEntry(img, fileUrl, mimeType);
-
-  try {
-    event.dataTransfer.clearData();
-  } catch (err) {
-    console.debug("[DRAG] clearData not supported:", err);
+  const target = event?.target;
+  if (!target || typeof target !== "object") return;
+  if (!(target instanceof HTMLImageElement)) return;
+  const fullUrl = getImageDownloadUrl(img);
+  if (!fullUrl) return;
+  if (!target.dataset.thumbSrc) {
+    target.dataset.thumbSrc = target.src;
   }
+  if (target.dataset.usingFullSrc === "1" && target.src === fullUrl) return;
+  target.dataset.usingFullSrc = "1";
+  target.src = fullUrl;
+}
 
-  event.dataTransfer.effectAllowed = "copy";
-
-  const dragImg = event.currentTarget?.querySelector(".thumbnail-img");
-  if (dragImg) {
-    const rect = dragImg.getBoundingClientRect();
-    event.dataTransfer.setDragImage(dragImg, rect.width / 2, rect.height / 2);
+function handleThumbnailNativeDragEnd(event) {
+  const target = event?.target;
+  if (!target || typeof target !== "object") return;
+  if (!(target instanceof HTMLImageElement)) return;
+  if (target.dataset.usingFullSrc === "1" && target.dataset.thumbSrc) {
+    target.src = target.dataset.thumbSrc;
   }
+  delete target.dataset.usingFullSrc;
+}
 
-  console.debug(
-    "[DRAG] dataTransfer types after setData",
-    Array.from(event.dataTransfer.types || [])
-  );
-  const payload = attachFullFileToDrag(
-    event,
-    img,
-    fileUrl,
-    filename,
-    mimeType,
-    binaryEntry
-  );
-  if (!payload) {
-    console.warn("[DRAG] Unable to attach binary payload, aborting drag");
-    event.preventDefault();
-    return;
-  }
-  console.debug(
-    "[DRAG] dataTransfer items after file attach",
-    event.dataTransfer.items
-      ? Array.from(event.dataTransfer.items).map((item) => ({
-          kind: item.kind,
-          type: item.type,
-        }))
-      : []
-  );
+function handleVideoDragStart(img) {
+  if (!img) return;
+  dragSource.value = "grid";
+}
 
-  console.debug("[DRAG] Payload prepared", {
-    fileUrl,
-    filename,
-    mimeType,
-    downloadDescriptor,
-  });
-};
+// Event handlers: these should emit events or call parent-provided functions
+// Legacy drag logic replaced with native media dragging for Finder compatibility
 
 function handleImageCardClick(img, idx, event) {
   if (!img.id) return;
