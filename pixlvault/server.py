@@ -1812,12 +1812,15 @@ class Server:
             # Each result is (pic, likeness_score)
             return [Picture.serialize_with_likeness(r) for r in results]
 
-        @self.api.get("/pictures/{id}")
-        async def get_picture(id: str):
+        @self.api.get("/pictures/{id}.{ext}")
+        async def get_picture(id: str, ext: str):
             if not isinstance(id, str):
                 logger.error(f"Invalid id type: {type(id)} value: {id}")
                 raise HTTPException(status_code=400, detail="Invalid picture id type")
 
+            if not ext or not isinstance(ext, str):
+                logger.error(f"Invalid extension type: {type(ext)} value: {ext}")
+                raise HTTPException(status_code=400, detail="Invalid picture extension")
             id = int(id)  # Convert id to int
 
             pics = self.vault.db.run_task(lambda session: Picture.find(session, id=id))
@@ -1833,6 +1836,14 @@ class Server:
                 )
                 raise HTTPException(
                     status_code=404, detail=f"File not found for picture id={pic.id}"
+                )
+            if pic.format.lower() != ext.lower():
+                logger.error(
+                    f"Requested extension '{ext}' does not match picture format '{pic.format}' for id={pic.id}"
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Requested extension does not match picture format",
                 )
 
             # Return the image file with CORS headers

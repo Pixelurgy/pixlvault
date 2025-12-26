@@ -133,7 +133,7 @@
               <template v-if="img.thumbnail && isVideo(img)">
                 <video
                   class="thumbnail-img"
-                  :src="`${props.backendUrl}/pictures/${img.id}`"
+                  :src="getImageDownloadUrl(img)"
                   :ref="(el) => setVideoRef(img.id, el)"
                   @load="
                     () => {
@@ -579,20 +579,36 @@ function inferMimeType(img, filename = "") {
   return (ext && EXTENSION_MIME_MAP[ext]) || "application/octet-stream";
 }
 
+function getImageFormatExtension(img) {
+  if (!img || !img.format) return "";
+  return String(img.format).trim().toLowerCase();
+}
+
+function appendExtIfMissing(name, ext) {
+  if (!name) return null;
+  if (!ext) return name;
+  const normalized = ext.toLowerCase();
+  const lowerName = name.toLowerCase();
+  if (lowerName.endsWith(`.${normalized}`)) return name;
+  if (/\.[a-z0-9]+$/i.test(lowerName)) return name;
+  return `${name}.${normalized}`;
+}
+
 function getImageFilename(img) {
   if (!img) return "image";
-  return (
-    img.original_filename ||
-    img.filename ||
-    (img.id ? `${img.id}.jpg` : "image")
-  );
+  const ext = getImageFormatExtension(img);
+  const original = appendExtIfMissing(img.original_filename, ext);
+  const fromFilename = appendExtIfMissing(img.filename, ext);
+  const fallbackBase = img.id ? String(img.id) : "image";
+  const fallback = ext ? `${fallbackBase}.${ext}` : `${fallbackBase}.jpg`;
+  return original || fromFilename || fallback;
 }
 
 function getImageDownloadUrl(img) {
-  if (!img) return "";
-  const identifier = img.id || img.filename;
-  if (!identifier) return "";
-  return `${props.backendUrl}/pictures/${identifier}`;
+  if (!img || !img.id) return "";
+  const ext = getImageFormatExtension(img);
+  const suffix = ext ? `.${ext}` : "";
+  return `${props.backendUrl}/pictures/${img.id}${suffix}`;
 }
 
 const dragBinaryCache = new Map();
@@ -1662,8 +1678,15 @@ const onImageDragStart = (img, idx, event) => {
 
   dragSource.value = "grid";
 
-  const filename = getImageFilename(img);
-  const mimeType = inferMimeType(img, filename);
+  const baseFilename = getImageFilename(img);
+  const downloadDescriptor = buildDownloadDescriptor(
+    img,
+    fileUrl,
+    baseFilename,
+    inferMimeType(img, baseFilename)
+  );
+  const filename = downloadDescriptor.filename;
+  const mimeType = downloadDescriptor.mimeType;
   const binaryEntry = ensureBinaryEntry(img, fileUrl, mimeType);
 
   try {
