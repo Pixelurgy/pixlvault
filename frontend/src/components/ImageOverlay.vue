@@ -17,7 +17,7 @@
             <template v-if="image">
               <video
                 v-if="isSupportedVideoFile(getOverlayFormat(image))"
-                :src="`${backendUrl}/pictures/${image.id}`"
+                :src="getFullImageUrl(image)"
                 class="overlay-video"
                 controls
                 preload="auto"
@@ -27,7 +27,7 @@
               <img
                 v-else
                 ref="imgRef"
-                :src="`${backendUrl}/pictures/${image.id}`"
+                :src="getFullImageUrl(image)"
                 :alt="image.description || 'Full Image'"
                 class="overlay-img"
                 @load="updateOverlayDims"
@@ -259,6 +259,19 @@ watch(open, (value) => {
     resetTagInput();
   }
 });
+
+function normalizePictureFormat(target) {
+  if (!target || !target.format) return "";
+  return String(target.format).trim().toLowerCase();
+}
+
+function getFullImageUrl(targetImage = null) {
+  const data = targetImage || image.value;
+  if (!data || !data.id) return "";
+  const ext = normalizePictureFormat(data);
+  const suffix = ext ? `.${ext}` : "";
+  return `${backendUrl.value}/pictures/${data.id}${suffix}`;
+}
 
 watch(image, () => {
   resetTagInput();
