@@ -6,9 +6,68 @@
         &times;
       </button>
       <div class="overlay-title-row">
-        <span class="overlay-title-desc">{{
-          image?.description || "No description"
-        }}</span>
+        <div
+          class="overlay-title-desc-shell"
+          :class="{ editing: isEditingDescription }"
+        >
+          <textarea
+            ref="descriptionEditorRef"
+            v-model="descriptionDraft"
+            class="overlay-title-desc"
+            :readonly="!isEditingDescription"
+            @keydown.enter.prevent="isEditingDescription && saveDescription()"
+            @blur="isEditingDescription && cancelEditDescription()"
+          ></textarea>
+        </div>
+        <div class="overlay-title-actions">
+          <button
+            class="title-action-btn"
+            type="button"
+            title="Copy description"
+            :disabled="!canCopyDescription"
+            @click.stop="copyDescription"
+          >
+            <v-icon size="18">
+              {{
+                descriptionCopyState === "copied"
+                  ? "mdi-check-bold"
+                  : "mdi-content-copy"
+              }}
+            </v-icon>
+          </button>
+          <template v-if="isEditingDescription">
+            <button
+              class="title-action-btn"
+              type="button"
+              title="Save description"
+              :disabled="isSavingDescription"
+              @click.stop="saveDescription"
+            >
+              <v-icon size="18" :class="{ 'mdi-spin': isSavingDescription }">
+                {{ isSavingDescription ? "mdi-loading" : "mdi-content-save" }}
+              </v-icon>
+            </button>
+            <button
+              class="title-action-btn"
+              type="button"
+              title="Cancel editing"
+              :disabled="isSavingDescription"
+              @click.stop="cancelEditDescription"
+            >
+              <v-icon size="18">mdi-close</v-icon>
+            </button>
+          </template>
+          <button
+            v-else
+            class="title-action-btn"
+            type="button"
+            title="Edit description"
+            :disabled="!image"
+            @click.stop="startEditDescription"
+          >
+            <v-icon size="18">mdi-pencil</v-icon>
+          </button>
+        </div>
       </div>
       <!-- Image Row -->
       <div class="overlay-img-row">
@@ -163,7 +222,7 @@
           {{ tag }}
           <button
             class="tag-delete-btn"
-            @click.stop="emit('remove-tag', tag)"
+            @click.stop="removeTag(tag)"
             title="Remove tag"
           >
             ×
@@ -192,6 +251,13 @@
             padding: 2px 8px;
             min-width: 80px;
             outline: none;
+            background: rgba(
+              255,
+              255,
+              0,
+              0.8
+            ); /* Bright semi-opaque background */
+            color: #000; /* Visible text color */
           "
           placeholder="New tag"
           autofocus
@@ -206,6 +272,7 @@ import {
   onMounted,
   onUnmounted,
   ref,
+  reactive,
   computed,
   nextTick,
   toRefs,
@@ -242,6 +309,23 @@ const emit = defineEmits([
   "add-tag",
 ]);
 
+const descriptionRef = ref(null);
+const descriptionScrollMeta = reactive({
+  hasOverflow: false,
+});
+const isEditingDescription = ref(false);
+const isSavingDescription = ref(false);
+const descriptionDraft = ref("");
+const descriptionEditorRef = ref(null);
+const descriptionCopyState = ref("idle");
+const canCopyDescription = computed(() => {
+  const source = isEditingDescription.value
+    ? descriptionDraft.value
+    : image.value?.description;
+  return !!(source && source.length);
+});
+let copyResetTimer = null;
+
 const addingTag = ref(false);
 const newTag = ref("");
 const tagInputRef = ref(null);
@@ -275,11 +359,26 @@ function getFullImageUrl(targetImage = null) {
 
 watch(image, () => {
   resetTagInput();
+  syncDescriptionDraft();
+  nextTick(updateDescriptionScrollState);
+});
+
+watch(open, (isOpen) => {
+  if (isOpen) {
+    nextTick(updateDescriptionScrollState);
+  } else {
+    cancelEditDescription();
+    resetCopyState();
+  }
 });
 
 function resetTagInput() {
   addingTag.value = false;
   newTag.value = "";
+}
+
+function syncDescriptionDraft() {
+  descriptionDraft.value = image.value?.description || "";
 }
 
 function beginAddTag() {
@@ -311,7 +410,11 @@ function confirmAddTag() {
     cancelAddTag();
     return;
   }
-  emit("add-tag", trimmed);
+  emit("add-tag", image.value.id, trimmed);
+  if (image.value && Array.isArray(image.value.tags)) {
+    image.value.tags.push(trimmed);
+    image.value.tags.sort(); // Ensure tags remain sorted
+  }
   resetTagInput();
 }
 
@@ -341,6 +444,20 @@ function showNextImage() {
 
 function handleKeydown(e) {
   if (!open.value) return;
+
+  if (isEditingDescription.value || addingTag.value) {
+    // Handle editing-specific keydown behavior
+    if (e.key === "Escape") {
+      if (isEditingDescription.value) {
+        cancelEditDescription(); // Close editing description without saving
+      } else if (addingTag.value) {
+        cancelAddTag(); // Close tag editing without saving
+      }
+    }
+    return; // Ignore other overlay key presses when editing
+  }
+
+  // Regular keydown behavior
   if (e.key === "Escape") {
     emit("close");
   } else if (["ArrowLeft", "Left"].includes(e.key)) {
@@ -387,9 +504,13 @@ watch(image, () => nextTick(updateOverlayDims));
 
 onMounted(() => {
   window.addEventListener("keydown", handleKeydown);
+  window.addEventListener("resize", updateDescriptionScrollState);
+  nextTick(updateDescriptionScrollState);
 });
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown);
+  window.removeEventListener("resize", updateDescriptionScrollState);
+  resetCopyState();
 });
 
 // Store multiple face bounding boxes (now full face objects)
@@ -441,7 +562,6 @@ async function fetchFaceBboxes(imageId) {
           }
         } else {
           face.character_name = null;
-          console.warn("Face is missing character_id:", face);
         }
       })
     );
@@ -479,6 +599,147 @@ function faceBoxColor(idx) {
   ];
   return palette[idx % palette.length];
 }
+
+function updateDescriptionScrollState() {
+  const el = descriptionRef.value;
+  if (!el) {
+    descriptionScrollMeta.hasOverflow = false;
+    return;
+  }
+
+  descriptionScrollMeta.hasOverflow = false; // Disable overflow logic
+}
+
+function handleDescriptionScroll() {
+  updateDescriptionScrollState();
+}
+
+const descriptionScrollClasses = computed(() => {
+  return {
+    "has-overflow": descriptionScrollMeta.hasOverflow,
+  };
+});
+
+function startEditDescription() {
+  if (!image.value) return;
+  syncDescriptionDraft();
+  isEditingDescription.value = true;
+  nextTick(() => {
+    if (descriptionEditorRef.value) {
+      descriptionEditorRef.value.focus();
+      descriptionEditorRef.value.select?.();
+    }
+  });
+}
+
+function cancelEditDescription() {
+  isEditingDescription.value = false;
+  isSavingDescription.value = false;
+  syncDescriptionDraft();
+  nextTick(updateDescriptionScrollState);
+}
+
+async function saveDescription() {
+  if (!image.value || isSavingDescription.value) return;
+  isSavingDescription.value = true;
+  const newDescription = descriptionDraft.value.trim();
+  const payload = { description: newDescription || null };
+  try {
+    const res = await fetch(`${backendUrl.value}/pictures/${image.value.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      throw new Error(`Server responded with ${res.status}`);
+    }
+    image.value = { ...image.value, description: newDescription };
+    if (Array.isArray(allImages.value)) {
+      const idx = allImages.value.findIndex(
+        (img) => img && img.id === image.value.id
+      );
+      if (idx !== -1) {
+        allImages.value[idx] = {
+          ...allImages.value[idx],
+          description: newDescription,
+        };
+      }
+    }
+    isEditingDescription.value = false;
+    nextTick(updateDescriptionScrollState);
+  } catch (err) {
+    alert(`Failed to update description: ${err?.message || err}`);
+  } finally {
+    isSavingDescription.value = false;
+  }
+}
+
+async function copyDescription() {
+  const text = isEditingDescription.value
+    ? descriptionDraft.value
+    : image.value?.description;
+  if (!text) return;
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    descriptionCopyState.value = "copied";
+    if (copyResetTimer) {
+      clearTimeout(copyResetTimer);
+    }
+    copyResetTimer = window.setTimeout(() => {
+      resetCopyState();
+    }, 2000);
+  } catch (err) {
+    alert(`Unable to copy description: ${err?.message || err}`);
+  }
+}
+
+function resetCopyState() {
+  if (copyResetTimer) {
+    clearTimeout(copyResetTimer);
+    copyResetTimer = null;
+  }
+  descriptionCopyState.value = "idle";
+}
+
+function handleDescriptionEditorKey(event) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    cancelEditDescription();
+    return;
+  }
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    event.preventDefault();
+    saveDescription();
+  }
+}
+
+function selectAllText() {
+  const input = descriptionEditorRef.value;
+  if (input) {
+    input.select();
+  }
+}
+
+function removeTag(tag) {
+  if (!image.value || !Array.isArray(image.value.tags)) return;
+  const index = image.value.tags.indexOf(tag);
+  if (index !== -1) {
+    image.value.tags.splice(index, 1);
+    emit("remove-tag", image.value.id, tag); // Notify parent component
+  }
+}
 </script>
 
 <style scoped>
@@ -503,7 +764,7 @@ function faceBoxColor(idx) {
   height: 100vh;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.6);
   border-radius: 0px;
   box-shadow: 0 2px 16px rgba(0, 0, 0, 0.5);
   padding: 12px 12px 8px 12px;
@@ -515,6 +776,7 @@ function faceBoxColor(idx) {
 .overlay-title-row {
   width: 90%;
   display: flex;
+  background-color: #44444488;
   align-items: center;
   justify-content: center;
   position: relative;
@@ -522,13 +784,88 @@ function faceBoxColor(idx) {
   max-height: 72px;
   z-index: 2;
 }
+.overlay-title-desc-shell {
+  flex: 1;
+  width: 100%;
+  padding: 4px 4px;
+  padding-right: 100px;
+  line-height: 1.1;
+  max-height: calc(1.1em * 3.3);
+  overflow-y: auto;
+  border: 1px dashed #bbb;
+  border-radius: 4px;
+  scrollbar-color: #ff9800 #2b2b2b;
+  scrollbar-width: thick;
+  scrollbar-gutter: stable both-edges;
+}
+
+.overlay-title-desc-shell.editing {
+  border: 1px solid orange; /* Change to solid orange border when editing */
+}
 .overlay-title-desc {
   flex: 1;
   color: #eee;
-  font-size: 1.25rem;
-  text-align: center;
+  width: 100%;
+  font-size: 1rem;
+  text-align: left;
   word-break: break-word;
-  padding-right: 48px;
+  position: relative;
+  display: block;
+  border: none; /* Removed border to avoid double border issue */
+  outline: none;
+  resize: none;
+}
+.overlay-title-actions {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: flex;
+  gap: 8px;
+}
+.title-action-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.title-action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+.title-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.overlay-title-desc::-webkit-scrollbar {
+  width: 6px;
+}
+.overlay-title-desc::-webkit-scrollbar-track {
+  background: #2b2b2b;
+}
+.overlay-title-desc::-webkit-scrollbar-thumb {
+  background: #ff9800;
+}
+.overlay-title-desc.has-overflow {
+  padding-right: 40px;
+}
+.overlay-title-desc.has-overflow::before,
+.overlay-title-desc.has-overflow::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 18px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 .overlay-close {
   position: absolute;
@@ -702,16 +1039,6 @@ function faceBoxColor(idx) {
   color: #ff5252;
 }
 
-.overlay-desc {
-  color: #eee;
-  margin-top: 12px;
-  text-align: center;
-  max-width: 90vw;
-  word-break: break-word;
-  font-size: 1.25rem;
-  overflow: auto;
-}
-
 .overlay-nav {
   position: absolute;
   top: 50%;
@@ -753,11 +1080,11 @@ function faceBoxColor(idx) {
   vertical-align: middle;
   background-color: #2581a2;
   color: #ffffff;
-  border-radius: 16px;
-  padding: 4px 12px 4px 12px;
-  height: 32px;
+  border-radius: 6px;
+  padding: 2px 6px 2px 6px;
+  height: 24px;
   margin: 2px 2px 2px 2px;
-  font-size: 1.15em;
+  font-size: 0.8em;
   position: relative;
 }
 .tag-delete-btn {

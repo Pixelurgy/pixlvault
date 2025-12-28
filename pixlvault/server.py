@@ -36,6 +36,7 @@ from pixlvault.db_models import (
 
 from pixlvault.db_models import PictureLikeness, FaceLikeness
 from pixlvault.db_models.face_character_likeness import FaceCharacterLikeness
+from pixlvault.db_models.tag import Tag
 from pixlvault.picture_stack_utils import (
     order_stack_pictures,
     combined_picture_face_likeness,
@@ -1679,13 +1680,21 @@ class Server:
             Export pictures matching the filters as a zip file.
             Uses same filter logic as /pictures endpoint, but returns a zip.
             """
+            picture_ids = request.query_params.getlist("id")
             query_params = dict(request.query_params)
             query_params.pop("query", None)
             query_params.pop("set_id", None)
             query_params.pop("threshold", None)
+            character_id = query_params.pop("character_id", None)
 
             pics = []
-            if set_id is not None:
+
+            # First option is if a list of picture_ids is provided
+            if picture_ids:
+                pics = self.vault.db.run_task(Picture.find, id=picture_ids)
+            elif set_id is not None:
+                logger.info("Exporting pictures set {} ".format(set_id))
+
                 # Fetch picture IDs in set, then fetch Picture objects
                 def fetch_members(session, set_id):
                     members = session.exec(
@@ -1699,8 +1708,26 @@ class Server:
                     return Picture.find(session, id=picture_ids)
 
                 pics = self.vault.db.run_task(fetch_members, set_id)
-            elif query:
+            elif character_id is not None:
+                logger.info(
+                    "Exporting pictures for character ID: {}".format(character_id)
+                )
 
+                # Fetch pictures with faces matching character_id
+                def fetch_by_character(session, character_id):
+                    faces = session.exec(
+                        select(Face).where(Face.character_id == character_id)
+                    ).all()
+                    picture_ids = list({face.picture_id for face in faces})
+                    if not picture_ids:
+                        return []
+                    return Picture.find(session, id=picture_ids)
+
+                pics = self.vault.db.run_task(fetch_by_character, character_id)
+            elif query:
+                logger.info("Exporting pictures using search query: {}".format(query))
+
+                # Search query
                 def find_by_text(session, query):
                     words = re.findall(r"\b\w+\b", query.lower())
                     preprocessed_query_words = self.vault.preprocess_query_words(words)
@@ -1721,6 +1748,11 @@ class Server:
 
                 pics = self.vault.db.run_task(find_by_text, query)
             else:
+                logger.info(
+                    "Exporting pictures using filter parameters: {}".format(
+                        query_params
+                    )
+                )
                 # Fallback to filter-based search
                 pics = self.vault.db.run_task(
                     Picture.find,
@@ -1729,6 +1761,9 @@ class Server:
                     select_fields=Picture.metadata_fields(),
                     **query_params,
                 )
+
+            if not pics:
+                raise HTTPException(status_code=404, detail="No pictures found")
 
             # Create zip file in memory
             zip_buffer = io.BytesIO()
@@ -1765,6 +1800,10 @@ class Server:
 
             filename = "_".join(filename_parts) if filename_parts else "pictures"
             filename = f"{filename}_{len(pics)}_images.zip"
+
+            logger.info(
+                f"Streaming file name {filename} containing {len(pics)} pictures."
+            )
 
             return StreamingResponse(
                 io.BytesIO(zip_buffer.getvalue()),
@@ -1843,7 +1882,7 @@ class Server:
                 )
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Requested extension does not match picture format",
+                    detail="Requested extension does not match picture format",
                 )
 
             # Return the image file with CORS headers
@@ -1876,6 +1915,80 @@ class Server:
 
             logger.info("Returning dict: " + str(pic_dict))
             return pic_dict
+
+        @self.api.post("/pictures/{id}/tags")
+        async def add_tag_to_picture(id: str, payload: dict = Body(...)):
+            """
+            Add a tag to a picture.
+            """
+            try:
+                tag = payload.get("tag")
+                if not tag:
+                    raise HTTPException(status_code=400, detail="Tag is required")
+
+                pic_list = self.vault.db.run_task(
+                    lambda session: Picture.find(session, id=id, select_fields=["tags"])
+                )
+                if not pic_list:
+                    raise HTTPException(status_code=404, detail="Picture not found")
+                pic = pic_list[0]
+
+                full_tag = Tag(tag=tag, picture_id=pic.id)
+                if full_tag not in pic.tags:
+                    def update_picture(session, pic_id, tag):
+                        pic = Picture.find(session, id=pic_id, select_fields=["tags"])[0]
+                        pic.tags.append(tag)
+                        session.add(pic)
+                        session.commit()
+                        session.refresh(pic)
+                        return pic
+
+                    self.vault.db.run_task(update_picture, pic.id, full_tag)
+                    self.vault.notify(EventType.CHANGED_TAGS)
+
+                return {"status": "success", "tags": pic.tags}
+            except Exception as e:
+                logger.error(f"Failed to add tag: {e}")
+                raise HTTPException(status_code=500, detail="Failed to add tag")
+
+        @self.api.delete("/pictures/{id}/tags/{tag}")
+        async def remove_tag_from_picture(id: str, tag: str):
+            """
+            Remove a tag from a picture.
+            """
+            try:
+                pic_list = self.vault.db.run_task(
+                    lambda session: Picture.find(session, id=id, select_fields=["tags"])
+                )
+                logger.info(f"Removing tag '{tag}' from picture id={id}. Found pics: {pic_list}")
+                if not pic_list:
+                    raise HTTPException(status_code=404, detail="Picture not found")
+                pic = pic_list[0]
+
+                full_tag = Tag(tag=tag, picture_id=pic.id)
+
+                if full_tag in pic.tags:
+                    logger.info(f"Tag {tag} found in picture tags {pic.tags}, proceeding to remove.")
+
+                    def update_picture(session, pic_id, tag):
+                        pic = Picture.find(session, id=pic_id, select_fields=["tags"])[0]
+                        pic.tags.remove(tag)
+                        session.add(pic)
+                        session.commit()
+                        session.refresh(pic)
+                        return pic
+
+                    self.vault.db.run_task(update_picture, pic.id, full_tag)
+                    self.vault.notify(EventType.CHANGED_TAGS)
+
+                    logger.info(f"Remaining tags after removal: {pic.tags}")
+                else:
+                    logger.info(f"Tag {tag} not found in picture tags {pic.tags}, nothing to remove.")
+
+                return {"status": "success", "tags": pic.tags}
+            except Exception as e:
+                logger.error(f"Failed to remove tag: {e}")
+                raise HTTPException(status_code=500, detail="Failed to remove tag")
 
         @self.api.get("/pictures/{id}/{field}")
         async def get_picture_field(id: str, field: str):
@@ -2184,7 +2297,7 @@ class Server:
                 pics = self.vault.db.run_task(
                     Picture.find,
                     id=picture_ids,
-                    sort=sort_mech,
+                    sort_mech=sort_mech,
                     offset=offset,
                     limit=limit,
                     select_fields=Picture.metadata_fields(),
@@ -2217,7 +2330,7 @@ class Server:
                 pics = self.vault.db.run_task(
                     Picture.find,
                     id=picture_ids,
-                    sort=sort_mech,
+                    sort_mech=sort_mech,
                     offset=offset,
                     limit=limit,
                     select_fields=Picture.metadata_fields(),
@@ -2227,7 +2340,7 @@ class Server:
             else:
                 pics = self.vault.db.run_task(
                     Picture.find,
-                    sort=sort_mech,
+                    sort_mech=sort_mech,
                     offset=offset,
                     limit=limit,
                     select_fields=Picture.metadata_fields(),

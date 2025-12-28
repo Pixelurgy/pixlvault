@@ -6,6 +6,8 @@
     :backendUrl="props.backendUrl"
     @close="closeOverlay"
     @apply-score="applyScore"
+    @add-tag="addTagToImage"
+    @remove-tag="removeTagFromImage"
   />
   <ImageImporter
     ref="imageImporterRef"
@@ -324,11 +326,21 @@
     <div
       v-if="props.searchQuery && props.searchQuery.length > 0"
       class="search-result-bar"
-      style="position: absolute; bottom: 64px; left: 0; width: 100%; z-index: 1000; background-color: #f5f5f5; display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);"
+      style="
+        position: absolute;
+        bottom: 64px;
+        left: 0;
+        width: 100%;
+        z-index: 1000;
+        background-color: #f5f5f5;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 16px;
+        box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
+      "
     >
-      <span>
-        Search result found {{ allGridImages.length}} items
-      </span>
+      <span> Search result found {{ allGridImages.length }} items </span>
       <v-btn color="primary" @click="clearSearchQuery">Clear</v-btn>
     </div>
   </div>
@@ -385,6 +397,14 @@ const PREFETCHED_FULL_IMAGE_LIMIT = 12;
 const fullImagePrefetchControllers = new Map();
 const prefetchedFullImageIds = new Set();
 const prefetchedFullImageOrder = [];
+const multiZipState = reactive({
+  key: null,
+  status: "idle",
+  blob: null,
+  filename: null,
+  error: null,
+});
+let multiZipAbortController = null;
 
 // Key to force face bbox overlay recompute
 const faceOverlayRedrawKey = ref(0);
@@ -406,6 +426,7 @@ onUnmounted(() => {
   fullImagePrefetchControllers.clear();
   prefetchedFullImageIds.clear();
   prefetchedFullImageOrder.length = 0;
+  resetMultiSelectionZip();
 });
 
 function onThumbnailLoad(id) {
@@ -459,6 +480,14 @@ function onFaceBboxDragStart(event, img, faceIdx) {
     const face = img.faces[faceIdx];
     facesToDrag = [{ imageId: img.id, faceIdx, faceId: face.id }];
   }
+
+  // Ensure that additional data types are preserved in the dataTransfer object
+  const existingData = {};
+  for (const type of event.dataTransfer.types) {
+    existingData[type] = event.dataTransfer.getData(type);
+  }
+
+  // Set the application/json data
   const dragDataStr = JSON.stringify({
     type: "face-bbox",
     faceIds: facesToDrag.map((f) => f.faceId),
@@ -467,6 +496,14 @@ function onFaceBboxDragStart(event, img, faceIdx) {
   });
   console.log("[DRAG] onFaceBboxDragStart dragData:", dragDataStr);
   event.dataTransfer.setData("application/json", dragDataStr);
+
+  // Restore other data types
+  for (const [type, data] of Object.entries(existingData)) {
+    if (type !== "application/json") {
+      event.dataTransfer.setData(type, data);
+    }
+  }
+
   event.dataTransfer.effectAllowed = "move";
 }
 
@@ -674,43 +711,105 @@ function buildExportUrlForIds(ids) {
 
 function setupMultiExportDrag(event, ids) {
   if (!event?.dataTransfer || !Array.isArray(ids) || ids.length < 2) return;
+
+  try {
+    const dragData = {
+      type: "image-ids",
+      imageIds: ids,
+    };
+    event.dataTransfer.setData("application/json", JSON.stringify(dragData));
+    console.debug("[DRAG] Multi-selection drag data set:", dragData);
+  } catch (err) {
+    console.error("[ERROR] Failed to set drag data:", err);
+  }
+}
+
+function getSelectionSignature(ids) {
+  if (!Array.isArray(ids) || !ids.length) return null;
+  return ids
+    .slice()
+    .map((id) => String(id))
+    .sort()
+    .join(",");
+}
+
+function primeMultiSelectionZip(ids) {
+  const signature = getSelectionSignature(ids);
+  if (!signature) return;
+  if (
+    multiZipState.key === signature &&
+    (multiZipState.status === "pending" || multiZipState.status === "ready")
+  ) {
+    return;
+  }
+  resetMultiSelectionZip();
+  multiZipState.key = signature;
+  multiZipState.status = "pending";
+  multiZipState.filename = buildSelectionZipFilename(ids.length);
   const url = buildExportUrlForIds(ids);
-  if (!url) return;
-  const filename = buildSelectionZipFilename(ids.length);
-  const payload = `application/zip:${filename}:${url}`;
-  const dt = event.dataTransfer;
-  try {
-    dt.setData("DownloadURL", payload);
-  } catch (err) {
-    console.debug("[DRAG] Unable to set DownloadURL", err);
+  if (!url) {
+    multiZipState.status = "error";
+    multiZipState.error = "Missing export URL";
+    return;
+  }
+  const controller = new AbortController();
+  multiZipAbortController = controller;
+  fetch(url, { signal: controller.signal })
+    .then((res) => {
+      if (!res.ok) {
+        throw new Error(`Export failed (${res.status})`);
+      }
+      return res.blob();
+    })
+    .then((blob) => {
+      if (multiZipState.key !== signature) return;
+      multiZipState.status = "ready";
+      multiZipState.blob = blob;
+    })
+    .catch((err) => {
+      if (controller.signal.aborted) return;
+      multiZipState.status = "error";
+      multiZipState.error = err?.message || "Export failed";
+    });
+}
+
+function resetMultiSelectionZip() {
+  if (multiZipAbortController) {
+    multiZipAbortController.abort();
+    multiZipAbortController = null;
+  }
+  multiZipState.key = null;
+  multiZipState.status = "idle";
+  multiZipState.blob = null;
+  multiZipState.filename = null;
+  multiZipState.error = null;
+}
+
+function attachMultiSelectionZipToDrag(event, ids) {
+  if (!event?.dataTransfer) return false;
+  const signature = getSelectionSignature(ids);
+  if (
+    !signature ||
+    signature !== multiZipState.key ||
+    multiZipState.status !== "ready" ||
+    !multiZipState.blob
+  ) {
+    return false;
   }
   try {
-    dt.setData("text/uri-list", `${url}\n`);
+    const file = new File(
+      [multiZipState.blob],
+      multiZipState.filename || buildSelectionZipFilename(ids.length),
+      { type: "application/zip" }
+    );
+    event.dataTransfer.items.add(file);
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.dropEffect = "copy";
+    return true;
   } catch (err) {
-    console.debug("[DRAG] Unable to set text/uri-list", err);
+    console.debug("[DRAG] Unable to attach zip file", err);
+    return false;
   }
-  try {
-    dt.setData("text/plain", url);
-  } catch (err) {
-    console.debug("[DRAG] Unable to set text/plain", err);
-  }
-  try {
-    dt.setData("public.url", url);
-  } catch (err) {
-    console.debug("[DRAG] Unable to set public.url", err);
-  }
-  try {
-    dt.setData("public.url-name", filename);
-  } catch (err) {
-    console.debug("[DRAG] Unable to set public.url-name", err);
-  }
-  dt.effectAllowed = "copy";
-  dt.dropEffect = "copy";
-  console.debug("[DRAG] Multi-selection export", {
-    filename,
-    count: ids.length,
-    url,
-  });
 }
 
 function ensurePrimaryDragSelection(img, event) {
@@ -721,7 +820,10 @@ function ensurePrimaryDragSelection(img, event) {
   if (!img || !img.id) return;
   const hasModifier = event?.ctrlKey || event?.metaKey || event?.shiftKey;
   if (hasModifier) return;
-  if (!selectedImageIds.value.includes(img.id) || selectedImageIds.value.length === 0) {
+  if (
+    !selectedImageIds.value.includes(img.id) ||
+    selectedImageIds.value.length === 0
+  ) {
     selectedImageIds.value = [img.id];
     lastSelectedIndex = typeof img.idx === "number" ? img.idx : null;
   }
@@ -806,7 +908,6 @@ function debugLogDataTransfer(label, dataTransfer) {
     }
   }
 }
-
 
 function clearSelection() {
   selectedImageIds.value = [];
@@ -1061,6 +1162,18 @@ watch(
 const selectedImageIds = ref([]);
 let lastSelectedIndex = null;
 
+watch(
+  selectedImageIds,
+  (ids) => {
+    if (ids.length > 1) {
+      primeMultiSelectionZip(ids);
+    } else {
+      resetMultiSelectionZip();
+    }
+  },
+  { deep: false }
+);
+
 // --- Overlay ---
 async function fetchImageInfo(imageId) {
   try {
@@ -1175,11 +1288,7 @@ async function handleGridDragEnter(e) {
   console.debug("[DEBUG] dataTransfer items:", e.dataTransfer.items);
 
   // Focus on standard dataTransfer types for inspection
-  const standardTypesToInspect = [
-    "text/uri-list",
-    "text/html",
-    "text/plain",
-  ];
+  const standardTypesToInspect = ["text/uri-list", "text/html", "text/plain"];
   for (const type of standardTypesToInspect) {
     if (e.dataTransfer.types.includes(type)) {
       const data = e.dataTransfer.getData(type);
@@ -1231,7 +1340,10 @@ function handleGridDrop(e) {
   debugLogDataTransfer("drop", e.dataTransfer);
 
   // Ignore drag-and-drop if the source is the grid itself
-  if (dragSource.value === "grid" || e.dataTransfer.types.includes("application/json")) {
+  if (
+    dragSource.value === "grid" ||
+    e.dataTransfer.types.includes("application/json")
+  ) {
     console.debug("Drag-and-drop within the grid ignored.");
     dragSource.value = null;
     return;
@@ -1337,7 +1449,8 @@ function buildPictureIdsQueryParams() {
   // Add format filter for backend media type filtering
   if (props.mediaTypeFilter === "images") {
     console.log(
-      "[ImageGrid.vue] Building query params for image formats only", PIL_IMAGE_EXTENSIONS
+      "[ImageGrid.vue] Building query params for image formats only",
+      PIL_IMAGE_EXTENSIONS
     );
     for (const ext of PIL_IMAGE_EXTENSIONS) {
       params.append("format", ext.toUpperCase());
@@ -1651,7 +1764,7 @@ function updateVisibleThumbnails() {
     visibleStart.value,
     visibleEnd.value,
     "Total:",
-      allGridImages.value.length
+    allGridImages.value.length
   );
 
   // Debounce fetches to avoid excessive requests
@@ -1723,6 +1836,10 @@ function handleThumbnailNativeDragStart(img, event) {
   const fullUrl = getImageDownloadUrl(img);
   if (!fullUrl) return;
   promoteImageForNativeDrag(target, fullUrl);
+  event.dataTransfer.setData("application/json", JSON.stringify({
+    type: "image-ids",
+    imageIds: [img.id],
+  }));
 }
 
 function handleThumbnailNativeDragEnd(event) {
@@ -1738,7 +1855,12 @@ function handleVideoDragStart(img, event) {
   const selectionIds = getDragSelectionIds(img);
   if (selectionIds.length > 1) {
     setupMultiExportDrag(event, selectionIds);
+    return;
   }
+  event.dataTransfer.setData("application/json", JSON.stringify({
+    type: "image-ids",
+    imageIds: [img.id],
+  }));
 }
 
 function handleVideoDragEnd() {
@@ -1834,6 +1956,45 @@ function updateColumns() {
   });
 }
 
+async function removeTagFromImage(imageId, tag) {
+  if (!imageId) {
+    console.error("Image ID is required to remove a tag.");
+    return;
+  }
+
+  fetch(`${props.backendUrl}/pictures/${imageId}/tags/${tag}`, {
+    method: "DELETE",
+  })
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error("Failed to remove tag");
+      }
+      console.log(`Tag '${tag}' removed from image ${imageId}`);
+    })
+    .catch((error) => {
+      console.error("Error removing tag:", error);
+    });
+}
+
+async function addTagToImage(imageId, tag) {
+  try {
+    const response = await fetch(
+      `${props.backendUrl}/pictures/${imageId}/tags`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error("Failed to add tag");
+    }
+    console.log(`Tag '${tag}' added to image ${imageId}`);
+  } catch (error) {
+    console.error("Error adding tag:", error);
+  }
+}
+
 onMounted(() => {
   updateColumns();
   window.addEventListener("resize", updateColumns);
@@ -1842,6 +2003,7 @@ onMounted(() => {
 
 // Clear selection on ESC key
 function handleKeyDown(event) {
+  if (overlayOpen.value) return; // Ignore if overlay is open
   if (event.key === "Escape") {
     selectedImageIds.value = [];
     lastSelectedIndex = null;
@@ -1995,7 +2157,6 @@ function clearSearchQuery() {
   console.log("[ImageGrid.vue] clearSearchQuery called");
   emit("clear-search", "");
 }
-
 </script>
 
 <style scoped>
