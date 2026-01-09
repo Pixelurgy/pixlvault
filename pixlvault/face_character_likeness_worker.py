@@ -76,7 +76,7 @@ class FaceCharacterLikenessWorker(BaseWorker):
                     get_character_reference_faces, character_id
                 )
 
-                logger.info(
+                logger.debug(
                     "Got {} reference faces for character id={}".format(
                         len(reference_faces), character_id
                     )
@@ -98,7 +98,7 @@ class FaceCharacterLikenessWorker(BaseWorker):
                     Face.find_faces_without_character_likeness, character_id
                 )
 
-                logger.info(
+                logger.debug(
                     "Found {} faces without likeness for character id={}".format(
                         len(faces_without_likeness), character_id
                     )
@@ -136,7 +136,7 @@ class FaceCharacterLikenessWorker(BaseWorker):
                     if len(likeness_results) >= self.BATCH_SIZE:
                         break  # Process in batches
 
-                logger.info(
+                logger.debug(
                     "Computed likeness for {} faces for character id={}".format(
                         len(likeness_results), character_id
                     )

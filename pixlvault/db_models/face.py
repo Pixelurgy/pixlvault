@@ -139,6 +139,7 @@ class Face(SQLModel, table=True):
     ) -> List["Face"]:
         """
         Find all faces that do not have a FaceCharacterLikeness entry for the given character_id.
+        Excludes sentinel records (face_index == -1).
         Args:
             session: The database session to use for the query.
             character_id: The ID of the character to check likeness entries for.
@@ -156,7 +157,9 @@ class Face(SQLModel, table=True):
             .subquery()
         )
 
-        query = select(cls).where(~cls.id.in_(select(subquery)))
+        query = (
+            select(cls).where(~cls.id.in_(select(subquery))).where(cls.face_index != -1)
+        )
         return session.exec(query).all()
 
     @staticmethod
