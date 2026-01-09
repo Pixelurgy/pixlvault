@@ -468,6 +468,14 @@ function onFaceBboxDragStart(event, img, faceIdx) {
     const face = img.faces[faceIdx];
     facesToDrag = [{ imageId: img.id, faceIdx, faceId: face.id }];
   }
+
+  // Ensure that additional data types are preserved in the dataTransfer object
+  const existingData = {};
+  for (const type of event.dataTransfer.types) {
+    existingData[type] = event.dataTransfer.getData(type);
+  }
+
+  // Set the application/json data
   const dragDataStr = JSON.stringify({
     type: "face-bbox",
     faceIds: facesToDrag.map((f) => f.faceId),
@@ -476,6 +484,14 @@ function onFaceBboxDragStart(event, img, faceIdx) {
   });
   console.log("[DRAG] onFaceBboxDragStart dragData:", dragDataStr);
   event.dataTransfer.setData("application/json", dragDataStr);
+
+  // Restore other data types
+  for (const [type, data] of Object.entries(existingData)) {
+    if (type !== "application/json") {
+      event.dataTransfer.setData(type, data);
+    }
+  }
+
   event.dataTransfer.effectAllowed = "move";
 }
 
