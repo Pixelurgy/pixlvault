@@ -1747,7 +1747,11 @@ class Server:
 
                 pics = self.vault.db.run_task(find_by_text, query)
             else:
-                logger.info("Exporting pictures using filter parameters: {}".format(query_params))
+                logger.info(
+                    "Exporting pictures using filter parameters: {}".format(
+                        query_params
+                    )
+                )
                 # Fallback to filter-based search
                 pics = self.vault.db.run_task(
                     Picture.find,
@@ -1759,7 +1763,6 @@ class Server:
 
             if not pics:
                 raise HTTPException(status_code=404, detail="No pictures found")
-
 
             # Create zip file in memory
             zip_buffer = io.BytesIO()
@@ -1797,7 +1800,9 @@ class Server:
             filename = "_".join(filename_parts) if filename_parts else "pictures"
             filename = f"{filename}_{len(pics)}_images.zip"
 
-            logger.info(f"Streaming file name {filename} containing {len(pics)} pictures.")
+            logger.info(
+                f"Streaming file name {filename} containing {len(pics)} pictures."
+            )
 
             return StreamingResponse(
                 io.BytesIO(zip_buffer.getvalue()),
@@ -1876,7 +1881,7 @@ class Server:
                 )
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Requested extension does not match picture format",
+                    detail="Requested extension does not match picture format",
                 )
 
             # Return the image file with CORS headers
