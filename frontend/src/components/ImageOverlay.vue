@@ -438,24 +438,8 @@ function handleKeydown(e) {
     // Handle editing-specific keydown behavior
     if (e.key === "Escape") {
       cancelEditDescription(); // Close editing without saving
-      return;
     }
-    // Allow Left, Right, and number keys to be handled by the text box
-    if (
-      [
-        "ArrowLeft",
-        "ArrowRight",
-        "Left",
-        "Right",
-        "1",
-        "2",
-        "3",
-        "4",
-        "5",
-      ].includes(e.key)
-    ) {
       return;
-    }
   }
 
   // Regular keydown behavior
