@@ -13,7 +13,6 @@ import { apiClient } from "./utils/apiClient";
 
 import SideBar from "./components/SideBar.vue";
 import ImageGrid from "./components/ImageGrid.vue";
-import LikenessRows from "./components/LikenessRows.vue";
 import SearchBar from "./components/SearchBar.vue";
 
 const likenessRowsRef = ref(null);
