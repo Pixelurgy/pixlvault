@@ -218,11 +218,13 @@ class Picture(SQLModel, table=True):
         )
 
         query_str = " ".join(query_words)
-        # Subquery: get avg levenshtein distance for each picture's tags
+        # Subquery: calculate levenshtein distance for all tags of each picture
         tag_subq = (
             select(
                 Tag.picture_id,
-                func.avg(func.levenshtein(Tag.tag, query_str)).label("avg_tag_dist"),
+                func.levenshtein(func.group_concat(Tag.tag, " "), query_str).label(
+                    "min_tag_dist"
+                ),
             )
             .group_by(Tag.picture_id)
             .subquery()
@@ -233,29 +235,19 @@ class Picture(SQLModel, table=True):
             select(
                 cls,
                 (
-                    fuzzy_weight
-                    * (
-                        1.0
-                        - func.pow(
-                            func.coalesce(tag_subq.c.avg_tag_dist, func.length(query))
-                            / func.length(query),
-                            1.0 / 3.0,
-                        )
-                    )
+                    fuzzy_weight * (1.0 - func.coalesce(tag_subq.c.min_tag_dist, 1.0))
                     + embedding_weight
                     * func.cosine_similarity(cls.text_embedding, query_embedding_bytes)
                 ).label("combined_score"),
-                (
-                    1.0
-                    - func.pow(
-                        func.coalesce(tag_subq.c.avg_tag_dist, func.length(query))
-                        / func.length(query),
-                        1.0 / 3.0,
-                    )
-                ).label("fuzzy_score"),
+                (1.0 - func.coalesce(tag_subq.c.min_tag_dist, 1.0)).label(
+                    "fuzzy_score"
+                ),
                 func.cosine_similarity(cls.text_embedding, query_embedding_bytes).label(
                     "embedding_score"
                 ),
+                tag_subq.c.min_tag_dist.label(
+                    "min_tag_dist"
+                ),  # Explicitly include min_tag_dist
             )
             .outerjoin(tag_subq, cls.id == tag_subq.c.picture_id)
             .order_by(desc("combined_score"))
@@ -266,7 +258,6 @@ class Picture(SQLModel, table=True):
         # Apply select_fields logic (like in find)
         if select_fields:
             select_fields = list(set(select_fields) | {"id"})
-            from sqlalchemy.orm import load_only, selectinload
 
             # Use load_only for scalar fields
             scalar_attrs = [
@@ -287,6 +278,16 @@ class Picture(SQLModel, table=True):
             stmt = stmt.where(cls.format.in_(format))
 
         results = session.exec(stmt).all()
+
+        # Log tag contribution for each result
+        for result in results:
+            logger.info(
+                f"Picture ID: {result.Picture.id}, "
+                f"Tag contribution: min_tag_dist={getattr(result, 'min_tag_dist', 'N/A')}, "
+                f"fuzzy_score={getattr(result, 'fuzzy_score', 'N/A')}, "
+                f"embedding_score={getattr(result, 'embedding_score', 'N/A')}, "
+                f"combined_score={getattr(result, 'combined_score', 'N/A')}"
+            )
         output = []
         for row in results:
             pic, combined_score, _, _ = (

@@ -1,4 +1,5 @@
 import inspect
+import math
 import os
 import threading
 import queue
@@ -46,24 +47,55 @@ logger = get_logger(__name__)
 def levenshtein_function(a, b):
     try:
         if a is None or b is None:
-            return 100  # or some large default distance
-        return Levenshtein.distance(str(a), str(b))
+            return 100.0  # or some large default distance
+        return float(Levenshtein.distance(str(a), str(b)))
     except Exception as e:
         logger.error(f"Levenshtein error: {e} (a={a}, b={b})")
-        return 100  # fallback value
+        return 100.0  # fallback value
 
 
-def levenshtein(tag, query_words):
-    # Split both tag and query_words into words
-    if isinstance(query_words, str):
-        query_words = query_words.split()
-    tag_words = tag.split() if isinstance(tag, str) else [tag]
-    # For each tag word, find the minimum distance to any query word
-    min_dists = [
-        min(levenshtein_function(tw, qw) for qw in query_words) for tw in tag_words
-    ]
-    # Return the average of these minimum distances
-    return sum(min_dists) / len(min_dists) if min_dists else 100
+def softmin(distances, beta=1.0):
+    import math
+
+    if not distances:
+        return float("inf")
+    exp_neg_dists = [math.exp(-beta * d) for d in distances]
+    sum_exp = sum(exp_neg_dists)
+    if sum_exp == 0:
+        return float("inf")  # Avoid division by zero
+    softmin_value = (
+        sum(d * exp_neg for d, exp_neg in zip(distances, exp_neg_dists)) / sum_exp
+    )
+    return softmin_value
+
+
+def levenshtein(concatenated_tags, query):
+    # Split the concatenated tags into tags
+    tags = (
+        concatenated_tags.split()
+        if isinstance(concatenated_tags, str)
+        else [concatenated_tags]
+    )
+    query_words = query.split() if isinstance(query, str) else [query]
+
+    dists = []
+    for tag in tags:
+        min_dist = 1.0
+        for query_word in query_words:
+            min_dist = min(
+                min_dist,
+                levenshtein_function(tag, query_word)
+                / max(len(tag), len(query_word), 1),
+            )
+        dists.append(min_dist)
+
+    dists = sorted(dists)
+    logger.info(
+        f"Best Levenshtein distances for tags '{concatenated_tags}': {dists[:5]}"
+    )
+
+    # Return softmin of these distances
+    return math.pow(softmin(dists, 2.5), 3.0) if dists else 1.0
 
 
 def init_database(dbapi_conn, conn_record):
