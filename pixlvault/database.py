@@ -53,17 +53,34 @@ def levenshtein_function(a, b):
         return 100  # fallback value
 
 
-def levenshtein(tag, query_words):
-    # Split both tag and query_words into words
-    if isinstance(query_words, str):
-        query_words = query_words.split()
-    tag_words = tag.split() if isinstance(tag, str) else [tag]
+def softmin(distances, beta=1.0):
+    import math
+
+    if not distances:
+        return float("inf")
+    exp_neg_dists = [math.exp(-beta * d) for d in distances]
+    sum_exp = sum(exp_neg_dists)
+    if sum_exp == 0:
+        return float("inf")  # Avoid division by zero
+    softmin_value = (
+        sum(d * exp_neg for d, exp_neg in zip(distances, exp_neg_dists)) / sum_exp
+    )
+    return softmin_value
+
+
+def levenshtein(tags, query):
+    # Split the concatenated tags and query into words
+    tag_words = tags.split() if isinstance(tags, str) else [tags]
+    query_words = query.split() if isinstance(query, str) else [query]
+
     # For each tag word, find the minimum distance to any query word
     min_dists = [
-        min(levenshtein_function(tw, qw) for qw in query_words) for tw in tag_words
+        min(levenshtein_function(tag_word, query_word) for query_word in query_words)
+        for tag_word in tag_words
     ]
+
     # Return the average of these minimum distances
-    return sum(min_dists) / len(min_dists) if min_dists else 100
+    return softmin(min_dists, 2.0) if min_dists else 100
 
 
 def init_database(dbapi_conn, conn_record):
