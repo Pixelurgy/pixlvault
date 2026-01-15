@@ -9,7 +9,7 @@ import {
   ref,
   watch,
 } from "vue";
-import { apiClient } from "./utils/apiClient";
+import { apiClient, API_BASE_URL } from "./utils/apiClient";
 
 import SideBar from "./components/SideBar.vue";
 import ImageGrid from "./components/ImageGrid.vue";
@@ -17,7 +17,7 @@ import SearchBar from "./components/SearchBar.vue";
 
 const likenessRowsRef = ref(null);
 
-const BACKEND_URL = "http://localhost:9537";
+const BACKEND_URL = API_BASE_URL;
 const ALL_PICTURES_ID = "ALL";
 const UNASSIGNED_PICTURES_ID = "UNASSIGNED";
 
