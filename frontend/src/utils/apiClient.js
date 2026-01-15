@@ -4,9 +4,14 @@ import { ref } from 'vue';
 // Centralized authentication state
 const isAuthenticated = ref(false);
 
+const DEFAULT_BACKEND_PORT = 9537;
+const environmentBaseUrl = import.meta?.env?.VITE_BACKEND_URL;
+const browserHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const resolvedBaseUrl = environmentBaseUrl || `http://${browserHost}:${DEFAULT_BACKEND_PORT}`;
+
 // Axios instance
 const apiClient = axios.create({
-  baseURL: 'http://localhost:9537',
+  baseURL: resolvedBaseUrl,
   timeout: 60000, // Increased timeout to 60 seconds
   headers: {
     'Content-Type': 'application/json',
@@ -64,4 +69,4 @@ apiClient.interceptors.response.use(
   }
 );
 
-export { apiClient, checkSession, isAuthenticated, login, logout };
+export { apiClient, checkSession, isAuthenticated, login, logout, resolvedBaseUrl as API_BASE_URL };

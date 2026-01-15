@@ -112,7 +112,7 @@ class Server:
 
         self.api = FastAPI(lifespan=self.lifespan)
         # Enable CORS for frontend dev server
-        self.allow_origins = ["http://localhost:5173"]
+        self.allow_origins = ["*"]
         self.api.add_middleware(
             CORSMiddleware,
             allow_origins=self.allow_origins,  # Restrict to frontend origin
