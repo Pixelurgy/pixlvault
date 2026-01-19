@@ -87,6 +87,52 @@ body {
   /* No overflow property here; only .image-grid should scroll */
 }
 
+.export-dialog-card {
+  position: relative;
+  border-radius: 8px;
+}
+
+.export-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 8px;
+}
+
+.export-dialog-shell {
+  position: relative;
+}
+
+.export-dialog-close {
+  position: absolute;
+  top: -16px;
+  right: -16px;
+  background-color: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
+  z-index: 2;
+}
+
+.export-dialog-close:hover {
+  background-color: rgb(var(--v-theme-accent));
+}
+
+.export-btn-cancel {
+  background: rgb(var(--v-theme-cancel-button));
+  color: rgb(var(--v-theme-cancel-button-text));
+  font-weight: 500;
+}
+
+.export-btn-confirm {
+  background: rgb(var(--v-theme-accent));
+  color: rgb(var(--v-theme-on-accent));
+  font-weight: 500;
+}
+
+.export-btn-cancel:hover,
+.export-btn-confirm:hover {
+  filter: brightness(1.2);
+}
+
 .empty-state {
   color: #aaa;
   font-size: 1.2rem;

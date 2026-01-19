@@ -1,53 +1,60 @@
 <template>
-  <div v-if="open" class="set-editor-overlay" @click.self="emit('close')">
-    <div class="editor-content">
-      <div class="editor-header">
-        <h2>{{ set?.id ? "Edit Picture Set" : "New Picture Set" }}</h2>
-        <button class="close-btn" @click="emit('close')" aria-label="Close">
-          &times;
-        </button>
-      </div>
-
-      <div class="editor-body">
-        <div class="form-group">
-          <label for="set-name">Name *</label>
-          <input
-            id="set-name"
+  <v-dialog :model-value="open" max-width="600" @click:outside="emit('close')">
+    <div class="editor-shell">
+      <v-btn icon size="36px" class="close-icon" @click="emit('close')">
+        <v-icon size="24px">mdi-close</v-icon>
+      </v-btn>
+      <v-card class="editor-card">
+        <v-card-title class="editor-header">
+          {{ set?.id ? "Edit Picture Set" : "New Picture Set" }}
+        </v-card-title>
+        <v-card-text class="editor-body">
+          <v-text-field
+            ref="nameInputRef"
             v-model="localSet.name"
-            type="text"
+            label="Name *"
             placeholder="Picture set name"
-            class="form-input"
-            required
+            density="comfortable"
+            variant="filled"
             @keydown.enter="save"
           />
-        </div>
-
-        <div class="form-group">
-          <label for="set-description">Description</label>
-          <textarea
-            id="set-description"
+          <v-textarea
             v-model="localSet.description"
+            label="Description"
             placeholder="Optional description"
-            class="form-textarea"
+            density="comfortable"
+            variant="filled"
             rows="4"
             @keydown.ctrl.enter="save"
             @keydown.meta.enter="save"
-          ></textarea>
-        </div>
-      </div>
-
-      <div class="editor-footer">
-        <button class="btn btn-cancel" @click="emit('close')">Cancel</button>
-        <button class="btn btn-save" @click="save" :disabled="!isValid">
-          Save
-        </button>
-      </div>
+          />
+        </v-card-text>
+        <v-card-actions class="editor-footer">
+          <v-spacer></v-spacer>
+          <v-btn class="btn-cancel" @click="emit('close')">Cancel</v-btn>
+          <v-btn class="btn-save" @click="save" :disabled="!isValid">
+            Save
+          </v-btn>
+        </v-card-actions>
+      </v-card>
     </div>
-  </div>
+  </v-dialog>
 </template>
 
 <script setup>
 import { computed, ref, watch, nextTick } from "vue";
+import {
+  VBtn,
+  VCard,
+  VCardActions,
+  VCardText,
+  VCardTitle,
+  VDialog,
+  VIcon,
+  VSpacer,
+  VTextField,
+  VTextarea,
+} from "vuetify/components";
 import { apiClient } from "../utils/apiClient";
 
 const props = defineProps({
@@ -64,6 +71,8 @@ const localSet = ref({
   description: "",
 });
 
+const nameInputRef = ref(null);
+
 const isValid = computed(() => {
   return localSet.value.name && localSet.value.name.trim().length > 0;
 });
@@ -74,10 +83,12 @@ watch(
   async (isOpen) => {
     if (isOpen) {
       await nextTick();
-      const nameInput = document.getElementById("set-name");
-      if (nameInput) {
-        nameInput.focus();
-        nameInput.select();
+      if (nameInputRef.value?.focus) {
+        nameInputRef.value.focus();
+      }
+      const inputEl = nameInputRef.value?.$el?.querySelector("input");
+      if (inputEl) {
+        inputEl.select();
       }
     }
   },
@@ -224,124 +235,41 @@ watch(
 </script>
 
 <style scoped>
-.set-editor-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 2000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.editor-shell {
+  position: relative;
+  width: 100%;
 }
 
-.editor-content {
-  background: rgb(var(--v-theme-surface));
-  border-radius: 8px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
-  width: 90%;
-  max-width: 600px;
-  max-height: 90vh;
-  display: flex;
-  flex-direction: column;
+.editor-card {
   overflow: hidden;
 }
 
-.editor-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px 24px;
-  border-bottom: 1px solid rgb(var(--v-theme-border));
-}
-
-.editor-header h2 {
-  margin: 0;
-  font-size: 1.5rem;
-  font-weight: 500;
-  color: rgb(var(--v-theme-on-surface));
-}
-
-.close-btn {
-  background: none;
+.close-icon {
+  position: absolute;
+  top: -16px;
+  right: -16px;
+  background-color: rgb(var(--v-theme-primary));
   border: none;
-  font-size: 2rem;
-  color: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
   cursor: pointer;
-  line-height: 1;
-  padding: 0;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.2s;
+  z-index: 2;
 }
 
-.close-btn:hover {
-  color: rgb(var(--v-theme-accent));
+.close-icon:hover {
+  background-color: rgb(var(--v-theme-accent));
 }
 
 .editor-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 24px;
-}
-
-.form-group {
-  margin-bottom: 20px;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 8px;
-  font-weight: 500;
-  color: rgb(var(--v-theme-on-surface));
-  font-size: 0.95rem;
-}
-
-.form-input {
-  width: 100%;
-  padding: 10px 12px;
-  background-color: rgb(var(--v-theme-input-background));
-  border: 1px solid rgb(var(--v-theme-border));
-  border-radius: 4px;
-  font-size: 1rem;
-  font-family: inherit;
-  transition: border-color 0.2s;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: rgb(var(--v-theme-accent));
-}
-
-.form-textarea {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid rgb(var(--v-theme-border));
-  background-color: rgb(var(--v-theme-input-background));
-  border: 1px solid rgb(var(--v-theme-border));
-  border-radius: 4px;
-  font-size: 1rem;
-  font-family: inherit;
-  resize: vertical;
-  transition: border-color 0.2s;
-}
-
-.form-textarea:focus {
-  outline: none;
-  border-color: rgb(var(--v-theme-accent));
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .editor-footer {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-  padding: 16px 24px;
-  border-top: 1px solid rgb(var(--v-theme-hover));
+  padding: 8px 16px 16px;
 }
 
 .export-section {
@@ -367,11 +295,21 @@ watch(
 .btn-cancel {
   background: rgb(var(--v-theme-cancel-button));
   color: rgb(var(--v-theme-cancel-button-text));
+  transition: filter 0.2s;
+}
+
+.btn-cancel:hover {
+  filter: brightness(1.2);
 }
 
 .btn-save {
   background: rgb(var(--v-theme-accent));
   color: rgb(var(--v-theme-on-accent));
+  transition: filter 0.2s;
+}
+
+.btn-save:hover {
+  filter: brightness(1.2);
 }
 
 .btn-save:disabled {

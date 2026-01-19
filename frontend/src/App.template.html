@@ -175,33 +175,49 @@
       @close="closeSearchOverlay"
     />
     <v-dialog v-model="exportDialog" max-width="420">
-      <v-card>
-        <v-card-title :color="'onSurface'">Export Pictures</v-card-title>
-        <v-card-text>
-          <v-select
-            v-model="exportCaptionMode"
-            :background-color="'surface'"
-            :color="'onSurface'"
-            :items="exportCaptionOptions"
-            item-title="title"
-            item-value="value"
-            label="Captions"
-            density="comfortable"
-          />
-          <v-switch
-            v-model="exportIncludeCharacterName"
-            label="Include character name"
-            color="primary"
-            density="comfortable"
-            :disabled="exportCaptionMode === 'none'"
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn color="tertiary" @click="cancelExportZip">Cancel</v-btn>
-          <v-btn color="accent" @click="confirmExportZip">Export</v-btn>
-        </v-card-actions>
-      </v-card>
+      <div class="export-dialog-shell">
+        <v-btn
+          icon
+          size="36px"
+          class="export-dialog-close"
+          @click="cancelExportZip"
+        >
+          <v-icon size="24px">mdi-close</v-icon>
+        </v-btn>
+        <v-card class="export-dialog-card">
+          <v-card-title class="export-dialog-header" :color="'onSurface'">
+            <span>Export Pictures</span>
+          </v-card-title>
+          <v-card-text>
+            <v-select
+              v-model="exportCaptionMode"
+              :background-color="'surface'"
+              :color="'onSurface'"
+              :items="exportCaptionOptions"
+              item-title="title"
+              item-value="value"
+              label="Captions"
+              density="comfortable"
+            />
+            <v-switch
+              v-model="exportIncludeCharacterName"
+              label="Include character name"
+              color="primary"
+              density="comfortable"
+              :disabled="exportCaptionMode === 'none'"
+            />
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer></v-spacer>
+            <v-btn class="export-btn-cancel" @click="cancelExportZip">
+              Cancel
+            </v-btn>
+            <v-btn class="export-btn-confirm" @click="confirmExportZip">
+              Export
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </div>
     </v-dialog>
   </div>
 </v-app>
