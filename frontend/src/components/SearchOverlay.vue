@@ -95,6 +95,7 @@ onUnmounted(() => {
   color: rgb(var(--v-theme-on-surface));
   background-color: rgb(var(--v-theme-surface));
   overflow: visible;
+  border-radius: 8px;
 }
 .close-icon {
   position: absolute;
