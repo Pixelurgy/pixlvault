@@ -1703,6 +1703,7 @@ async function fetchAllGridImages() {
   imagesLoading.value = true;
   imagesError.value = null;
   try {
+    const fetchStart = performance.now();
     let images = [];
     const requestId = Date.now();
     fetchAllGridImages.lastRequestId = requestId;
@@ -1712,10 +1713,18 @@ async function fetchAllGridImages() {
       const url = `${props.backendUrl}/pictures/stacks?threshold=${encodeURIComponent(
         threshold,
       )}${stackParams ? `&${stackParams}` : ""}`;
+      const requestStart = performance.now();
       const res = await apiClient.get(url);
+      const requestEnd = performance.now();
       const data = await res.data;
+      const parseEnd = performance.now();
       if (fetchAllGridImages.lastRequestId !== requestId) return;
       const stackImages = Array.isArray(data) ? data : [];
+      console.log("[ImageGrid.vue] /pictures/stacks timing", {
+        count: stackImages.length,
+        requestMs: (requestEnd - requestStart).toFixed(1),
+        totalMs: (parseEnd - requestStart).toFixed(1),
+      });
       images = stackImages.map((img) => {
         const stackIndex =
           typeof img.stack_index === "number"
@@ -1736,9 +1745,17 @@ async function fetchAllGridImages() {
       props.selectedSet !== props.unassignedPicturesId
     ) {
       const url = `${props.backendUrl}/picture_sets/${props.selectedSet}`;
+      const requestStart = performance.now();
       const res = await apiClient.get(url);
+      const requestEnd = performance.now();
       const data = await res.data;
+      const parseEnd = performance.now();
       images = data.pictures || [];
+      console.log("[ImageGrid.vue] /picture_sets timing", {
+        count: images.length,
+        requestMs: (requestEnd - requestStart).toFixed(1),
+        totalMs: (parseEnd - requestStart).toFixed(1),
+      });
     } else if (props.searchQuery && props.searchQuery.trim()) {
       // Use /pictures/search endpoint for text search
       const params = buildPictureIdsQueryParams();
@@ -1747,30 +1764,73 @@ async function fetchAllGridImages() {
       }/pictures/search?query=${encodeURIComponent(
         props.searchQuery.trim(),
       )}&top_n=10000${params ? `&${params}` : ""}`;
+      const requestStart = performance.now();
       const res = await apiClient.get(url);
+      const requestEnd = performance.now();
       const data = await res.data;
+      const parseEnd = performance.now();
       images = data;
+      console.log("[ImageGrid.vue] /pictures/search timing", {
+        count: Array.isArray(images) ? images.length : 0,
+        requestMs: (requestEnd - requestStart).toFixed(1),
+        totalMs: (parseEnd - requestStart).toFixed(1),
+      });
     } else {
       const params = buildPictureIdsQueryParams();
       // Only use allowed parameters: sort, offset, limit, threshold
       const url = `${props.backendUrl}/pictures?offset=0&limit=10000${
         params ? `&${params}` : ""
       }`;
+      const requestStart = performance.now();
       const res = await apiClient.get(url);
+      const requestEnd = performance.now();
       const data = await res.data;
+      const parseEnd = performance.now();
       images = data;
+      console.log("[ImageGrid.vue] /pictures timing", {
+        count: Array.isArray(images) ? images.length : 0,
+        requestMs: (requestEnd - requestStart).toFixed(1),
+        totalMs: (parseEnd - requestStart).toFixed(1),
+      });
     }
+    const mapStart = performance.now();
     const newImages = images.map((img, i) => ({
       ...img,
       idx: i,
       thumbnail: null,
     }));
+    const mapEnd = performance.now();
     console.log("Updating allGridImages with fetched images:", newImages);
     allGridImages.value = newImages;
+    const assignEnd = performance.now();
     const cols = columns.value || 1;
     const windowCount = Math.max(cols, divisibleViewWindow.value || cols);
     visibleStart.value = 0;
     visibleEnd.value = Math.min(newImages.length, windowCount);
+    const prefetchStart = Math.max(
+      0,
+      visibleStart.value - divisibleViewWindow.value,
+    );
+    const prefetchEnd = Math.min(
+      newImages.length,
+      visibleEnd.value + divisibleViewWindow.value,
+    );
+    fetchThumbnailsBatch(prefetchStart, prefetchEnd);
+    const rangeEnd = performance.now();
+    const fetchEnd = performance.now();
+    console.log("[ImageGrid.vue] fetchAllGridImages total timing", {
+      totalMs: (fetchEnd - fetchStart).toFixed(1),
+      count: newImages.length,
+      mapMs: (mapEnd - mapStart).toFixed(1),
+      assignMs: (assignEnd - mapEnd).toFixed(1),
+      rangeMs: (rangeEnd - assignEnd).toFixed(1),
+    });
+    requestAnimationFrame(() => {
+      const rafEnd = performance.now();
+      console.log("[ImageGrid.vue] post-assign frame timing", {
+        rafMs: (rafEnd - assignEnd).toFixed(1),
+      });
+    });
   } catch (e) {
     imagesError.value = e.message;
     allGridImages.value = [];
@@ -1848,6 +1908,13 @@ watch([() => props.mediaTypeFilter], () => {
 const loadedRanges = ref([]);
 // Debounce timer for scroll-triggered fetches
 let thumbFetchTimeout = null;
+let pendingRanges = [];
+
+function rangeCovers(ranges, start, end) {
+  return ranges.some(
+    ([rangeStart, rangeEnd]) => start >= rangeStart && end <= rangeEnd,
+  );
+}
 
 // Track which indices are visible in the grid
 
@@ -1997,22 +2064,24 @@ watch(gridImagesToRender, (newVal, oldVal) => {
 
 // Batch fetch metadata (including thumbnail) for visible range
 async function fetchThumbnailsBatch(start, end) {
-  start = renderStart.value;
-  end = renderEnd.value;
+  if (start === undefined || start === null) {
+    start = renderStart.value;
+  }
+  if (end === undefined || end === null) {
+    end = renderEnd.value;
+  }
 
   /* console.debug(
     `[BATCH REQUEST] start=${start}, end=${end}, loadedRanges=${JSON.stringify(
       loadedRanges.value
     )}`
   ); */
-  // Check if this batch range is already loaded
-  for (const range of loadedRanges.value) {
-    if (start >= range[0] && end <= range[1]) {
-      return; // Already loaded
-    }
-  }
+  if (rangeCovers(loadedRanges.value, start, end)) return;
+  if (rangeCovers(pendingRanges, start, end)) return;
+  pendingRanges.push([start, end]);
   // Fetch batch metadata for visible range
   try {
+    const batchStart = performance.now();
     let images = [];
     let ids = [];
     // If a set is selected, use /picture_sets/{id}
@@ -2022,9 +2091,17 @@ async function fetchThumbnailsBatch(start, end) {
       props.selectedSet !== props.unassignedPicturesId
     ) {
       const url = `${props.backendUrl}/picture_sets/${props.selectedSet}`;
+      const requestStart = performance.now();
       const res = await apiClient.get(url);
+      const requestEnd = performance.now();
       const data = await res.data;
+      const parseEnd = performance.now();
       images = data.pictures ? data.pictures.slice(start, end) : [];
+      console.log("[ImageGrid.vue] /picture_sets batch timing", {
+        count: images.length,
+        requestMs: (requestEnd - requestStart).toFixed(1),
+        totalMs: (parseEnd - requestStart).toFixed(1),
+      });
       ids = images.map((img) => img.id);
     } else {
       // Only fetch if we don't already have metadata for this range
@@ -2046,11 +2123,19 @@ async function fetchThumbnailsBatch(start, end) {
     ids = ids.filter((id) => id !== null && id !== undefined);
     if (ids.length) {
       ids = Array.from(new Set(ids.map((id) => String(id))));
+      const thumbRequestStart = performance.now();
       const thumbRes = await apiClient.post(
         `${props.backendUrl}/pictures/thumbnails`,
         JSON.stringify({ ids }),
       );
+      const thumbRequestEnd = performance.now();
       const thumbData = await thumbRes.data;
+      const thumbParseEnd = performance.now();
+      console.log("[ImageGrid.vue] /pictures/thumbnails timing", {
+        count: ids.length,
+        requestMs: (thumbRequestEnd - thumbRequestStart).toFixed(1),
+        totalMs: (thumbParseEnd - thumbRequestStart).toFixed(1),
+      });
       for (const gridImg of gridImages) {
         const thumbObj = thumbData[String(gridImg.id)];
         gridImg.thumbnail =
@@ -2069,8 +2154,17 @@ async function fetchThumbnailsBatch(start, end) {
       allGridImages.value[start + i] = img;
     }
     loadedRanges.value.push([start, end]);
+    const batchEnd = performance.now();
+    console.log("[ImageGrid.vue] fetchThumbnailsBatch total timing", {
+      count: gridImages.length,
+      totalMs: (batchEnd - batchStart).toFixed(1),
+    });
   } catch (err) {
     console.error("[BATCH ERROR]", err);
+  } finally {
+    pendingRanges = pendingRanges.filter(
+      ([rangeStart, rangeEnd]) => rangeStart !== start || rangeEnd !== end,
+    );
   }
 }
 
@@ -2080,6 +2174,8 @@ function updateVisibleThumbnails() {
     allGridImages.value.length,
     visibleEnd.value + divisibleViewWindow.value,
   );
+  if (rangeCovers(loadedRanges.value, start, end)) return;
+  if (rangeCovers(pendingRanges, start, end)) return;
   console.log("[ImageGrid.vue] Updating visible thumbnails:", {
     start,
     end,

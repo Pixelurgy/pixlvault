@@ -166,8 +166,8 @@ class Vault:
         Returns:
             Optional[np.ndarray]: Generated text embedding or None if failed.
         """
-        embedding, _ = self._picture_tagger.generate_text_embedding(query=query)
-        return embedding
+        embedding = self._picture_tagger.generate_text_embedding(query=query)
+        return embedding[0] if embedding is not None else None
 
     def preprocess_query_words(self, words: list[str]) -> list[str]:
         """

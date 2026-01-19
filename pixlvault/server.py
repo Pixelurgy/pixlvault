@@ -2760,6 +2760,11 @@ class Server:
             offset: int = Query(0),
             limit: int = Query(sys.maxsize),
         ):
+            metadata_fields = Picture.metadata_fields()
+
+            def serialize_metadata(pic: Picture):
+                return {field: getattr(pic, field) for field in metadata_fields}
+
             query_params = {}
             format = None
             if request.query_params:
@@ -2848,7 +2853,7 @@ class Server:
                     return session.exec(query).all()
 
                 pics = self.vault.db.run_task(find_unassigned)
-                return [safe_model_dict(pic) for pic in pics]
+                return [serialize_metadata(pic) for pic in pics]
 
             if character_id == "ALL":
                 character_id = None
@@ -2882,7 +2887,7 @@ class Server:
                     select_fields=Picture.metadata_fields(),
                     format=format,
                 )
-                return [safe_model_dict(pic) for pic in pics]
+                return [serialize_metadata(pic) for pic in pics]
             else:
                 pics = self.vault.db.run_task(
                     Picture.find,
@@ -2893,7 +2898,7 @@ class Server:
                     format=format,
                     **query_params,
                 )
-            return [safe_model_dict(pic) for pic in pics]
+            return [serialize_metadata(pic) for pic in pics]
 
         @self.api.middleware("http")
         async def auth_middleware(request: Request, call_next):
