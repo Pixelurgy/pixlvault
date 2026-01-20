@@ -49,6 +49,7 @@ from pixlvault.utils import safe_model_dict
 from pixlvault.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger, uvicorn_log_config
 from pixlvault.vault import Vault
+from pixlvault.worker_registry import WorkerType
 
 DEFAULT_DESCRIPTION = "PixlVault default configuration"
 
@@ -2682,11 +2683,30 @@ class Server:
                             duplicate_count,
                             len(uploaded_files),
                         )
-
                     self.import_tasks[task_id]["results"] = results
                     self.import_tasks[task_id]["processed"] = len(uploaded_files)
-                    self.import_tasks[task_id]["status"] = "completed"
-                    self.vault.notify(EventType.CHANGED_PICTURES)
+                    if new_pictures:
+                        self.import_tasks[task_id]["status"] = "processing_faces"
+                        self.vault.start_workers({WorkerType.FACE})
+                        face_futures = [
+                            self.vault.get_worker_future(
+                                WorkerType.FACE, Picture, pic.id, "faces"
+                            )
+                            for pic in new_pictures
+                        ]
+                        self.vault.notify(EventType.CHANGED_PICTURES)
+                        face_timeout_s = 120
+                        for pic, future in zip(new_pictures, face_futures):
+                            try:
+                                future.result(timeout=face_timeout_s)
+                            except Exception as exc:
+                                raise RuntimeError(
+                                    f"Face extraction timed out for picture id={pic.id}"
+                                ) from exc
+                        self.import_tasks[task_id]["status"] = "completed"
+                    else:
+                        self.import_tasks[task_id]["status"] = "completed"
+                        self.vault.notify(EventType.CHANGED_PICTURES)
                 except Exception as exc:
                     self.import_tasks[task_id]["status"] = "failed"
                     self.import_tasks[task_id]["error"] = str(exc)
