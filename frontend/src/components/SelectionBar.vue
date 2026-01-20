@@ -45,7 +45,7 @@ const props = defineProps({
   bottom: 0;
   width: 100%;
   z-index: 100;
-  background: rgba(195, 205, 210, 0.95);
+  background: rgba(var(--v-theme-background), 0.95);
   padding: 8px 16px 8px 16px !important;
   margin: 0;
   height: 52px;
@@ -74,25 +74,36 @@ const props = defineProps({
   margin-left: auto;
 }
 .clear-btn {
-  background: #eee;
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
   border: none;
   padding: 6px 14px;
   border-radius: 4px;
   cursor: pointer;
+}
+.clear-btn:hover {
+  filter: brightness(1.3);
 }
 .remove-btn {
-  background: #ffd700;
+  background: rgb(var(--v-theme-warning));
+  color: rgb(var(--v-theme-on-warning));
   border: none;
   padding: 6px 14px;
   border-radius: 4px;
   cursor: pointer;
 }
+.remove-btn:hover {
+  filter: brightness(1.3);
+}
 .delete-btn {
-  background: #e53935;
+  background: rgb(var(--v-theme-error));
   color: #fff;
   border: none;
   padding: 6px 18px;
   border-radius: 4px;
   cursor: pointer;
+}
+.delete-btn:hover {
+  filter: brightness(1.3);
 }
 </style>

@@ -2153,6 +2153,16 @@ async function fetchThumbnailsBatch(start, end) {
             : null;
         gridImg.faces =
           thumbObj && Array.isArray(thumbObj.faces) ? thumbObj.faces : [];
+        if (thumbObj) {
+          const thumbWidth = Number(thumbObj.thumbnail_width);
+          const thumbHeight = Number(thumbObj.thumbnail_height);
+          if (!Number.isNaN(thumbWidth) && thumbWidth > 0) {
+            gridImg.width = thumbWidth;
+          }
+          if (!Number.isNaN(thumbHeight) && thumbHeight > 0) {
+            gridImg.height = thumbHeight;
+          }
+        }
       }
     }
     // Insert/update images at their correct indices

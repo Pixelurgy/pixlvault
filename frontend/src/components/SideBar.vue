@@ -117,7 +117,9 @@ const selectedCharacterObj = computed(() => {
 
 const selectedSetObj = computed(() => {
   if (!props.selectedSet) return null;
-  return pictureSets.value.find((pset) => pset.id === props.selectedSet) || null;
+  return (
+    pictureSets.value.find((pset) => pset.id === props.selectedSet) || null
+  );
 });
 
 // --- Similarity Character Dropdown State ---
@@ -1315,9 +1317,8 @@ defineExpose({ refreshSidebar });
 }
 
 .sidebar-list-item:hover {
-  filter: brightness(1.2);
-  background: rgb(var(--v-theme-sidebar-hover));
-  color: rgb(var(--v-theme-on-sidebar-hover));
+  filter: brightness(1.1);
+  background: rgba(var(--v-theme-accent), 0.2);
 }
 
 .sidebar-list-item.droppable {

@@ -65,7 +65,7 @@
         </v-btn>
         <v-btn
           icon
-          :color="showFaceBboxes ? 'secondary' : 'surface'"
+          :color="showFaceBboxes ? 'primary' : 'surface'"
           @click="showFaceBboxes = !showFaceBboxes"
           title="Toggle face bounding boxes"
           class="face-bbox-toggle-btn"
@@ -96,13 +96,13 @@
         </v-btn-toggle>
         <v-btn
           icon
-          :color="'tertiary'"
+          :color="'surface'"
           @click="handleExportZip"
           title="Export current grid to zip"
           class="toolbar-download-btn"
           style="margin-left: 4px"
         >
-          <v-icon :color="'onTertiary'">mdi-download</v-icon>
+          <v-icon :color="'onSurface'">mdi-download</v-icon>
         </v-btn>
       </div>
     </div>

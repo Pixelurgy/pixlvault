@@ -325,14 +325,14 @@ body {
   z-index: 12;
   display: flex;
   flex-direction: row;
-  background: rgba(255, 255, 255, 0.7);
+  background-color: rgba(var(--v-theme-background), 0.7);
   border-radius: 4px;
   box-shadow: none;
   font-size: 0.85em;
   margin: 4px 4px 4px 4px;
 }
 .star-overlay:hover {
-  background: rgba(255, 255, 255, 1);
+  background-color: rgba(var(--v-theme-background), 1);
 }
 .star-overlay .v-icon {
   font-size: 20px !important;
@@ -441,23 +441,6 @@ button:focus:not(:focus-visible) {
   box-shadow: none !important;
 }
 
-.clear-selection-button {
-  margin-left: 8px;
-  color: white;
-  background-color: rgb(var(--v-theme-accent));
-}
-.clear-selection-button:hover {
-  background-color: #6b8eeb;
-}
-.delete-button {
-  margin-left: 8px;
-  color: white;
-  background-color: #d32f2f;
-}
-.delete-button:hover {
-  background-color: #f75c5c;
-}
-
 .media-type-toggle {
   border-radius: 14px;
   margin-left: 4px;
@@ -465,14 +448,14 @@ button:focus:not(:focus-visible) {
 }
 
 .media-type-toggle .v-btn {
-  color: rgb(var(--v-theme-on-primary)) !important;
+  color: rgb(var(--v-theme-on-secondary)) !important;
   height: 48px;
   width: 48px;
   align-items: center;
 }
 
 .media-type-toggle .v-btn--active {
-  background-color: rgb(var(--v-theme-accent)) !important;
+  background-color: rgb(var(--v-theme-secondary)) !important;
   color: white !important;
 }
 .face-bbox-toggle-btn .face-bbox-icon-wrapper {
