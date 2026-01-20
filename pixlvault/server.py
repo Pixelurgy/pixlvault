@@ -1867,10 +1867,46 @@ class Server:
             if not isinstance(ids, list):
                 raise HTTPException(status_code=400, detail="'ids' must be a list")
 
+            def map_bbox_to_thumbnail(bbox, picture):
+                if not bbox or len(bbox) != 4:
+                    return bbox, False
+                left = getattr(picture, "thumbnail_left", None)
+                top = getattr(picture, "thumbnail_top", None)
+                side = getattr(picture, "thumbnail_side", None)
+                if left is None or top is None or side in (None, 0):
+                    return bbox, False
+                try:
+                    scale = 256.0 / float(side)
+                    x1, y1, x2, y2 = bbox
+                    x1 = max(0.0, min(256.0, (x1 - left) * scale))
+                    y1 = max(0.0, min(256.0, (y1 - top) * scale))
+                    x2 = max(0.0, min(256.0, (x2 - left) * scale))
+                    y2 = max(0.0, min(256.0, (y2 - top) * scale))
+                    return (
+                        [
+                            int(round(x1)),
+                            int(round(y1)),
+                            int(round(x2)),
+                            int(round(y2)),
+                        ],
+                        True,
+                    )
+                except Exception:
+                    return bbox, False
+
             # Fetch pictures and their faces
             pics = self.vault.db.run_task(
                 lambda session: Picture.find(
-                    session, id=ids, select_fields=["id", "thumbnail", "faces"]
+                    session,
+                    id=ids,
+                    select_fields=[
+                        "id",
+                        "thumbnail",
+                        "faces",
+                        "thumbnail_left",
+                        "thumbnail_top",
+                        "thumbnail_side",
+                    ],
                 )
             )
             results = {}
@@ -1879,6 +1915,7 @@ class Server:
                     thumbnail_bytes = pic.thumbnail
                     # Gather face bboxes and ids
                     face_data = []
+                    mapped_any = False
                     for face in getattr(pic, "faces", []):
                         # Defensive: ensure bbox is a list of 4 ints
                         bbox = None
@@ -1891,6 +1928,8 @@ class Server:
                         except Exception:
                             bbox = None
                         if bbox and isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                            mapped_bbox, mapped = map_bbox_to_thumbnail(bbox, pic)
+                            mapped_any = mapped_any or mapped
                             character = (
                                 self.vault.db.run_task(
                                     lambda session: Character.find(
@@ -1905,7 +1944,7 @@ class Server:
                             face_data.append(
                                 {
                                     "id": face.id,
-                                    "bbox": bbox,
+                                    "bbox": mapped_bbox,
                                     "character_id": face.character_id,
                                     "character_name": getattr(
                                         character[0], "name", None
@@ -1920,6 +1959,8 @@ class Server:
                         if thumbnail_bytes
                         else None,
                         "faces": face_data,
+                        "thumbnail_width": 256 if mapped_any else None,
+                        "thumbnail_height": 256 if mapped_any else None,
                     }
                 except Exception as exc:
                     logger.error(
