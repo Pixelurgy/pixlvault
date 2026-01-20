@@ -845,6 +845,7 @@ defineExpose({ refreshSidebar });
         }}</v-icon>
       </v-btn>
     </div>
+    <div class="sidebar-collapsed-divider"></div>
     <template v-if="props.collapsed">
       <div class="sidebar-collapsed-list">
         <div
@@ -1020,18 +1021,7 @@ defineExpose({ refreshSidebar });
             handleDropOnCharacter({ characterId: char.id, event: $event })
           "
         >
-          <span style="display: flex; align-items: center">
-            <v-icon
-              small
-              style="margin-right: 4px; cursor: pointer"
-              @click.stop="toggleCharacterCollapse(char.id)"
-            >
-              {{
-                collapsedCharacters[char.id]
-                  ? "mdi-chevron-right"
-                  : "mdi-chevron-down"
-              }}
-            </v-icon>
+          <span class="sidebar-list-icon">
             <img
               :src="
                 characterThumbnails[char.id]
@@ -1052,10 +1042,27 @@ defineExpose({ refreshSidebar });
               <span>{{ char.name }}</span>
             </v-tooltip>
           </span>
-          <span class="sidebar-list-count">
-            {{ categoryCounts[char.id] ?? "" }}
+          <span class="sidebar-character-actions">
+            <v-icon
+              class="sidebar-character-toggle"
+              size="18"
+              :title="
+                collapsedCharacters[char.id]
+                  ? 'Show reference pictures'
+                  : 'Hide reference pictures'
+              "
+              @click.stop="toggleCharacterCollapse(char.id)"
+            >
+              {{
+                collapsedCharacters[char.id]
+                  ? "mdi-chevron-right"
+                  : "mdi-chevron-down"
+              }}
+            </v-icon>
+            <span class="sidebar-list-count">
+              {{ categoryCounts[char.id] ?? "" }}
+            </span>
           </span>
-          <!-- Collapse icon moved to the left of thumbnail -->
         </div>
         <transition name="fade">
           <div
@@ -1207,7 +1214,7 @@ defineExpose({ refreshSidebar });
       </template>
 
       <div class="sidebar-section-header">
-        Sorting
+        Sort by
         <span style="flex: 1 1 auto"></span>
       </div>
 
@@ -1221,73 +1228,141 @@ defineExpose({ refreshSidebar });
         "
       >
         <div style="display: flex; align-items: center; gap: 8px">
-          <v-select
-            v-model="sortModel"
-            :items="sortOptions"
-            class="sidebar-sort-select"
-            item-title="label"
-            item-value="value"
-            label="Sort by"
-            dense
-            hide-details
-            style="flex: 1; min-width: 0"
-          />
+          <div style="flex: 1; min-width: 0; position: relative">
+            <select v-model="sortModel" class="sidebar-native-select">
+              <option
+                v-for="opt in sortOptions"
+                :key="opt.value"
+                :value="opt.value"
+              >
+                {{ opt.label }}
+              </option>
+            </select>
+            <span class="sidebar-native-select-chevron">
+              <v-icon size="18">mdi-menu-down</v-icon>
+            </span>
+          </div>
           <v-btn
             icon
-            :color="descendingModel ? 'secondary' : 'primary'"
+            class="sidebar-sort-direction-btn"
+            variant="plain"
+            size="small"
+            :color="null"
             :title="descendingModel ? 'Descending' : 'Ascending'"
             @click="descendingModel = !descendingModel"
-            style="margin-left: 0px; margin-right: 6px"
+            style="margin-left: 2px; margin-right: 2px"
           >
-            <v-icon>
+            <v-icon size="18">
               {{
                 descendingModel ? "mdi-sort-ascending" : "mdi-sort-descending"
               }}
             </v-icon>
           </v-btn>
         </div>
-        <v-select
-          v-if="sortModel === SIMILARITY_SORT_KEY"
-          v-model="similarityCharacterModel"
-          :items="similarityCharacterOptions"
-          class="sidebar-sort-select"
-          label="Similarity to"
-          dense
-          hide-details
-          style="min-width: 0; margin-top: 2px"
-          item-title="text"
-          item-value="value"
-        />
-        <v-select
-          v-if="sortModel === STACKS_SORT_KEY"
-          v-model="stackThresholdModel"
-          :items="stackThresholdOptions"
-          class="sidebar-sort-select"
-          label="Stack strictness"
-          dense
-          hide-details
-          style="min-width: 0; margin-top: 2px"
-          item-title="label"
-          item-value="value"
-        />
+        <div v-if="sortModel === SIMILARITY_SORT_KEY">
+          <div class="sidebar-section-header">
+            Similarity Character
+            <span style="flex: 1 1 auto"></span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px">
+            <div style="flex: 1 1 0; min-width: 0; position: relative">
+              <select
+                v-model="similarityCharacterModel"
+                class="sidebar-native-select"
+              >
+                <option
+                  v-for="opt in similarityCharacterOptions"
+                  :key="opt.value"
+                  :value="opt.value"
+                >
+                  {{ opt.text }}
+                </option>
+              </select>
+              <span class="sidebar-native-select-chevron">
+                <v-icon size="18">mdi-menu-down</v-icon>
+              </span>
+            </div>
+            <div style="width: 34px"></div>
+          </div>
+        </div>
+        <div v-if="sortModel === STACKS_SORT_KEY">
+          <div class="sidebar-section-header">
+            Stack Strictness
+            <span style="flex: 1 1 auto"></span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px">
+            <div style="flex: 1 1 0; min-width: 0; position: relative">
+              <select
+                v-model="stackThresholdModel"
+                class="sidebar-native-select"
+              >
+                <option
+                  v-for="opt in stackThresholdOptions"
+                  :key="opt.value"
+                  :value="opt.value"
+                >
+                  {{ opt.label }}
+                </option>
+              </select>
+              <span class="sidebar-native-select-chevron">
+                <v-icon size="18">mdi-menu-down</v-icon>
+              </span>
+            </div>
+            <div style="width: 34px"></div>
+          </div>
+        </div>
       </div>
     </template>
   </aside>
 </template>
 
 <style scoped>
+.sidebar-native-select {
+  background: rgb(var(--v-theme-surface));
+  color: rgb(var(--v-theme-on-surface));
+  border-radius: 4px;
+  min-height: 32px;
+  height: 32px;
+  font-size: 1em;
+  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.2);
+  margin-left: 6px;
+  box-sizing: border-box;
+  padding-left: 8px;
+  padding-right: 8px;
+  border: 1px solid rgba(var(--v-theme-border), 0.5);
+  width: 230px;
+  transition: border 0.15s;
+}
+.sidebar-native-select:focus {
+  border: 1.5px solid rgb(var(--v-theme-accent));
+}
+.sidebar-native-select-chevron {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: rgb(var(--v-theme-on-surface));
+  display: flex;
+  align-items: center;
+  height: 18px;
+  z-index: 2;
+}
+/* Sidebar right edge for counts */
 .sidebar {
   width: 280px;
+  --sidebar-right-edge: 16px;
+  --sidebar-header-action-right-edge: 2px;
   color: rgb(var(--v-theme-sidebar-text));
   background: rgb(var(--v-theme-sidebar));
-  padding: 0;
+  padding: 4px 0px 12px 0px;
   margin: 0;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   min-height: 0;
-  height: 100vh;
-  max-height: 100vh;
+  height: 100%;
+  max-height: 100%;
   overflow-y: auto;
   scrollbar-color: rgb(var(--v-theme-accent)) rgba(0, 0, 0, 0.15);
   box-sizing: border-box;
@@ -1315,7 +1390,7 @@ defineExpose({ refreshSidebar });
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px;
+  padding: 2px 2px 2px 2px;
 }
 
 .sidebar-brand-left {
@@ -1347,6 +1422,9 @@ defineExpose({ refreshSidebar });
   height: 36px;
   padding: 0;
   border-radius: 8px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .sidebar-collapsed-list {
@@ -1376,7 +1454,6 @@ defineExpose({ refreshSidebar });
 
 .sidebar-collapsed-item.droppable {
   background: rgb(var(--v-theme-primary));
-  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35);
 }
 
 .sidebar-collapsed-item:hover {
@@ -1416,10 +1493,11 @@ defineExpose({ refreshSidebar });
 }
 
 .sidebar-collapsed-divider {
-  width: 24px;
+  width: 100%;
   height: 1px;
-  background: rgba(255, 255, 255, 0.2);
-  margin: 6px 0;
+  margin-top: 2px;
+  margin-bottom: 2px;
+  background: rgba(var(--v-theme-background), 0.3);
 }
 
 @media (max-width: 900px) {
@@ -1450,19 +1528,12 @@ defineExpose({ refreshSidebar });
   position: relative;
   font-size: 1.1rem;
   font-weight: bold;
-  min-height: 44px;
-  padding: 6px 8px;
-  margin: 0;
-  border-radius: 0;
+  min-height: 42px;
+  padding: 2px 8px;
+  padding-right: var(--sidebar-header-action-right-edge);
   display: flex;
   align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  user-select: none;
   color: rgb(var(--v-theme-on-surface));
-  transition:
-    background 0.2s,
-    color 0.2s;
 }
 
 .fade-enter-active,
@@ -1480,7 +1551,8 @@ defineExpose({ refreshSidebar });
   display: flex;
   align-items: center;
   min-height: 48px;
-  padding: 2px 6px;
+  padding: 2px 8px;
+  padding-right: var(--sidebar-right-edge);
   cursor: pointer;
   border-radius: 0;
   margin-bottom: 0;
@@ -1508,7 +1580,6 @@ defineExpose({ refreshSidebar });
 
 .sidebar-list-item.droppable {
   background: rgb(var(--v-theme-primary));
-  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35);
 }
 
 .sidebar-header-spacer {
@@ -1521,11 +1592,15 @@ defineExpose({ refreshSidebar });
   gap: 8px;
   min-width: 64px;
   justify-content: flex-end;
+  margin-left: auto;
+  padding-right: var(--sidebar-header-action-right-edge);
 }
 
 .sidebar-header-actions .v-icon {
-  min-width: 32px;
-  min-height: 32px;
+  min-width: 36px;
+  min-height: 36px;
+  justify-content: center;
+  text-align: center;
 }
 
 .sidebar-list-icon {
@@ -1552,7 +1627,6 @@ defineExpose({ refreshSidebar });
   height: 36px;
   object-fit: contain;
   border-radius: 6px;
-  box-shadow: 0 0 0 #bbb;
   background: transparent;
   display: inline-block;
 }
@@ -1577,12 +1651,36 @@ defineExpose({ refreshSidebar });
   color: rgb(var(--v-theme-on-surface));
   min-width: 2.5em;
   text-align: right;
-  margin: 0 8px;
+  margin: 0;
   font-weight: 400;
   opacity: 0.85;
   letter-spacing: 0.01em;
   align-self: center;
   display: inline-block;
+}
+
+.sidebar-character-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.sidebar-character-actions .sidebar-list-count {
+  margin: 0;
+}
+
+.sidebar-character-toggle {
+  cursor: pointer;
+  color: rgb(var(--v-theme-on-surface));
+  opacity: 0.8;
+  margin-right: 4px;
+}
+
+.sidebar-character-toggle:hover {
+  opacity: 1;
+  color: rgb(var(--v-theme-on-primary));
 }
 
 .add-character-inline {
@@ -1679,6 +1777,33 @@ defineExpose({ refreshSidebar });
 .sidebar-sort-select {
   background: rgb(var(--v-theme-surface));
   color: rgb(var(--v-theme-on-surface));
+  border-radius: 6px !important;
+  min-height: 36px !important;
+  height: 36px !important;
+  font-size: 0.97em;
+  box-shadow: none;
+  margin-top: 0px;
+  margin-bottom: 2px;
+  align-items: center;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+/* Remove extra height from v-input root for select */
+.sidebar-sort-select .v-input__control,
+.sidebar-sort-select .v-field {
+  min-height: 32px !important;
+  height: 32px !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+}
+
+.sidebar-sort-select .v-field__input {
+  min-height: 28px !important;
+  height: 28px !important;
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+  align-items: center;
 }
 
 /* Reference set child entry styling */
