@@ -5,12 +5,18 @@
       :class="{ 'chrome-hidden': chromeHidden, 'sidebar-open': sidebarOpen }"
       @mousemove="handleUserActivity"
       @mousedown="handleUserActivity"
+      @click="handleOverlayClick"
       @wheel.passive="handleUserActivity"
       @touchstart.passive="handleUserActivity"
     >
-      <header class="overlay-topbar" :class="{ hidden: chromeHidden }">
+      <header
+        ref="topbarRef"
+        class="overlay-topbar"
+        :class="{ hidden: chromeHidden }"
+      >
         <button class="overlay-close" @click="emit('close')" aria-label="Close">
-          <v-icon>mdi-close</v-icon>
+          <v-icon size="18">mdi-close</v-icon>
+          <span>Close</span>
         </button>
         <div class="overlay-title">
           <button
@@ -23,6 +29,32 @@
           </button>
         </div>
         <div class="overlay-top-actions">
+          <div
+            class="star-overlay"
+            v-if="image"
+            :class="{ hidden: chromeHidden }"
+          >
+            <v-icon
+              v-for="n in 5"
+              :key="n"
+              large
+              :color="n <= (image?.score || 0) ? 'orange' : 'grey darken-2'"
+              style="cursor: pointer"
+              @click.stop="setScore(n)"
+              >mdi-star</v-icon
+            >
+          </div>
+          <button
+            class="overlay-icon-btn"
+            type="button"
+            title="Toggle face bounding boxes"
+            aria-label="Toggle face bounding boxes"
+            @click.stop="toggleFaceBbox"
+            :class="{ hidden: chromeHidden }"
+          >
+            <v-icon size="20">mdi-account</v-icon>
+          </button>
+
           <button
             class="overlay-icon-btn zoom-btn"
             type="button"
@@ -47,7 +79,11 @@
         </div>
       </header>
 
-      <div class="overlay-main">
+      <div
+        ref="overlayMainRef"
+        class="overlay-main"
+        :style="filmstripStyleVars"
+      >
         <div
           class="overlay-canvas"
           @touchstart="onTouchStart"
@@ -130,33 +166,6 @@
             </div>
           </div>
 
-          <div
-            class="star-overlay"
-            v-if="image"
-            :class="{ hidden: chromeHidden }"
-          >
-            <v-icon
-              v-for="n in 5"
-              :key="n"
-              large
-              :color="n <= (image?.score || 0) ? 'orange' : 'grey darken-2'"
-              style="cursor: pointer"
-              @click.stop="setScore(n)"
-              >mdi-star</v-icon
-            >
-          </div>
-
-          <button
-            class="face-bbox-toggle"
-            type="button"
-            title="Toggle face bounding boxes"
-            aria-label="Toggle face bounding boxes"
-            @click.stop="toggleFaceBbox"
-            :class="{ hidden: chromeHidden }"
-          >
-            <v-icon size="20">mdi-account</v-icon>
-          </button>
-
           <button
             class="overlay-nav overlay-nav-left"
             :class="{ hidden: chromeHidden }"
@@ -213,34 +222,22 @@
           </div>
         </div>
 
-        <aside class="overlay-sidebar" :class="{ open: sidebarOpen }">
+        <aside
+          class="overlay-sidebar"
+          :class="{ open: sidebarOpen, hidden: chromeHidden }"
+        >
           <div class="sidebar-section">
             <div class="section-header">
               <span>Description</span>
-              <span class="section-meta">
-                {{ descriptionDraft.length }}
-              </span>
-            </div>
-            <div class="description-editor">
-              <textarea
-                ref="descriptionEditorRef"
-                v-model="descriptionDraft"
-                :readonly="!isEditingDescription"
-                @keydown.enter.prevent="
-                  isEditingDescription && saveDescription()
-                "
-                @keydown="handleDescriptionEditorKey"
-                @blur="isEditingDescription && cancelEditDescription()"
-              ></textarea>
-              <div class="description-actions">
+              <span class="section-meta-group">
                 <button
-                  class="overlay-icon-btn"
+                  class="section-meta-btn"
                   type="button"
                   title="Copy description"
                   :disabled="!canCopyDescription"
                   @click.stop="copyDescription"
                 >
-                  <v-icon size="18">
+                  <v-icon size="16">
                     {{
                       descriptionCopyState === "copied"
                         ? "mdi-check-bold"
@@ -248,6 +245,25 @@
                     }}
                   </v-icon>
                 </button>
+                <span class="section-meta">
+                  {{ descriptionDraft.length }}
+                </span>
+              </span>
+            </div>
+            <div class="description-editor">
+              <textarea
+                ref="descriptionEditorRef"
+                v-model="descriptionDraft"
+                :readonly="!isEditingDescription"
+                @focus="startEditDescription"
+                @click="startEditDescription"
+                @keydown.enter.prevent="
+                  isEditingDescription && !$event.shiftKey && saveDescription()
+                "
+                @keydown="handleDescriptionEditorKey"
+                @blur="isEditingDescription && cancelEditDescription()"
+              ></textarea>
+              <div class="description-actions">
                 <template v-if="isEditingDescription">
                   <button
                     class="overlay-icon-btn"
@@ -275,22 +291,79 @@
                     <v-icon size="18">mdi-close</v-icon>
                   </button>
                 </template>
-                <button
-                  v-else
-                  class="overlay-icon-btn"
-                  type="button"
-                  title="Edit description"
-                  :disabled="!image"
-                  @click.stop="startEditDescription"
-                >
-                  <v-icon size="18">mdi-pencil</v-icon>
-                </button>
               </div>
             </div>
           </div>
 
           <div class="sidebar-section">
-            <div class="section-header">Tags</div>
+            <div class="section-header">
+              <span>Faces</span>
+            </div>
+            <div v-if="faceAssignItems.length" class="face-assign-grid">
+              <div
+                v-for="face in faceAssignItems"
+                :key="face.faceKey"
+                class="face-assign-card"
+              >
+                <div class="face-assign-row">
+                  <div
+                    class="face-assign-thumb"
+                    :style="getFaceThumbStyle(face, face.faceIdx)"
+                  ></div>
+                  <div class="face-assign-meta">
+                    <div class="face-assign-label">{{ face.label }}</div>
+                    <select
+                      class="face-assign-select"
+                      :disabled="!face.id"
+                      :value="
+                        face.character_id != null
+                          ? String(face.character_id)
+                          : ''
+                      "
+                      @change="handleFaceAssignChange(face, $event)"
+                    >
+                      <option value="">Unassigned</option>
+                      <option
+                        v-if="
+                          face.character_id != null && !hasCharacterOption(face)
+                        "
+                        :value="String(face.character_id)"
+                      >
+                        {{
+                          face.character_name ||
+                          `Character ${face.character_id}`
+                        }}
+                      </option>
+                      <option
+                        v-for="char in sortedCharacters"
+                        :key="char.id"
+                        :value="String(char.id)"
+                      >
+                        {{ char.displayName }}
+                      </option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else class="face-assign-empty">No faces detected</div>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="section-header">
+              <span>Tags</span>
+              <span class="section-meta-group">
+                <button
+                  v-if="image"
+                  class="section-meta-btn"
+                  type="button"
+                  title="Add tag"
+                  @click.stop="beginAddTag"
+                >
+                  <v-icon size="16">mdi-plus</v-icon>
+                </button>
+              </span>
+            </div>
             <div class="tag-list">
               <span
                 v-for="tag in image?.tags || []"
@@ -303,17 +376,9 @@
                   @click.stop="removeTag(tag)"
                   title="Remove tag"
                 >
-                  ×
+                  <v-icon size="12">mdi-close</v-icon>
                 </button>
               </span>
-              <button
-                v-if="image"
-                class="tag-add-btn"
-                @click.stop="beginAddTag"
-                title="Add tag"
-              >
-                +
-              </button>
               <input
                 v-if="addingTag"
                 ref="tagInputRef"
@@ -329,31 +394,66 @@
 
           <div class="sidebar-section">
             <div class="section-header">Metadata</div>
-            <div v-if="!metadataEntries.length" class="metadata-empty">
+            <div
+              v-if="!metadataEntries.length && !comfyMetadata"
+              class="metadata-empty"
+            >
               No metadata available
             </div>
             <div v-else class="metadata-list">
-              <div
-                v-for="entry in metadataEntries"
-                :key="entry.key"
-                class="metadata-row"
-              >
-                <div class="metadata-key">{{ entry.key }}</div>
-                <div class="metadata-value">
-                  <span v-if="isPrimitiveValue(entry.value)">{{
-                    entry.value
-                  }}</span>
-                  <pre v-else>{{ stringifyMetadata(entry.value) }}</pre>
+              <div v-if="pictureInfoEntries.length" class="metadata-info-card">
+                <div class="metadata-info-header">{{ infoHeaderLabel }}</div>
+                <div class="metadata-info-grid">
+                  <div
+                    v-for="entry in pictureInfoEntries"
+                    :key="entry.label"
+                    class="metadata-info-item"
+                  >
+                    <div class="metadata-info-label">{{ entry.label }}</div>
+                    <div class="metadata-info-value">{{ entry.value }}</div>
+                  </div>
                 </div>
-                <button
-                  class="metadata-copy"
-                  type="button"
-                  @click.stop="copyMetadataValue(entry.value)"
-                  aria-label="Copy metadata value"
-                  title="Copy"
+              </div>
+              <div v-if="comfyMetadata" class="metadata-comfy-card">
+                <div class="metadata-comfy-header">
+                  <span>ComfyUI</span>
+                  <span class="metadata-comfy-subtitle">
+                    {{ comfyMetadata.summary }}
+                  </span>
+                </div>
+                <details
+                  v-if="comfyMetadata.workflow"
+                  class="metadata-comfy-details"
                 >
-                  <v-icon size="16">mdi-content-copy</v-icon>
-                </button>
+                  <summary class="metadata-comfy-summary">
+                    <span class="metadata-comfy-summary-left">
+                      <span
+                        class="metadata-comfy-drag-handle"
+                        draggable="true"
+                        @click.stop
+                        @dragstart="handleComfyWorkflowDragStart"
+                        title="Drag workflow"
+                        aria-label="Drag workflow"
+                      >
+                        <v-icon size="14">mdi-drag-vertical</v-icon>
+                      </span>
+                      <span>Workflow JSON</span>
+                    </span>
+                    <button
+                      class="metadata-comfy-copy-inline"
+                      type="button"
+                      @click.stop="copyMetadataValue(comfyMetadata.workflow)"
+                    >
+                      <v-icon size="14">mdi-content-copy</v-icon>
+                      Copy
+                    </button>
+                  </summary>
+                  <textarea
+                    class="metadata-comfy-textarea"
+                    readonly
+                    :value="stringifyMetadata(comfyMetadata.workflow)"
+                  ></textarea>
+                </details>
               </div>
             </div>
           </div>
@@ -376,6 +476,7 @@ import {
 } from "vue";
 import { isSupportedVideoFile, getOverlayFormat } from "../utils/media.js";
 import { apiClient } from "../utils/apiClient";
+import unknownPerson from "../assets/unknown-person.png";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -391,12 +492,13 @@ const sidebarOpen = ref(false);
 const filmstripOpen = ref(false);
 const chromeHidden = ref(false);
 const zoomMode = ref("fit");
-const zoomSteps = ["fit", 1, 1.5, 2];
+const zoomSteps = ["fit", 0.75, 1, 1.5, 2];
 const pan = reactive({ x: 0, y: 0 });
 const isPanning = ref(false);
 const lastPointer = ref({ x: 0, y: 0 });
-const idleTimeoutMs = 1400;
+const idleTimeoutMs = 6000;
 let chromeIdleTimer = null;
+const chromeRevealTimestamp = ref(0);
 
 // Watch for changes to initialImage and update local image copy
 watch(
@@ -416,6 +518,7 @@ const emit = defineEmits([
   "apply-score",
   "remove-tag",
   "add-tag",
+  "update-description",
 ]);
 
 const descriptionRef = ref(null);
@@ -462,6 +565,8 @@ watch(open, (value) => {
       clearTimeout(chromeIdleTimer);
       chromeIdleTimer = null;
     }
+  } else {
+    fetchCharacters();
   }
 });
 
@@ -599,10 +704,6 @@ function handleKeydown(e) {
 
   // Regular keydown behavior
   if (e.key === "Escape") {
-    if (sidebarOpen.value) {
-      sidebarOpen.value = false;
-      return;
-    }
     emit("close");
   } else if (["ArrowLeft", "Left"].includes(e.key)) {
     showPrevImage();
@@ -623,16 +724,42 @@ function handleKeydown(e) {
 const showFaceBbox = ref(false);
 const isMobile = ref(false);
 const MOBILE_BREAKPOINT = 900;
+const windowHeight = ref(0);
+const topbarRef = ref(null);
+const overlayMainRef = ref(null);
 const touchStart = ref({ x: 0, y: 0, time: 0 });
 const touchLatest = ref({ x: 0, y: 0 });
 const swipeHintVisible = ref(false);
 let swipeHintTimer = null;
 
-function updateIsMobile() {
+function updateViewportMetrics() {
   if (typeof window !== "undefined") {
     isMobile.value = window.innerWidth <= MOBILE_BREAKPOINT;
+    windowHeight.value = window.innerHeight || 0;
   }
 }
+
+const filmstripStyleVars = computed(() => {
+  const targetCount = 7;
+  const gap = 8;
+  const railPadding = 8;
+  const railPaddingTotal = railPadding * 2;
+  const overlayMainHeight = overlayMainRef.value?.offsetHeight || 0;
+  const fallbackHeight = Math.max(0, windowHeight.value || 0);
+  const available = Math.max(0, overlayMainHeight || fallbackHeight);
+  const totalGaps = gap * (targetCount - 1);
+  const rawSize = (available - railPaddingTotal - totalGaps) / targetCount;
+  const computed = Number.isFinite(rawSize) ? Math.floor(rawSize) : 0;
+  const thumbSize = computed > 0 ? Math.max(40, computed) : 80;
+  const railWidth = thumbSize + 12;
+  return {
+    "--filmstrip-thumb-size": `${thumbSize}px`,
+    "--filmstrip-rail-width": `${railWidth}px`,
+    "--filmstrip-available-height": `${available}px`,
+    "--filmstrip-gap": `${gap}px`,
+    "--filmstrip-padding": `${railPadding}px`,
+  };
+});
 
 function showSwipeHint() {
   if (!isMobile.value) return;
@@ -650,14 +777,47 @@ function handleBackdropClick() {
 }
 
 function handleUserActivity() {
+  if (chromeHidden.value) {
+    chromeRevealTimestamp.value = Date.now();
+  }
   chromeHidden.value = false;
-  if (sidebarOpen.value) return;
   if (chromeIdleTimer) {
     clearTimeout(chromeIdleTimer);
   }
   chromeIdleTimer = window.setTimeout(() => {
     chromeHidden.value = true;
   }, idleTimeoutMs);
+}
+
+function handleOverlayClick(event) {
+  const target = event?.target;
+  if (!target || !(target instanceof HTMLElement)) {
+    handleUserActivity();
+    return;
+  }
+  if (chromeHidden.value) {
+    handleUserActivity();
+    return;
+  }
+  if (Date.now() - chromeRevealTimestamp.value < 250) {
+    return;
+  }
+  const interactiveSelector =
+    "button, a, input, select, textarea, label, summary, details";
+  const interactiveContainerSelector =
+    ".overlay-topbar, .overlay-sidebar, .overlay-rail, .overlay-nav";
+  if (
+    target.closest(interactiveSelector) ||
+    target.closest(interactiveContainerSelector)
+  ) {
+    handleUserActivity();
+    return;
+  }
+  if (chromeIdleTimer) {
+    clearTimeout(chromeIdleTimer);
+    chromeIdleTimer = null;
+  }
+  chromeHidden.value = true;
 }
 
 function toggleSidebar() {
@@ -782,10 +942,26 @@ const filmstripWindow = computed(() => {
   if (!images.length || !image.value) return [];
   const currentIndex = images.findIndex((img) => img.id === image.value.id);
   if (currentIndex === -1) return [];
+  const targetCount = Math.min(7, images.length);
+  let start = currentIndex - 3;
+  let end = currentIndex + 3;
+  if (start < 0) {
+    end += Math.abs(start);
+    start = 0;
+  }
+  if (end >= images.length) {
+    const overshoot = end - (images.length - 1);
+    start = Math.max(0, start - overshoot);
+    end = images.length - 1;
+  }
+  while (end - start + 1 < targetCount && end < images.length - 1) {
+    end += 1;
+  }
+  while (end - start + 1 < targetCount && start > 0) {
+    start -= 1;
+  }
   const indices = [];
-  for (let offset = -2; offset <= 2; offset += 1) {
-    const idx = currentIndex + offset;
-    if (idx < 0 || idx >= images.length) continue;
+  for (let idx = start; idx <= end; idx += 1) {
     indices.push(idx);
   }
   return indices.map((idx) => ({
@@ -809,6 +985,7 @@ function toggleFaceBbox() {
 const imgRef = ref(null);
 const videoRef = ref(null);
 const mediaInnerRef = ref(null);
+const videoMeta = ref({ duration: null });
 const overlayDims = ref({
   width: 1,
   height: 1,
@@ -817,6 +994,16 @@ const overlayDims = ref({
   offsetX: 0,
   offsetY: 0,
 });
+let overlayResizeObserver = null;
+let mediaResizeObserver = null;
+
+function scheduleOverlayDimsUpdate() {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(updateOverlayDims);
+    });
+  });
+}
 
 function updateOverlayDims() {
   const innerEl = mediaInnerRef.value;
@@ -837,22 +1024,48 @@ function updateOverlayDims() {
     overlayDims.value.naturalHeight = videoRef.value.videoHeight;
     overlayDims.value.offsetX = innerRect ? rect.left - innerRect.left : 0;
     overlayDims.value.offsetY = innerRect ? rect.top - innerRect.top : 0;
+    const duration = Number.isFinite(videoRef.value.duration)
+      ? videoRef.value.duration
+      : null;
+    videoMeta.value = { duration };
+  } else {
+    videoMeta.value = { duration: null };
   }
 }
 
-watch(image, () => nextTick(updateOverlayDims));
+watch(image, () => scheduleOverlayDimsUpdate());
 
 onMounted(() => {
-  updateIsMobile();
-  window.addEventListener("resize", updateIsMobile);
+  updateViewportMetrics();
+  window.addEventListener("resize", updateViewportMetrics);
   window.addEventListener("keydown", handleKeydown);
   window.addEventListener("resize", updateDescriptionScrollState);
   nextTick(updateDescriptionScrollState);
+  if (typeof ResizeObserver !== "undefined" && overlayMainRef.value) {
+    overlayResizeObserver = new ResizeObserver(() => {
+      scheduleOverlayDimsUpdate();
+    });
+    overlayResizeObserver.observe(overlayMainRef.value);
+  }
+  if (typeof ResizeObserver !== "undefined" && mediaInnerRef.value) {
+    mediaResizeObserver = new ResizeObserver(() => {
+      scheduleOverlayDimsUpdate();
+    });
+    mediaResizeObserver.observe(mediaInnerRef.value);
+  }
 });
 onUnmounted(() => {
-  window.removeEventListener("resize", updateIsMobile);
+  window.removeEventListener("resize", updateViewportMetrics);
   window.removeEventListener("keydown", handleKeydown);
   window.removeEventListener("resize", updateDescriptionScrollState);
+  if (overlayResizeObserver) {
+    overlayResizeObserver.disconnect();
+    overlayResizeObserver = null;
+  }
+  if (mediaResizeObserver) {
+    mediaResizeObserver.disconnect();
+    mediaResizeObserver = null;
+  }
   if (swipeHintTimer) {
     clearTimeout(swipeHintTimer);
     swipeHintTimer = null;
@@ -862,6 +1075,7 @@ onUnmounted(() => {
     chromeIdleTimer = null;
   }
   resetCopyState();
+  clearCharacterThumbnails();
 });
 
 watch(open, (isOpen) => {
@@ -919,6 +1133,48 @@ function onTouchEnd() {
 
 // Store multiple face bounding boxes (now full face objects)
 const faceBboxes = ref([]);
+const overlayThumbnail = ref(null);
+const overlayThumbnailDims = ref({ width: 256, height: 256 });
+const overlayThumbnailFaceMap = ref({});
+
+const characters = ref([]);
+const charactersLoading = ref(false);
+const characterThumbnails = ref({});
+let characterThumbnailEpoch = 0;
+const FACE_THUMB_BASE = 34;
+const FACE_THUMB_MIN = 28;
+const FACE_THUMB_MAX = 60;
+let metadataRequestId = 0;
+
+async function fetchOverlayMetadata(imageId) {
+  if (!imageId || !backendUrl.value) return;
+  const requestId = (metadataRequestId += 1);
+  try {
+    const res = await apiClient.get(
+      `${backendUrl.value}/pictures/${imageId}/metadata`,
+    );
+    if (metadataRequestId !== requestId) return;
+    if (!image.value || image.value.id !== imageId) return;
+    const data = await res.data;
+    if (!data || Array.isArray(data)) return;
+    const merged = { ...data, ...image.value };
+    const currentTags = Array.isArray(image.value?.tags)
+      ? image.value.tags
+      : [];
+    const dataTags = Array.isArray(data.tags) ? data.tags : [];
+    merged.tags = Array.from(new Set([...dataTags, ...currentTags])).sort();
+    if (image.value?.description == null) {
+      merged.description = data.description ?? null;
+    }
+    if (image.value?.metadata == null) {
+      merged.metadata = data.metadata ?? {};
+    }
+    image.value = merged;
+    syncDescriptionDraft();
+  } catch (e) {
+    console.error("Failed to fetch overlay metadata:", e);
+  }
+}
 
 // Fetch face bounding boxes for the current image and set character_name for each face
 async function fetchFaceBboxes(imageId) {
@@ -971,12 +1227,237 @@ async function fetchFaceBboxes(imageId) {
   }
 }
 
+async function fetchOverlayThumbnail(imageId) {
+  if (!imageId || !backendUrl.value) {
+    overlayThumbnail.value = null;
+    overlayThumbnailFaceMap.value = {};
+    overlayThumbnailDims.value = { width: 256, height: 256 };
+    return;
+  }
+  try {
+    const res = await apiClient.post(
+      `${backendUrl.value}/pictures/thumbnails`,
+      JSON.stringify({ ids: [String(imageId)] }),
+    );
+    const data = await res.data;
+    const entry = data?.[String(imageId)] || null;
+    if (!entry) {
+      overlayThumbnail.value = null;
+      overlayThumbnailFaceMap.value = {};
+      overlayThumbnailDims.value = { width: 256, height: 256 };
+      return;
+    }
+    overlayThumbnail.value = entry.thumbnail
+      ? `data:image/png;base64,${entry.thumbnail}`
+      : null;
+    const width = Number(entry.thumbnail_width);
+    const height = Number(entry.thumbnail_height);
+    overlayThumbnailDims.value = {
+      width: Number.isFinite(width) && width > 0 ? width : 256,
+      height: Number.isFinite(height) && height > 0 ? height : 256,
+    };
+    const faceMap = {};
+    if (Array.isArray(entry.faces)) {
+      entry.faces.forEach((face) => {
+        if (face?.id != null && Array.isArray(face.bbox)) {
+          faceMap[face.id] = { bbox: face.bbox };
+        }
+      });
+    }
+    overlayThumbnailFaceMap.value = faceMap;
+  } catch (e) {
+    console.error("Failed to fetch overlay thumbnail:", e);
+    overlayThumbnail.value = null;
+    overlayThumbnailFaceMap.value = {};
+  }
+}
+
+async function fetchCharacters(force = false) {
+  if (!backendUrl.value || charactersLoading.value) return;
+  if (!force && Array.isArray(characters.value) && characters.value.length) {
+    return;
+  }
+  charactersLoading.value = true;
+  const requestEpoch = (characterThumbnailEpoch += 1);
+  try {
+    const res = await apiClient.get(`${backendUrl.value}/characters`);
+    const data = await res.data;
+    const list = Array.isArray(data) ? data : [];
+    characters.value = list;
+    await Promise.all(
+      list.map(async (char) => fetchCharacterThumbnail(char?.id, requestEpoch)),
+    );
+  } catch (e) {
+    console.error("Failed to fetch characters:", e);
+    characters.value = [];
+  } finally {
+    if (requestEpoch === characterThumbnailEpoch) {
+      charactersLoading.value = false;
+    }
+  }
+}
+
+async function fetchCharacterThumbnail(characterId, requestEpoch) {
+  if (!characterId || !backendUrl.value) return;
+  try {
+    const cacheBuster = Date.now();
+    const res = await apiClient.get(
+      `${backendUrl.value}/characters/${characterId}/thumbnail?cb=${cacheBuster}`,
+      { responseType: "blob" },
+    );
+    if (requestEpoch !== characterThumbnailEpoch) return;
+    const blobUrl = URL.createObjectURL(res.data);
+    const existing = characterThumbnails.value[characterId];
+    if (existing) {
+      URL.revokeObjectURL(existing);
+    }
+    characterThumbnails.value = {
+      ...characterThumbnails.value,
+      [characterId]: blobUrl,
+    };
+  } catch (e) {
+    console.error(`Failed to fetch thumbnail for character ${characterId}:`, e);
+    if (requestEpoch !== characterThumbnailEpoch) return;
+    characterThumbnails.value = {
+      ...characterThumbnails.value,
+      [characterId]: null,
+    };
+  }
+}
+
+function clearCharacterThumbnails() {
+  Object.values(characterThumbnails.value).forEach((url) => {
+    if (url) {
+      URL.revokeObjectURL(url);
+    }
+  });
+  characterThumbnails.value = {};
+}
+
+function getCharacterThumbSrc(characterId) {
+  return characterThumbnails.value[characterId] || unknownPerson;
+}
+
+function getFaceThumbStyle(face, idx) {
+  const color = faceBoxColor(idx);
+  const base = {
+    borderColor: color,
+  };
+  const faceId = face?.id;
+  const mapped = faceId != null ? overlayThumbnailFaceMap.value[faceId] : null;
+  const thumbUrl = overlayThumbnail.value;
+  if (!thumbUrl || !mapped?.bbox || mapped.bbox.length !== 4) {
+    return {
+      ...base,
+      width: `${FACE_THUMB_BASE}px`,
+      height: `${FACE_THUMB_BASE}px`,
+    };
+  }
+  const [x1, y1, x2, y2] = mapped.bbox;
+  const faceW = Math.max(1, x2 - x1);
+  const faceH = Math.max(1, y2 - y1);
+  const thumbW = overlayThumbnailDims.value.width || 256;
+  const thumbH = overlayThumbnailDims.value.height || 256;
+  const ratio = faceW / faceH;
+  const targetH = FACE_THUMB_BASE;
+  const rawW = Math.round(targetH * ratio);
+  const targetW = Math.min(FACE_THUMB_MAX, Math.max(FACE_THUMB_MIN, rawW));
+  const scaleX = targetW / faceW;
+  const scaleY = targetH / faceH;
+  const bgWidth = Math.round(thumbW * scaleX);
+  const bgHeight = Math.round(thumbH * scaleY);
+  const bgPosX = Math.round(-x1 * scaleX);
+  const bgPosY = Math.round(-y1 * scaleY);
+  return {
+    ...base,
+    width: `${targetW}px`,
+    height: `${targetH}px`,
+    backgroundImage: `url(${thumbUrl})`,
+    backgroundSize: `${bgWidth}px ${bgHeight}px`,
+    backgroundPosition: `${bgPosX}px ${bgPosY}px`,
+  };
+}
+
+async function assignFaceToCharacter(face, character) {
+  if (!face?.id || !character?.id || !backendUrl.value) return;
+  try {
+    await apiClient.post(
+      `${backendUrl.value}/characters/${character.id}/faces`,
+      { face_ids: [face.id] },
+    );
+    if (Array.isArray(faceBboxes.value)) {
+      faceBboxes.value = faceBboxes.value.map((entry) => {
+        if (entry?.id === face.id) {
+          return {
+            ...entry,
+            character_id: character.id,
+            character_name: character.displayName || character.name || null,
+          };
+        }
+        return entry;
+      });
+    }
+  } catch (e) {
+    alert(`Failed to assign character: ${e?.message || e}`);
+  }
+}
+
+async function unassignFaceCharacter(face) {
+  if (!face?.id || !face?.character_id || !backendUrl.value) return;
+  try {
+    await apiClient.delete(
+      `${backendUrl.value}/characters/${face.character_id}/faces`,
+      { data: { face_ids: [face.id] } },
+    );
+    if (Array.isArray(faceBboxes.value)) {
+      faceBboxes.value = faceBboxes.value.map((entry) => {
+        if (entry?.id === face.id) {
+          return { ...entry, character_id: null, character_name: null };
+        }
+        return entry;
+      });
+    }
+  } catch (e) {
+    alert(`Failed to unassign character: ${e?.message || e}`);
+  }
+}
+
+function handleFaceAssignChange(face, event) {
+  const rawValue = event?.target?.value ?? "";
+  const nextId = rawValue === "" ? null : rawValue;
+  if (!nextId) {
+    unassignFaceCharacter(face);
+    return;
+  }
+  const character = sortedCharacters.value.find(
+    (char) => String(char.id) === String(nextId),
+  );
+  if (character) {
+    assignFaceToCharacter(face, character);
+  }
+}
+
+function hasCharacterOption(face) {
+  if (!face?.character_id) return false;
+  return sortedCharacters.value.some(
+    (char) => String(char.id) === String(face.character_id),
+  );
+}
+
 // Watch for image changes and fetch bboxes
 watch(
   () => image.value?.id,
   (newId) => {
-    if (newId) fetchFaceBboxes(newId);
-    else faceBboxes.value = [];
+    if (newId) {
+      fetchFaceBboxes(newId);
+      fetchOverlayMetadata(newId);
+      fetchOverlayThumbnail(newId);
+    } else {
+      faceBboxes.value = [];
+      overlayThumbnail.value = null;
+      overlayThumbnailFaceMap.value = {};
+      overlayThumbnailDims.value = { width: 256, height: 256 };
+    }
     resetPan();
   },
   { immediate: true },
@@ -992,8 +1473,131 @@ function handleTagBackspace(event) {
 
 const metadataEntries = computed(() => {
   const base = normalizeMetadata(image.value?.metadata);
-  const entries = Object.entries(base || {});
+  const entries = Object.entries(stripComfyMetadata(base) || {});
   return entries.map(([key, value]) => ({ key, value }));
+});
+
+const faceAssignItems = computed(() => {
+  const faces = Array.isArray(faceBboxes.value) ? faceBboxes.value : [];
+  return faces.map((face, idx) => ({
+    ...face,
+    faceIdx: idx,
+    faceKey: face?.id ?? `face-${idx}`,
+    label: `Face ${idx + 1}`,
+  }));
+});
+
+const sortedCharacters = computed(() => {
+  const list = Array.isArray(characters.value) ? characters.value : [];
+  return [...list]
+    .filter((char) => char && typeof char.name === "string")
+    .sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+    )
+    .map((char) => ({
+      ...char,
+      displayName: char.name.charAt(0).toUpperCase() + char.name.slice(1),
+    }));
+});
+
+const infoHeaderLabel = computed(() => {
+  const format = image.value ? getOverlayFormat(image.value) : "";
+  const isVideo = format ? isSupportedVideoFile(format) : false;
+  return isVideo ? "Video information" : "Picture information";
+});
+
+const pictureInfoEntries = computed(() => {
+  if (!image.value) return [];
+  const entries = [];
+  const { width, height } = getDisplayDimensions();
+  if (width && height) {
+    entries.push({ label: "Size", value: `${width}×${height}` });
+    const aspect = formatAspectRatio(width, height);
+    if (aspect) entries.push({ label: "Aspect", value: aspect });
+  }
+
+  const sizeBytes =
+    image.value.size_bytes ||
+    image.value.sizeBytes ||
+    image.value.file_size ||
+    image.value.fileSize ||
+    image.value.metadata?.size_bytes ||
+    image.value.metadata?.file_size ||
+    null;
+  if (sizeBytes) {
+    entries.push({ label: "MB", value: formatMegabytes(sizeBytes) });
+  }
+
+  const format = getOverlayFormat(image.value);
+  if (format) {
+    const isVideo = isSupportedVideoFile(format);
+    entries.push({
+      label: "Type",
+      value: `${isVideo ? "Video" : "Image"} · ${format.toUpperCase()}`,
+    });
+
+    if (isVideo) {
+      const frameCount =
+        image.value.frame_count ||
+        image.value.frames ||
+        image.value.metadata?.frame_count ||
+        image.value.metadata?.frames ||
+        null;
+      if (frameCount) {
+        entries.push({ label: "Frames", value: String(frameCount) });
+      }
+
+      const durationSeconds =
+        videoMeta.value.duration ||
+        image.value.duration ||
+        image.value.runtime ||
+        image.value.metadata?.duration ||
+        image.value.metadata?.runtime ||
+        null;
+      if (durationSeconds) {
+        entries.push({
+          label: "Runtime",
+          value: formatDuration(durationSeconds),
+        });
+      }
+    }
+  }
+
+  return entries;
+});
+
+const comfyMetadata = computed(() => {
+  const base = normalizeMetadata(image.value?.metadata);
+  if (!base || !Object.keys(base).length) return null;
+
+  const png = base.png && typeof base.png === "object" ? base.png : {};
+  const workflow = findFirstComfyWorkflow([
+    png.workflow,
+    png.workflow_json,
+    base.workflow,
+    base.workflow_json,
+    base.comfyui_workflow,
+    base.comfyui?.workflow,
+    base.comfyui?.workflow_json,
+  ]);
+
+  if (!workflow) return null;
+
+  const workflowStats = workflow ? summarizeComfyWorkflow(workflow) : null;
+
+  const summaryParts = [];
+  if (workflowStats) {
+    summaryParts.push(
+      `Workflow · ${workflowStats.nodeCount} nodes` +
+        (workflowStats.linkCount !== null
+          ? ` · ${workflowStats.linkCount} links`
+          : ""),
+    );
+  }
+  return {
+    workflow,
+    summary: summaryParts.join(" · ") || "Detected ComfyUI metadata",
+  };
 });
 
 function normalizeMetadata(input) {
@@ -1001,6 +1605,37 @@ function normalizeMetadata(input) {
   const output = {};
   Object.entries(input).forEach(([key, value]) => {
     output[key] = parseMetadataValue(value);
+  });
+  return output;
+}
+
+function stripComfyMetadata(input) {
+  if (!input || typeof input !== "object") return {};
+  const output = {};
+  Object.entries(input).forEach(([key, value]) => {
+    if (
+      key === "workflow" ||
+      key === "prompt" ||
+      key === "comfyui_workflow" ||
+      key === "comfyui_prompt"
+    ) {
+      return;
+    }
+    if (key === "png" && value && typeof value === "object") {
+      const { workflow, prompt, ...rest } = value;
+      if (Object.keys(rest).length) {
+        output[key] = rest;
+      }
+      return;
+    }
+    if (key === "comfyui" && value && typeof value === "object") {
+      const { workflow, prompt, ...rest } = value;
+      if (Object.keys(rest).length) {
+        output[key] = rest;
+      }
+      return;
+    }
+    output[key] = value;
   });
   return output;
 }
@@ -1032,6 +1667,106 @@ function parseMetadataValue(value) {
     return nested;
   }
   return value;
+}
+
+function findFirstComfyWorkflow(values) {
+  for (const value of values) {
+    const candidate = normalizeComfyWorkflowCandidate(value);
+    if (isComfyWorkflow(candidate)) return candidate;
+  }
+  return null;
+}
+
+function normalizeComfyWorkflowCandidate(value) {
+  if (!value) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (
+      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))
+    ) {
+      try {
+        return JSON.parse(trimmed);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }
+  if (value && typeof value === "object") {
+    if (value.workflow) {
+      return normalizeComfyWorkflowCandidate(value.workflow) || value;
+    }
+    return value;
+  }
+  return null;
+}
+
+function isComfyWorkflow(value) {
+  if (!value || typeof value !== "object") return false;
+  const hasNodesArray = Array.isArray(value.nodes);
+  const hasLinksArray = Array.isArray(value.links);
+  const hasNodeHints =
+    typeof value.last_node_id === "number" ||
+    typeof value.last_link_id === "number";
+  return hasNodesArray || hasLinksArray || hasNodeHints;
+}
+
+function summarizeComfyWorkflow(workflow) {
+  const nodeCount = Array.isArray(workflow.nodes)
+    ? workflow.nodes.length
+    : workflow.nodes && typeof workflow.nodes === "object"
+      ? Object.keys(workflow.nodes).length
+      : 0;
+  const linkCount = Array.isArray(workflow.links)
+    ? workflow.links.length
+    : workflow.links && typeof workflow.links === "object"
+      ? Object.keys(workflow.links).length
+      : null;
+  return { nodeCount, linkCount };
+}
+
+function getDisplayDimensions() {
+  const w = Number(overlayDims.value.naturalWidth);
+  const h = Number(overlayDims.value.naturalHeight);
+  if (Number.isFinite(w) && Number.isFinite(h) && w > 1 && h > 1) {
+    return { width: Math.round(w), height: Math.round(h) };
+  }
+  const fallbackW = Number(image.value?.width || 0);
+  const fallbackH = Number(image.value?.height || 0);
+  return {
+    width: fallbackW > 0 ? fallbackW : null,
+    height: fallbackH > 0 ? fallbackH : null,
+  };
+}
+
+function formatAspectRatio(width, height) {
+  if (!width || !height) return "";
+  const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+  const divisor = gcd(width, height);
+  const ratioW = Math.round(width / divisor);
+  const ratioH = Math.round(height / divisor);
+  return `${ratioW}:${ratioH}`;
+}
+
+function formatMegabytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDuration(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const total = Math.round(value);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const padded = (num) => String(num).padStart(2, "0");
+  if (hours > 0) {
+    return `${hours}:${padded(minutes)}:${padded(secs)}`;
+  }
+  return `${minutes}:${padded(secs)}`;
 }
 
 function stringifyMetadata(value) {
@@ -1073,6 +1808,22 @@ async function copyMetadataValue(value) {
     }
   } catch (err) {
     console.warn("Failed to copy metadata value:", err);
+  }
+}
+
+function handleComfyWorkflowDragStart(event) {
+  const workflow = comfyMetadata.value?.workflow;
+  if (!workflow) {
+    event.preventDefault();
+    return;
+  }
+  const payload = stringifyMetadata(workflow);
+  if (event.dataTransfer) {
+    event.dataTransfer.setData("application/json", payload);
+    event.dataTransfer.setData("text/plain", payload);
+    event.dataTransfer.setData("application/x-comfyui-workflow", payload);
+    event.dataTransfer.setData("text/comfyui-workflow", payload);
+    event.dataTransfer.effectAllowed = "copy";
   }
 }
 
@@ -1121,7 +1872,6 @@ function startEditDescription() {
   nextTick(() => {
     if (descriptionEditorRef.value) {
       descriptionEditorRef.value.focus();
-      descriptionEditorRef.value.select?.();
     }
   });
 }
@@ -1155,6 +1905,7 @@ async function saveDescription() {
         };
       }
     }
+    emit("update-description", image.value.id, newDescription);
     isEditingDescription.value = false;
     nextTick(updateDescriptionScrollState);
   } catch (err) {
@@ -1248,20 +1999,26 @@ function removeTag(tag) {
   --rail-width: 52px;
   --rail-open-width: 170px;
   --sidebar-width: 0px;
+  --topbar-height: 56px;
+  position: relative;
 }
 
 .overlay-shell.sidebar-open {
-  --sidebar-width: 320px;
+  --sidebar-width: 0px;
 }
 
 .overlay-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(6px);
-  color: #fff;
+  min-height: var(--topbar-height);
+  background: rgba(var(--v-theme-dark-surface), 0.9);
+  color: rgb(var(--v-theme-on-dark-surface));
   transition: opacity 0.2s ease;
   z-index: 5;
 }
@@ -1273,15 +2030,21 @@ function removeTag(tag) {
 
 .overlay-close {
   border: none;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(var(--v-theme-primary), 0.7);
   color: #fff;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.overlay-close:hover {
+  background: rgba(var(--v-theme-accent), 0.85);
 }
 
 .overlay-title {
@@ -1324,23 +2087,43 @@ function removeTag(tag) {
   gap: 8px;
 }
 
+.overlay-top-actions .star-overlay {
+  position: static;
+  top: auto;
+  right: auto;
+  z-index: auto;
+  padding: 4px 4px 4px 4px;
+  height: 32px;
+  background: none;
+  border-radius: 4px;
+}
+
+.star-overlay:hover {
+  background: rgba(var(--v-theme-primary), 0.6);
+}
+
 .overlay-icon-btn {
   border: none;
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  width: 32px;
+  background: none;
+  color: rgb(var(--v-theme-on-dark-surface));
+  width: 36px;
   height: 32px;
-  border-radius: 8px;
+  padding-left: 4px;
+  padding-right: 4px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
 }
+.overlay-icon-btn:hover {
+  background: rgba(var(--v-theme-primary), 0.6);
+}
 
 .zoom-btn {
   width: auto;
   min-width: 84px;
-  padding: 0 10px;
+  padding: 4px 10px;
   gap: 6px;
   justify-content: flex-start;
 }
@@ -1363,9 +2146,14 @@ function removeTag(tag) {
 .overlay-main {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr;
   height: 100%;
   min-height: 0;
+  position: relative;
+}
+
+.overlay-character-tag {
+  border: 1px solid transparent;
 }
 
 .overlay-canvas {
@@ -1419,45 +2207,6 @@ function removeTag(tag) {
   border-radius: 12px;
   background: #111;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
-}
-
-.star-overlay {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 3;
-  display: flex;
-  gap: 2px;
-  padding: 4px 6px;
-  background: rgba(255, 255, 255, 0.75);
-  border-radius: 6px;
-}
-
-.star-overlay.hidden {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.face-bbox-toggle {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  border: none;
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
-  cursor: pointer;
-  z-index: 3;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.face-bbox-toggle.hidden {
-  opacity: 0;
-  pointer-events: none;
 }
 
 .overlay-nav {
@@ -1526,15 +2275,21 @@ function removeTag(tag) {
 }
 
 .overlay-rail {
-  width: var(--rail-open-width);
-  background: rgba(12, 12, 12, 0.6);
+  position: absolute;
+  top: var(--topbar-height);
+  left: 0;
+  bottom: 0;
+  width: var(--filmstrip-rail-width, var(--rail-open-width));
+  background: rgba(var(--v-theme-dark-surface), 0.9);
   border-left: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 6px;
+  padding: var(--filmstrip-padding, 8px) 6px;
   transition: opacity 0.2s ease;
   overflow: hidden;
+  height: calc(100% - var(--topbar-height));
+  z-index: 3;
 }
 
 .overlay-rail.hidden {
@@ -1545,10 +2300,14 @@ function removeTag(tag) {
 .filmstrip-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--filmstrip-gap, 8px);
   overflow-y: auto;
-  width: 100%;
+  width: var(--filmstrip-thumb-size, 100%);
+  align-items: center;
+  overflow-x: hidden;
+  align-self: center;
   padding-right: 4px;
+  height: 100%;
 }
 
 .filmstrip-thumb {
@@ -1559,12 +2318,14 @@ function removeTag(tag) {
   border-radius: 8px;
   overflow: hidden;
   border: 2px solid transparent;
-  width: 100%;
+  width: var(--filmstrip-thumb-size, 100%);
+  height: var(--filmstrip-thumb-size, auto);
+  max-width: 100%;
   aspect-ratio: 1 / 1;
 }
 
 .filmstrip-thumb.active {
-  border-color: rgba(255, 183, 77, 0.95);
+  border-color: rgba(255, 183, 77, 0.9);
   box-shadow: 0 0 0 2px rgba(255, 183, 77, 0.35);
 }
 
@@ -1582,20 +2343,34 @@ function removeTag(tag) {
   align-items: center;
   justify-content: center;
   background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.85);
 }
 
 .overlay-sidebar {
+  position: absolute;
+  top: var(--topbar-height);
+  right: 0;
+  bottom: 0;
   width: var(--sidebar-width);
-  background: rgba(18, 18, 18, 0.92);
-  color: #fff;
+  background: rgba(var(--v-theme-dark-surface), 0.9);
+  color: rgb(var(--v-theme-on-dark-surface));
   transition: width 0.2s ease;
   overflow: hidden;
   padding: 0;
+  height: calc(100% - var(--topbar-height));
+  z-index: 4;
 }
 
 .overlay-sidebar.open {
+  width: 320px;
   padding: 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.overlay-sidebar.hidden {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .sidebar-section {
@@ -1611,6 +2386,28 @@ function removeTag(tag) {
   color: #fff;
 }
 
+.section-meta-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-meta-btn {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.section-meta-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .section-meta {
   font-size: 0.75rem;
   color: rgba(255, 255, 255, 0.6);
@@ -1618,7 +2415,7 @@ function removeTag(tag) {
 
 .description-editor textarea {
   width: 100%;
-  min-height: 120px;
+  min-height: 200px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(0, 0, 0, 0.35);
@@ -1636,35 +2433,37 @@ function removeTag(tag) {
 .tag-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 2px 4px;
 }
 
 .overlay-tag {
-  display: inline-flex;
-  align-items: center;
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
-  border-radius: 999px;
-  padding: 2px 10px;
+  border-radius: 8px;
+  padding: 2px 2px 2px 8px;
   font-size: 0.8rem;
+  line-height: 1.2;
+  margin-bottom: 4px;
+  margin-right: 0px;
+  margin-left: 0px;
+  justify-content: center;
+  vertical-align: middle;
 }
 
 .tag-delete-btn {
-  margin-left: 6px;
+  margin: 0px;
+  padding: 4px;
   background: transparent;
   border: none;
-  color: inherit;
+  color: rgb(var(--v-theme-primary));
   cursor: pointer;
+  font-size: 0.8em;
+  line-height: 1;
+  vertical-align: middle;
 }
 
-.tag-add-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  border: none;
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
-  cursor: pointer;
+.tag-delete-btn:hover {
+  color: rgb(var(--v-theme-accent));
 }
 
 .tag-add-input {
@@ -1672,7 +2471,75 @@ function removeTag(tag) {
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: #fff;
   border-radius: 999px;
-  padding: 4px 10px;
+  padding: 2px 8px;
+  font-size: 0.74rem;
+}
+
+.face-assign-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.face-assign-card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 6px;
+}
+
+.face-assign-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.face-assign-thumb {
+  border-radius: 2px;
+  border: 1px solid transparent;
+  background: rgba(0, 0, 0, 0.4);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+  flex: 0 0 auto;
+}
+
+.face-assign-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.face-assign-label {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.face-assign-select {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border-radius: 8px;
+  padding: 2px 6px;
+  font-size: 0.75rem;
+  height: 26px;
+}
+
+.face-assign-select:disabled {
+  opacity: 0.6;
+}
+
+.face-assign-empty {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 4px 6px;
 }
 
 .metadata-empty {
@@ -1684,6 +2551,160 @@ function removeTag(tag) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.metadata-info-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.metadata-info-header {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.metadata-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.metadata-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.metadata-info-label {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.metadata-info-value {
+  font-size: 0.8rem;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metadata-comfy-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.metadata-comfy-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 600;
+  font-size: 0.74rem;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.metadata-comfy-subtitle {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.metadata-comfy-details {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.metadata-comfy-details summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.metadata-comfy-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.metadata-comfy-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.metadata-comfy-summary-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.metadata-comfy-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: grab;
+  padding: 0;
+  width: 14px;
+  height: 18px;
+  border-radius: 4px;
+}
+
+.metadata-comfy-drag-handle:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.metadata-comfy-copy-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.metadata-comfy-copy-inline:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.metadata-comfy-textarea {
+  margin-top: 8px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 160px;
+  max-height: 280px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  padding: 8px;
+  resize: vertical;
+  overflow: auto;
+  white-space: pre;
+  word-break: normal;
+}
+
+.metadata-comfy-details:not([open]) .metadata-comfy-textarea {
+  display: none;
 }
 
 .metadata-row {
@@ -1759,6 +2780,7 @@ function removeTag(tag) {
 
   .overlay-rail {
     position: absolute;
+    top: auto;
     bottom: 0;
     left: 0;
     right: 0;
@@ -1792,9 +2814,9 @@ function removeTag(tag) {
 
   .overlay-sidebar {
     position: absolute;
-    top: 0;
+    top: var(--topbar-height);
     right: 0;
-    height: 100%;
+    height: calc(100% - var(--topbar-height));
     width: 0;
   }
 

@@ -2452,6 +2452,22 @@ class Server:
 
             pic_dict["tags"] = tags
 
+            embedded_metadata = {}
+            try:
+                file_path = PictureUtils.resolve_picture_path(
+                    self.vault.image_root, pic.file_path
+                )
+                embedded_metadata = PictureUtils.extract_embedded_metadata(file_path)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to read embedded metadata for picture id=%s: %s",
+                    pic.id,
+                    exc,
+                )
+
+            if embedded_metadata:
+                pic_dict["metadata"] = embedded_metadata
+
             logger.info("Returning dict: " + str(pic_dict))
             return pic_dict
 

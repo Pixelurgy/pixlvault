@@ -8,6 +8,7 @@
     @apply-score="applyScore"
     @add-tag="addTagToImage"
     @remove-tag="removeTagFromImage"
+    @update-description="updateDescriptionForImage"
   />
   <ImageImporter
     ref="imageImporterRef"
@@ -1416,7 +1417,19 @@ async function openOverlay(img) {
   const latestInfo = await fetchImageInfo(requestedId);
   if (!latestInfo || Array.isArray(latestInfo)) return;
   if (!overlayImage.value || overlayImage.value.id !== requestedId) return;
-  overlayImage.value = { ...overlayImage.value, ...latestInfo };
+  const merged = { ...latestInfo, ...overlayImage.value };
+  if (overlayImage.value?.description == null) {
+    merged.description = latestInfo.description ?? null;
+  }
+  const currentTags = Array.isArray(overlayImage.value?.tags)
+    ? overlayImage.value.tags
+    : [];
+  const dataTags = Array.isArray(latestInfo.tags) ? latestInfo.tags : [];
+  merged.tags = Array.from(new Set([...dataTags, ...currentTags])).sort();
+  if (overlayImage.value?.metadata == null) {
+    merged.metadata = latestInfo.metadata ?? {};
+  }
+  overlayImage.value = merged;
 }
 
 function closeOverlay() {
@@ -2576,12 +2589,25 @@ async function removeTagFromImage(imageId, tag) {
     return;
   }
 
-  apiClient
-    .delete(`${props.backendUrl}/pictures/${imageId}/tags/${tag}`)
-
-    .catch((error) => {
-      console.error("Error removing tag:", error);
-    });
+  try {
+    await apiClient.delete(
+      `${props.backendUrl}/pictures/${imageId}/tags/${tag}`,
+    );
+    const gridImg = allGridImages.value.find(
+      (img) => img && img.id === imageId,
+    );
+    if (gridImg && Array.isArray(gridImg.tags)) {
+      gridImg.tags = gridImg.tags.filter((t) => t !== tag);
+    }
+    if (overlayImage.value && overlayImage.value.id === imageId) {
+      const overlayTags = Array.isArray(overlayImage.value.tags)
+        ? overlayImage.value.tags.filter((t) => t !== tag)
+        : [];
+      overlayImage.value = { ...overlayImage.value, tags: overlayTags };
+    }
+  } catch (error) {
+    console.error("Error removing tag:", error);
+  }
 }
 
 async function addTagToImage(imageId, tag) {
@@ -2593,8 +2619,39 @@ async function addTagToImage(imageId, tag) {
       },
     );
     console.log(`Tag '${tag}' added to image ${imageId}`);
+    const gridImg = allGridImages.value.find(
+      (img) => img && img.id === imageId,
+    );
+    if (gridImg) {
+      const tags = Array.isArray(gridImg.tags) ? [...gridImg.tags] : [];
+      if (!tags.includes(tag)) {
+        tags.push(tag);
+        tags.sort();
+      }
+      gridImg.tags = tags;
+    }
+    if (overlayImage.value && overlayImage.value.id === imageId) {
+      const tags = Array.isArray(overlayImage.value.tags)
+        ? [...overlayImage.value.tags]
+        : [];
+      if (!tags.includes(tag)) {
+        tags.push(tag);
+        tags.sort();
+      }
+      overlayImage.value = { ...overlayImage.value, tags };
+    }
   } catch (error) {
     console.error("Error adding tag:", error);
+  }
+}
+
+function updateDescriptionForImage(imageId, description) {
+  const gridImg = allGridImages.value.find((img) => img && img.id === imageId);
+  if (gridImg) {
+    gridImg.description = description;
+  }
+  if (overlayImage.value && overlayImage.value.id === imageId) {
+    overlayImage.value = { ...overlayImage.value, description };
   }
 }
 

@@ -1715,7 +1715,7 @@ defineExpose({ refreshSidebar });
 
 <style scoped>
 .sidebar-native-select {
-  background: rgb(var(--v-theme-surface));
+  background: rgba(var(--v-theme-surface), 0.3);
   color: rgb(var(--v-theme-on-surface));
   border-radius: 4px;
   min-height: 32px;
