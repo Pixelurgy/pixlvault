@@ -730,8 +730,8 @@ function getFaceBboxStyle(bbox, idx, img, el, isSelected) {
   if (!container) return { display: "none" };
   const containerWidth = container.clientWidth;
   const containerHeight = container.clientHeight;
-  const naturalWidth = img.width || 1;
-  const naturalHeight = img.height || 1;
+  const naturalWidth = img.thumbnail_width || img.width || 1;
+  const naturalHeight = img.thumbnail_height || img.height || 1;
   // Calculate scale and offset for object-fit: cover
   const scale = Math.max(
     containerWidth / naturalWidth,
@@ -771,8 +771,8 @@ function getFaceBboxOverlays(img) {
       !props.showFaceBboxes ||
       !img.faces ||
       !img.faces.length ||
-      !img.width ||
-      !img.height
+      !(img.thumbnail_width || img.width) ||
+      !(img.thumbnail_height || img.height)
     ) {
       return [];
     }
@@ -2303,10 +2303,10 @@ async function fetchThumbnailsBatch(start, end) {
           const thumbWidth = Number(thumbObj.thumbnail_width);
           const thumbHeight = Number(thumbObj.thumbnail_height);
           if (!Number.isNaN(thumbWidth) && thumbWidth > 0) {
-            gridImg.width = thumbWidth;
+            gridImg.thumbnail_width = thumbWidth;
           }
           if (!Number.isNaN(thumbHeight) && thumbHeight > 0) {
-            gridImg.height = thumbHeight;
+            gridImg.thumbnail_height = thumbHeight;
           }
         }
       }
