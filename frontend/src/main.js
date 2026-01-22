@@ -24,6 +24,8 @@ const pixlVaultTheme = {
     'input-text': '#f2e5da',
     'cancel-button': '#5f5f5f',
     'cancel-button-text': '#f2e5da',
+    'dark-surface': '#242628',
+    'on-dark-surface': '#f2e5da',
     surface: '#545658',
     onSurface: '#f2e5da',
     background: '#D3D5D7',

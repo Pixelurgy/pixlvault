@@ -53,6 +53,10 @@ const categoryCounts = ref({
   [props.unassignedPicturesId]: 0,
 });
 
+const flashCountsNextFetch = ref(false);
+const countNewTags = ref({});
+const knownCountIds = new Set();
+
 const characterThumbnails = ref({});
 const expandedCharacters = ref({});
 
@@ -391,6 +395,7 @@ function closeSetEditor() {
 }
 
 function selectCharacter(id) {
+  clearCountNew(id);
   emit("select-set", null);
   emit("select-character", id);
 }
@@ -504,8 +509,42 @@ function toggleCharacterCollapse(charId) {
   collapsedCharacters.value[charId] = !collapsedCharacters.value[charId];
 }
 
+function isCountSelected(id) {
+  if (!id) return false;
+  return props.selectedCharacter === id;
+}
+
+function isCountNew(id) {
+  return Boolean(id && countNewTags.value[id]);
+}
+
+function clearCountNew(id) {
+  if (!id) return;
+  countNewTags.value[id] = false;
+}
+
+function markCountNew(id) {
+  if (!id) return;
+  if (isCountSelected(id)) return;
+  countNewTags.value[id] = true;
+}
+
+function setCategoryCount(id, value, shouldFlash) {
+  if (!id) return;
+  const prevValue = categoryCounts.value[id];
+  categoryCounts.value[id] = value;
+  if (!knownCountIds.has(id)) {
+    knownCountIds.add(id);
+    return;
+  }
+  if (shouldFlash && prevValue !== value) {
+    markCountNew(id);
+  }
+}
+
 // --- Sidebar & Character Data ---
 async function fetchSidebarData() {
+  const shouldFlash = flashCountsNextFetch.value;
   // Fetch total image count for END key logic
   try {
     // All images summary
@@ -513,7 +552,7 @@ async function fetchSidebarData() {
       `${props.backendUrl}/characters/${props.allPicturesId}/summary`,
     );
     const data = await resAll.data;
-    categoryCounts.value[props.allPicturesId] = data.image_count;
+    setCategoryCount(props.allPicturesId, data.image_count, shouldFlash);
   } catch (e) {
     console.warn("Error fetching all images summary:", e);
   }
@@ -523,7 +562,7 @@ async function fetchSidebarData() {
       `${props.backendUrl}/characters/${props.unassignedPicturesId}/summary`,
     );
     const data = await resUnassigned.data;
-    categoryCounts.value[props.unassignedPicturesId] = data.image_count;
+    setCategoryCount(props.unassignedPicturesId, data.image_count, shouldFlash);
   } catch (e) {
     console.warn("Error fetching unassigned images summary:", e);
   }
@@ -534,10 +573,11 @@ async function fetchSidebarData() {
           `${props.backendUrl}/characters/${char.id}/summary`,
         );
         const data = await res.data;
-        categoryCounts.value[char.id] = data.image_count;
+        setCategoryCount(char.id, data.image_count, shouldFlash);
       } catch {}
     }),
   );
+  flashCountsNextFetch.value = false;
 }
 
 async function fetchCharacters() {
@@ -558,8 +598,11 @@ async function fetchCharacters() {
   }
 }
 
-function refreshSidebar() {
+function refreshSidebar(options = {}) {
   console.log("Refreshing sidebar");
+  if (options?.flashCounts) {
+    flashCountsNextFetch.value = true;
+  }
   fetchCharacters();
   fetchPictureSets();
   fetchSidebarData();
@@ -951,6 +994,13 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => props.selectedCharacter,
+  (nextId) => {
+    clearCountNew(nextId);
+  },
+);
+
 defineExpose({ refreshSidebar });
 </script>
 
@@ -1326,6 +1376,9 @@ defineExpose({ refreshSidebar });
         </span>
         <span class="sidebar-list-label">All Pictures</span>
         <span class="sidebar-list-count">
+          <span v-if="isCountNew(props.allPicturesId)" class="sidebar-new-tag">
+            new
+          </span>
           {{ categoryCounts[props.allPicturesId] ?? "" }}
         </span>
       </div>
@@ -1341,6 +1394,12 @@ defineExpose({ refreshSidebar });
         </span>
         <span class="sidebar-list-label">Unassigned Pictures</span>
         <span class="sidebar-list-count">
+          <span
+            v-if="isCountNew(props.unassignedPicturesId)"
+            class="sidebar-new-tag"
+          >
+            new
+          </span>
           {{ categoryCounts[props.unassignedPicturesId] ?? "" }}
         </span>
       </div>
@@ -1447,6 +1506,9 @@ defineExpose({ refreshSidebar });
               }}
             </v-icon>
             <span class="sidebar-list-count">
+              <span v-if="isCountNew(char.id)" class="sidebar-new-tag">
+                new
+              </span>
               {{ categoryCounts[char.id] ?? "" }}
             </span>
           </span>
@@ -1715,7 +1777,7 @@ defineExpose({ refreshSidebar });
 
 <style scoped>
 .sidebar-native-select {
-  background: rgb(var(--v-theme-surface));
+  background: rgba(var(--v-theme-surface), 0.3);
   color: rgb(var(--v-theme-on-surface));
   border-radius: 4px;
   min-height: 32px;
@@ -1748,8 +1810,8 @@ defineExpose({ refreshSidebar });
 /* Sidebar right edge for counts */
 .sidebar {
   width: 280px;
-  --sidebar-right-edge: 16px;
-  --sidebar-header-action-right-edge: 2px;
+  --sidebar-right-edge: 14px;
+  --sidebar-header-action-right-edge: 0px;
   color: rgb(var(--v-theme-sidebar-text));
   background: rgb(var(--v-theme-sidebar));
   padding: 4px 0px 12px 0px;
@@ -1933,7 +1995,7 @@ defineExpose({ refreshSidebar });
   font-weight: bold;
   min-height: 42px;
   padding: 2px 8px;
-  padding-right: var(--sidebar-header-action-right-edge);
+  padding-right: var(--sidebar-header-action-right-edge) !important;
   display: flex;
   align-items: center;
   color: rgb(var(--v-theme-on-surface));
@@ -1955,7 +2017,7 @@ defineExpose({ refreshSidebar });
   align-items: center;
   min-height: 48px;
   padding: 2px 8px;
-  padding-right: var(--sidebar-right-edge);
+  padding-right: var(--sidebar-right-edge) !important;
   cursor: pointer;
   border-radius: 0;
   margin-bottom: 0;
@@ -2188,7 +2250,7 @@ defineExpose({ refreshSidebar });
   min-width: 64px;
   justify-content: flex-end;
   margin-left: auto;
-  padding-right: var(--sidebar-header-action-right-edge);
+  padding-right: var(--sidebar-header-action-right-edge) !important;
 }
 
 .sidebar-header-actions .v-icon {
@@ -2252,6 +2314,23 @@ defineExpose({ refreshSidebar });
   letter-spacing: 0.01em;
   align-self: center;
   display: inline-block;
+}
+
+.sidebar-new-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 2px;
+  margin-right: 4px;
+  border-radius: 4px;
+  color: #ffffff;
+  background: rgba(var(--v-theme-primary), 0.7);
+  position: relative;
+  top: -2px;
 }
 
 .sidebar-character-actions {

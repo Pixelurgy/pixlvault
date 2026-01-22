@@ -8,6 +8,8 @@
     @apply-score="applyScore"
     @add-tag="addTagToImage"
     @remove-tag="removeTagFromImage"
+    @update-description="updateDescriptionForImage"
+    @refresh-image="refreshImageFromOverlay"
   />
   <ImageImporter
     ref="imageImporterRef"
@@ -166,7 +168,10 @@
           @mouseleave="handleImageMouseLeave(img)"
         >
           <v-card
-            class="thumbnail-card"
+            :class="[
+              'thumbnail-card',
+              { 'thumbnail-card-new': isImageRecentlyAdded(img.id) },
+            ]"
             @click.stop="handleThumbnailClick(img, img.idx, $event)"
           >
             <div
@@ -352,24 +357,42 @@
                       }
                     "
                   >
-                    <span
-                      style="
-                        position: absolute;
-                        left: 0;
-                        top: 0;
-                        background: #222c;
-                        color: #fff;
-                        font-size: 0.8em;
-                        padding: 1px 4px;
-                        border-bottom-right-radius: 6px;
+                    <select
+                      class="face-bbox-select"
+                      :value="
+                        overlay.face && overlay.face.character_id != null
+                          ? String(overlay.face.character_id)
+                          : ''
                       "
+                      @change="
+                        handleFaceBboxCharacterChange(img, overlay, $event)
+                      "
+                      @pointerdown.stop
+                      @mousedown.stop
+                      @click.stop
                     >
-                      {{
-                        overlay.face && overlay.face.character_name
-                          ? overlay.face.character_name
-                          : `Face ${overlay.colorIdx + 1}`
-                      }}
-                    </span>
+                      <option value="">Unassigned</option>
+                      <option
+                        v-if="
+                          overlay.face &&
+                          overlay.face.character_id != null &&
+                          !hasCharacterOption(overlay.face.character_id)
+                        "
+                        :value="String(overlay.face.character_id)"
+                      >
+                        {{
+                          overlay.face.character_name ||
+                          `Character ${overlay.face.character_id}`
+                        }}
+                      </option>
+                      <option
+                        v-for="char in sortedCharacters"
+                        :key="char.id"
+                        :value="String(char.id)"
+                      >
+                        {{ char.displayName }}
+                      </option>
+                    </select>
                   </div>
                 </template>
                 <div
@@ -538,6 +561,7 @@ const props = defineProps({
   allPicturesId: String,
   unassignedPicturesId: String,
   gridVersion: { type: Number, default: 0 },
+  wsUpdateKey: { type: Number, default: 0 },
   mediaTypeFilter: { type: String, default: "all" },
   columns: { type: Number, required: true },
 });
@@ -578,9 +602,105 @@ const exportProgressPercent = computed(() => {
   return Math.min(100, Math.max(0, Math.round(percent)));
 });
 
+const recentlyAddedIds = ref({});
+const recentlyAddedTimers = new Map();
+const previousImageIds = new Set();
+const hasLoadedOnce = ref(false);
+const highlightNextFetch = ref(false);
+const lastWsUpdateKey = ref(0);
+
 // Key to force face bbox overlay recompute
 const faceOverlayRedrawKey = ref(0);
 let gridResizeObserver = null;
+
+const characters = ref([]);
+const charactersLoading = ref(false);
+
+const sortedCharacters = computed(() => {
+  const list = Array.isArray(characters.value) ? characters.value : [];
+  return [...list]
+    .filter((char) => char && typeof char.name === "string")
+    .sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+    )
+    .map((char) => ({
+      ...char,
+      displayName: char.name.charAt(0).toUpperCase() + char.name.slice(1),
+    }));
+});
+
+function hasCharacterOption(characterId) {
+  if (characterId == null) return false;
+  return sortedCharacters.value.some(
+    (char) => String(char.id) === String(characterId),
+  );
+}
+
+async function fetchCharacters(force = false) {
+  if (!props.backendUrl || charactersLoading.value) return;
+  if (!force && Array.isArray(characters.value) && characters.value.length)
+    return;
+  charactersLoading.value = true;
+  try {
+    const res = await apiClient.get(`${props.backendUrl}/characters`);
+    const data = await res.data;
+    characters.value = Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.error("Failed to fetch characters:", e);
+    characters.value = [];
+  } finally {
+    charactersLoading.value = false;
+  }
+}
+
+function updateFaceCharacterLocal(img, faceId, characterId, characterName) {
+  if (!img || !Array.isArray(img.faces)) return;
+  img.faces = img.faces.map((face) => {
+    if (face?.id !== faceId) return face;
+    return {
+      ...face,
+      character_id: characterId,
+      character_name: characterName,
+    };
+  });
+}
+
+async function handleFaceBboxCharacterChange(img, overlay, event) {
+  const faceId = overlay?.faceId;
+  if (!faceId) return;
+  const nextValue = event?.target?.value ?? "";
+  const nextId = nextValue === "" ? null : nextValue;
+  const previousId = overlay?.face?.character_id ?? null;
+
+  try {
+    if (!nextId) {
+      if (previousId != null) {
+        await apiClient.delete(
+          `${props.backendUrl}/characters/${previousId}/faces`,
+          { data: { face_ids: [faceId] } },
+        );
+      }
+      updateFaceCharacterLocal(img, faceId, null, null);
+    } else {
+      await apiClient.post(`${props.backendUrl}/characters/${nextId}/faces`, {
+        face_ids: [faceId],
+      });
+      const selected = sortedCharacters.value.find(
+        (char) => String(char.id) === String(nextId),
+      );
+      updateFaceCharacterLocal(
+        img,
+        faceId,
+        Number(nextId),
+        selected?.displayName || selected?.name || null,
+      );
+    }
+  } catch (e) {
+    console.error("Failed to update face character:", e);
+  } finally {
+    refreshImageFromOverlay({ imageId: img.id, faces: img.faces });
+  }
+}
 
 function triggerFaceOverlayRedraw() {
   faceOverlayRedrawKey.value++;
@@ -597,6 +717,7 @@ onMounted(() => {
   );
   console.log("[ImageGrid.vue] Initial allGridImages:", allGridImages.value);
   window.addEventListener("resize", triggerFaceOverlayRedraw);
+  fetchCharacters();
   fetchAllPicturesCount();
   nextTick(() => {
     updateRowHeightFromGrid();
@@ -623,7 +744,41 @@ onUnmounted(() => {
     clearTimeout(emptyStateDelayTimer);
     emptyStateDelayTimer = null;
   }
+  for (const timer of recentlyAddedTimers.values()) {
+    clearTimeout(timer);
+  }
+  recentlyAddedTimers.clear();
+  recentlyAddedIds.value = {};
 });
+
+watch(
+  () => props.wsUpdateKey,
+  (nextKey) => {
+    if (!nextKey || nextKey === lastWsUpdateKey.value) return;
+    lastWsUpdateKey.value = nextKey;
+    highlightNextFetch.value = true;
+  },
+);
+
+function triggerNewImageHighlight(ids) {
+  ids.forEach((id) => {
+    if (!id) return;
+    if (recentlyAddedTimers.has(id)) {
+      clearTimeout(recentlyAddedTimers.get(id));
+      recentlyAddedTimers.delete(id);
+    }
+    recentlyAddedIds.value[id] = true;
+    const timeout = setTimeout(() => {
+      recentlyAddedIds.value[id] = false;
+      recentlyAddedTimers.delete(id);
+    }, 2200);
+    recentlyAddedTimers.set(id, timeout);
+  });
+}
+
+function isImageRecentlyAdded(id) {
+  return Boolean(id && recentlyAddedIds.value[id]);
+}
 
 function onThumbnailLoad(id) {
   thumbnailLoadedMap[id] = (thumbnailLoadedMap[id] || 0) + 1;
@@ -729,8 +884,8 @@ function getFaceBboxStyle(bbox, idx, img, el, isSelected) {
   if (!container) return { display: "none" };
   const containerWidth = container.clientWidth;
   const containerHeight = container.clientHeight;
-  const naturalWidth = img.width || 1;
-  const naturalHeight = img.height || 1;
+  const naturalWidth = img.thumbnail_width || img.width || 1;
+  const naturalHeight = img.thumbnail_height || img.height || 1;
   // Calculate scale and offset for object-fit: cover
   const scale = Math.max(
     containerWidth / naturalWidth,
@@ -750,6 +905,7 @@ function getFaceBboxStyle(bbox, idx, img, el, isSelected) {
     position: "absolute",
     border: `${isSelected ? 3 : 1.5}px solid ${borderColor}`,
     background: `${borderColor}${isSelected ? "44" : "22"}`,
+    "--face-frame-color": `${borderColor}${isSelected ? "cc" : "aa"}`,
     left: `${left}px`,
     top: `${top}px`,
     width: `${width}px`,
@@ -770,8 +926,8 @@ function getFaceBboxOverlays(img) {
       !props.showFaceBboxes ||
       !img.faces ||
       !img.faces.length ||
-      !img.width ||
-      !img.height
+      !(img.thumbnail_width || img.width) ||
+      !(img.thumbnail_height || img.height)
     ) {
       return [];
     }
@@ -1407,6 +1563,134 @@ async function fetchImageInfo(imageId) {
   }
 }
 
+function invalidateThumbnailIndex(index) {
+  loadedRanges.value = loadedRanges.value.filter(
+    ([rangeStart, rangeEnd]) => index < rangeStart || index >= rangeEnd,
+  );
+}
+
+async function refreshGridImage(imageId) {
+  if (!imageId) return;
+  const idx = allGridImages.value.findIndex((img) => img?.id === imageId);
+  if (idx === -1) return;
+  const latestInfo = await fetchImageInfo(imageId);
+  if (latestInfo && !Array.isArray(latestInfo)) {
+    const current = allGridImages.value[idx] || {};
+    allGridImages.value[idx] = {
+      ...current,
+      ...latestInfo,
+      idx: current.idx ?? idx,
+    };
+  }
+  invalidateThumbnailIndex(idx);
+  fetchThumbnailsBatch(idx, idx + 1);
+}
+
+function addImageToGrid(imageData) {
+  if (!imageData?.id) return null;
+  const items = allGridImages.value.slice();
+  const newIndex = items.length;
+  items.push({
+    ...imageData,
+    idx: newIndex,
+    thumbnail: imageData.thumbnail ?? null,
+  });
+  for (let i = 0; i < items.length; i += 1) {
+    items[i].idx = i;
+  }
+  allGridImages.value = items;
+  invalidateThumbnailIndex(newIndex);
+  fetchThumbnailsBatch(newIndex, newIndex + 1);
+  return newIndex;
+}
+
+async function fetchCharacterLikenessForImage(imageId) {
+  if (!imageId || !props.similarityCharacter) return null;
+  const params = new URLSearchParams();
+  params.set("reference_character_id", String(props.similarityCharacter));
+  if (props.selectedCharacter != null) {
+    params.set("character_id", String(props.selectedCharacter));
+  }
+  try {
+    const res = await apiClient.get(
+      `${props.backendUrl}/pictures/${imageId}/character_likeness?${params.toString()}`,
+    );
+    return res.data;
+  } catch (e) {
+    console.error("Failed to fetch character likeness for image:", e);
+    return null;
+  }
+}
+
+function shouldCheckViewEligibility() {
+  if (props.selectedSet) return false;
+  if (!props.selectedCharacter) return false;
+  if (props.selectedCharacter === props.allPicturesId) return false;
+  return true;
+}
+
+function shouldRemoveFromCurrentView(faces) {
+  if (!shouldCheckViewEligibility()) return false;
+  const list = Array.isArray(faces) ? faces : [];
+  const selected = String(props.selectedCharacter);
+  if (selected === props.unassignedPicturesId) {
+    return list.some((face) => face?.character_id != null);
+  }
+  return !list.some((face) => String(face?.character_id) === selected);
+}
+
+async function refreshImageFromOverlay(payload) {
+  const imageId =
+    typeof payload === "object" && payload !== null ? payload.imageId : payload;
+  const faces =
+    typeof payload === "object" && payload !== null ? payload.faces : null;
+  if (!imageId) return;
+  if (shouldRemoveFromCurrentView(faces)) {
+    removeImagesById([imageId]);
+    return;
+  }
+
+  const existingIndex = allGridImages.value.findIndex(
+    (img) => img?.id === imageId,
+  );
+  if (existingIndex === -1) {
+    const latestInfo = await fetchImageInfo(imageId);
+    if (!latestInfo || Array.isArray(latestInfo)) return;
+    addImageToGrid(latestInfo);
+  } else {
+    await refreshGridImage(imageId);
+  }
+
+  if (isCharacterLikenessSortActive()) {
+    const likenessPayload = await fetchCharacterLikenessForImage(imageId);
+    if (!likenessPayload) return;
+    if (likenessPayload.eligible === false) {
+      removeImagesById([imageId]);
+      return;
+    }
+    const idx = allGridImages.value.findIndex((img) => img?.id === imageId);
+    if (idx !== -1) {
+      allGridImages.value[idx] = {
+        ...allGridImages.value[idx],
+        character_likeness: likenessPayload.character_likeness ?? 0.0,
+      };
+    }
+    repositionImageByLikeness(imageId);
+    return;
+  }
+
+  if (isScoreSortActive()) {
+    const gridImg = allGridImages.value.find((img) => img?.id === imageId);
+    repositionImageByScore(imageId, gridImg?.score ?? 0);
+    return;
+  }
+
+  if (isDateSortActive()) {
+    const gridImg = allGridImages.value.find((img) => img?.id === imageId);
+    repositionImageByDate(imageId, gridImg?.created_at);
+  }
+}
+
 async function openOverlay(img) {
   if (!img || !img.id) return;
   const requestedId = img.id;
@@ -1416,7 +1700,19 @@ async function openOverlay(img) {
   const latestInfo = await fetchImageInfo(requestedId);
   if (!latestInfo || Array.isArray(latestInfo)) return;
   if (!overlayImage.value || overlayImage.value.id !== requestedId) return;
-  overlayImage.value = { ...overlayImage.value, ...latestInfo };
+  const merged = { ...latestInfo, ...overlayImage.value };
+  if (overlayImage.value?.description == null) {
+    merged.description = latestInfo.description ?? null;
+  }
+  const currentTags = Array.isArray(overlayImage.value?.tags)
+    ? overlayImage.value.tags
+    : [];
+  const dataTags = Array.isArray(latestInfo.tags) ? latestInfo.tags : [];
+  merged.tags = Array.from(new Set([...dataTags, ...currentTags])).sort();
+  if (overlayImage.value?.metadata == null) {
+    merged.metadata = latestInfo.metadata ?? {};
+  }
+  overlayImage.value = merged;
 }
 
 function closeOverlay() {
@@ -1431,6 +1727,18 @@ async function setScore(img, n) {
 function isScoreSortActive() {
   return typeof props.selectedSort === "string"
     ? props.selectedSort.toUpperCase() === "SCORE"
+    : false;
+}
+
+function isDateSortActive() {
+  return typeof props.selectedSort === "string"
+    ? props.selectedSort.toUpperCase() === "DATE"
+    : false;
+}
+
+function isCharacterLikenessSortActive() {
+  return typeof props.selectedSort === "string"
+    ? props.selectedSort.toUpperCase() === "CHARACTER_LIKENESS"
     : false;
 }
 
@@ -1480,6 +1788,59 @@ function repositionImageByScore(imageId, newScore) {
   });
 }
 
+function repositionImageByDate(imageId, createdAt) {
+  const items = allGridImages.value.slice();
+  const currentIndex = items.findIndex((item) => item.id === imageId);
+  if (currentIndex === -1) return;
+
+  const target = items[currentIndex];
+  const targetTime =
+    new Date(createdAt || target.created_at || 0).getTime() || 0;
+  items.splice(currentIndex, 1);
+
+  const descending = props.selectedDescending === true;
+  let insertIndex = items.findIndex((item) => {
+    const itemTime = new Date(item.created_at || 0).getTime() || 0;
+    return descending ? itemTime < targetTime : itemTime > targetTime;
+  });
+  if (insertIndex === -1) insertIndex = items.length;
+  items.splice(insertIndex, 0, target);
+
+  for (let i = 0; i < items.length; i += 1) {
+    items[i].idx = i;
+  }
+
+  allGridImages.value = items;
+  invalidateVisibleThumbnailRanges();
+}
+
+function repositionImageByLikeness(imageId) {
+  const items = allGridImages.value.slice();
+  const currentIndex = items.findIndex((item) => item.id === imageId);
+  if (currentIndex === -1) return;
+
+  const target = items[currentIndex];
+  const targetScore =
+    target.character_likeness ?? target.likeness_score ?? target.score ?? 0;
+  items.splice(currentIndex, 1);
+
+  const descending = props.selectedDescending === true;
+  let insertIndex = items.findIndex((item) => {
+    const score =
+      item.character_likeness ?? item.likeness_score ?? item.score ?? 0;
+    return descending ? score < targetScore : score > targetScore;
+  });
+  if (insertIndex === -1) insertIndex = items.length;
+  items.splice(insertIndex, 0, target);
+
+  for (let i = 0; i < items.length; i += 1) {
+    items[i].idx = i;
+  }
+
+  allGridImages.value = items;
+  invalidateVisibleThumbnailRanges();
+}
+
 async function applyScore(img, newScore) {
   console.debug("Applying score:", newScore);
   const imageId = img.id || (overlayImage.value && overlayImage.value.id);
@@ -1519,6 +1880,7 @@ async function applyScore(img, newScore) {
     if (isScoreSortActive()) {
       repositionImageByScore(imageId, newScore);
     }
+    refreshGridImage(imageId);
     emit("refresh-sidebar");
   } catch (e) {
     alert(e.message);
@@ -1873,6 +2235,25 @@ async function fetchAllGridImages() {
         totalMs: (parseEnd - requestStart).toFixed(1),
       });
     }
+    const shouldHighlight = highlightNextFetch.value && hasLoadedOnce.value;
+    const nextIdSet = new Set(
+      Array.isArray(images) ? images.map((img) => img?.id).filter(Boolean) : [],
+    );
+    if (shouldHighlight) {
+      const newIds = [];
+      nextIdSet.forEach((id) => {
+        if (!previousImageIds.has(id)) {
+          newIds.push(id);
+        }
+      });
+      if (newIds.length) {
+        triggerNewImageHighlight(newIds);
+      }
+    }
+    previousImageIds.clear();
+    nextIdSet.forEach((id) => previousImageIds.add(id));
+    highlightNextFetch.value = false;
+    hasLoadedOnce.value = true;
     const mapStart = performance.now();
     const newImages = images.map((img, i) => ({
       ...img,
@@ -2290,10 +2671,10 @@ async function fetchThumbnailsBatch(start, end) {
           const thumbWidth = Number(thumbObj.thumbnail_width);
           const thumbHeight = Number(thumbObj.thumbnail_height);
           if (!Number.isNaN(thumbWidth) && thumbWidth > 0) {
-            gridImg.width = thumbWidth;
+            gridImg.thumbnail_width = thumbWidth;
           }
           if (!Number.isNaN(thumbHeight) && thumbHeight > 0) {
-            gridImg.height = thumbHeight;
+            gridImg.thumbnail_height = thumbHeight;
           }
         }
       }
@@ -2576,12 +2957,26 @@ async function removeTagFromImage(imageId, tag) {
     return;
   }
 
-  apiClient
-    .delete(`${props.backendUrl}/pictures/${imageId}/tags/${tag}`)
-
-    .catch((error) => {
-      console.error("Error removing tag:", error);
-    });
+  try {
+    await apiClient.delete(
+      `${props.backendUrl}/pictures/${imageId}/tags/${tag}`,
+    );
+    const gridImg = allGridImages.value.find(
+      (img) => img && img.id === imageId,
+    );
+    if (gridImg && Array.isArray(gridImg.tags)) {
+      gridImg.tags = gridImg.tags.filter((t) => t !== tag);
+    }
+    if (overlayImage.value && overlayImage.value.id === imageId) {
+      const overlayTags = Array.isArray(overlayImage.value.tags)
+        ? overlayImage.value.tags.filter((t) => t !== tag)
+        : [];
+      overlayImage.value = { ...overlayImage.value, tags: overlayTags };
+    }
+    refreshGridImage(imageId);
+  } catch (error) {
+    console.error("Error removing tag:", error);
+  }
 }
 
 async function addTagToImage(imageId, tag) {
@@ -2593,9 +2988,42 @@ async function addTagToImage(imageId, tag) {
       },
     );
     console.log(`Tag '${tag}' added to image ${imageId}`);
+    const gridImg = allGridImages.value.find(
+      (img) => img && img.id === imageId,
+    );
+    if (gridImg) {
+      const tags = Array.isArray(gridImg.tags) ? [...gridImg.tags] : [];
+      if (!tags.includes(tag)) {
+        tags.push(tag);
+        tags.sort();
+      }
+      gridImg.tags = tags;
+    }
+    if (overlayImage.value && overlayImage.value.id === imageId) {
+      const tags = Array.isArray(overlayImage.value.tags)
+        ? [...overlayImage.value.tags]
+        : [];
+      if (!tags.includes(tag)) {
+        tags.push(tag);
+        tags.sort();
+      }
+      overlayImage.value = { ...overlayImage.value, tags };
+    }
+    refreshGridImage(imageId);
   } catch (error) {
     console.error("Error adding tag:", error);
   }
+}
+
+function updateDescriptionForImage(imageId, description) {
+  const gridImg = allGridImages.value.find((img) => img && img.id === imageId);
+  if (gridImg) {
+    gridImg.description = description;
+  }
+  if (overlayImage.value && overlayImage.value.id === imageId) {
+    overlayImage.value = { ...overlayImage.value, description };
+  }
+  refreshGridImage(imageId);
 }
 
 onMounted(() => {
@@ -2909,16 +3337,38 @@ function handleEmptyStateReset() {
   font-size: 0.8em;
   opacity: 0.85;
 }
-.face-bbox-overlay span {
-  white-space: pre-line;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  max-width: 90px;
-  display: block;
-  line-height: 1.1;
-  text-overflow: ellipsis;
+.face-bbox-select {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: var(--face-frame-color, rgba(34, 34, 34, 0.8));
+  color: #fff;
+  font-size: 0.7em;
+  padding: 1px 16px 1px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  appearance: none;
+  white-space: nowrap;
   overflow: hidden;
-  max-height: 1.1em;
+  text-overflow: ellipsis;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #fff 50%),
+    linear-gradient(135deg, #fff 50%, transparent 50%);
+  background-position:
+    calc(100% - 10px) 55%,
+    calc(100% - 5px) 55%;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+}
+
+.face-bbox-select option {
+  background: var(--face-frame-color, rgba(34, 34, 34, 0.95));
+  color: #fff;
 }
 .grid-scroll-wrapper {
   height: calc(100vh - 60px);
@@ -3125,6 +3575,28 @@ function handleEmptyStateReset() {
   min-width: none;
   position: relative;
   padding: 8px;
+}
+
+.thumbnail-card-new {
+  animation: gridNewPulse 2.2s ease-out;
+  box-shadow: 0 0 0 rgba(var(--v-theme-accent), 0);
+}
+
+@keyframes gridNewPulse {
+  0% {
+    transform: translateZ(0) scale(1);
+    box-shadow: 0 0 0 rgba(var(--v-theme-accent), 0);
+  }
+  35% {
+    transform: translateZ(0) scale(1.015);
+    box-shadow:
+      0 0 10px rgba(var(--v-theme-accent), 0.5),
+      0 0 18px rgba(var(--v-theme-accent), 0.25);
+  }
+  100% {
+    transform: translateZ(0) scale(1);
+    box-shadow: 0 0 0 rgba(var(--v-theme-accent), 0);
+  }
 }
 /* Overlay for image index on thumbnail */
 .thumbnail-index-overlay {

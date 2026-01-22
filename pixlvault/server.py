@@ -10,6 +10,8 @@ import concurrent.futures
 import sys
 import time
 import zipfile
+import asyncio
+import threading
 from email.utils import formatdate
 from datetime import datetime
 import secrets
@@ -20,7 +22,17 @@ from sqlalchemy import exists
 from sqlmodel import Session, delete, select
 
 from contextlib import asynccontextmanager
-from fastapi import Body, FastAPI, File, Request, UploadFile, Query, HTTPException
+from fastapi import (
+    Body,
+    FastAPI,
+    File,
+    Request,
+    UploadFile,
+    Query,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi import BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -114,6 +126,11 @@ class Server:
 
         WatchFolderWorker.configure(self._server_config_path)
 
+        self._ws_clients = []
+        self._ws_clients_lock = threading.Lock()
+        self._ws_loop = None
+        self.vault.add_event_listener(self._handle_vault_event)
+
         self._user = self._ensure_user()
         if self._user and self._user.description is not None:
             self.vault.set_description(self._user.description)
@@ -156,6 +173,47 @@ class Server:
             logger.warning("Closing the vault and cleaning up resources")
             self.vault.close()
         gc.collect()
+
+    def _handle_vault_event(self, event_type: EventType):
+        if not self._ws_loop:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast_ws_event(event_type), self._ws_loop
+            )
+        except Exception as exc:
+            logger.debug("Failed to dispatch websocket event: %s", exc)
+
+    def _should_send_ws_update(self, event_type: EventType, filters: dict) -> bool:
+        return event_type == EventType.CHANGED_PICTURES
+
+    async def _broadcast_ws_event(self, event_type: EventType):
+        with self._ws_clients_lock:
+            clients = list(self._ws_clients)
+        if not clients:
+            return
+        payload = {
+            "type": "pictures_changed",
+            "event": event_type.name,
+        }
+        stale = []
+        for client in clients:
+            ws = client.get("ws")
+            filters = client.get("filters") or {}
+            if not ws:
+                stale.append(client)
+                continue
+            if not self._should_send_ws_update(event_type, filters):
+                continue
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                stale.append(client)
+        if stale:
+            with self._ws_clients_lock:
+                for client in stale:
+                    if client in self._ws_clients:
+                        self._ws_clients.remove(client)
 
     def set_password_hash(self, hashed_password):
         def update_user(session: Session):
@@ -234,8 +292,10 @@ class Server:
     @asynccontextmanager
     async def lifespan(self, app):
         # Startup logic (if needed)
+        self._ws_loop = asyncio.get_running_loop()
         yield
         # Shutdown logic
+        self._ws_loop = None
         if self._shutdown_on_lifespan and hasattr(self, "vault"):
             self.vault.close()
 
@@ -708,8 +768,8 @@ class Server:
             pic_dict["character_likeness"] = picture_likeness_map.get(pic_id, 0.0)
             dicts.append(pic_dict)
 
-        # Sort by character_likeness descending
-        dicts.sort(key=lambda x: x["character_likeness"], reverse=True)
+        # Sort by character_likeness honoring descending flag
+        dicts.sort(key=lambda x: x["character_likeness"], reverse=descending)
 
         # Apply offset and limit
         selected_pics = dicts[offset : offset + limit]
@@ -730,6 +790,35 @@ class Server:
                 os.path.dirname(__file__), "..", "frontend", "public", "favicon.ico"
             )
             return FileResponse(favicon_path)
+
+        @self.api.websocket("/ws/updates")
+        async def websocket_updates(websocket: WebSocket):
+            await websocket.accept()
+            client = {"ws": websocket, "filters": {}}
+            with self._ws_clients_lock:
+                self._ws_clients.append(client)
+            try:
+                while True:
+                    message = await websocket.receive_text()
+                    if not message:
+                        continue
+                    try:
+                        payload = json.loads(message)
+                    except Exception:
+                        continue
+                    if payload.get("type") == "set_filters":
+                        filters = {
+                            "selected_character": payload.get("selected_character"),
+                            "selected_set": payload.get("selected_set"),
+                            "search_query": payload.get("search_query"),
+                        }
+                        client["filters"] = filters
+            except WebSocketDisconnect:
+                pass
+            finally:
+                with self._ws_clients_lock:
+                    if client in self._ws_clients:
+                        self._ws_clients.remove(client)
 
         @self.api.get("/sort_mechanisms")
         async def get_pictures_sort_mechanisms():
@@ -2024,6 +2113,17 @@ class Server:
                         "thumbnail_width": 256 if mapped_any else None,
                         "thumbnail_height": 256 if mapped_any else None,
                     }
+                    logger.info(
+                        "[thumbnails] id=%s has_thumbnail=%s thumb_bytes=%s faces=%s mapped_any=%s thumb_left=%s thumb_top=%s thumb_side=%s",
+                        pic.id,
+                        bool(thumbnail_bytes),
+                        len(thumbnail_bytes) if thumbnail_bytes else 0,
+                        len(face_data),
+                        mapped_any,
+                        getattr(pic, "thumbnail_left", None),
+                        getattr(pic, "thumbnail_top", None),
+                        getattr(pic, "thumbnail_side", None),
+                    )
                 except Exception as exc:
                     logger.error(
                         f"Picture not found or error for id={pic.id} (thumbnail request): {exc}"
@@ -2452,8 +2552,132 @@ class Server:
 
             pic_dict["tags"] = tags
 
+            embedded_metadata = {}
+            try:
+                file_path = PictureUtils.resolve_picture_path(
+                    self.vault.image_root, pic.file_path
+                )
+                logger.info(
+                    "[metadata] Extracting embedded metadata for id=%s path=%s",
+                    pic.id,
+                    file_path,
+                )
+                embedded_metadata = PictureUtils.extract_embedded_metadata(file_path)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to read embedded metadata for picture id=%s: %s",
+                    pic.id,
+                    exc,
+                )
+
+            if embedded_metadata:
+                pic_dict["metadata"] = embedded_metadata
+
+            logger.info(
+                "[metadata] id=%s fields=%d tags=%d embedded_keys=%d has_metadata=%s",
+                pic.id,
+                len(metadata_fields),
+                len(tags),
+                len(embedded_metadata.keys()) if embedded_metadata else 0,
+                "metadata" in pic_dict,
+            )
+            if embedded_metadata:
+                logger.info(
+                    "[metadata] id=%s embedded_top_keys=%s",
+                    pic.id,
+                    list(embedded_metadata.keys()),
+                )
+
             logger.info("Returning dict: " + str(pic_dict))
             return pic_dict
+
+        @self.api.get("/pictures/{id}/character_likeness")
+        async def get_picture_character_likeness(
+            id: str,
+            reference_character_id: int = Query(...),
+            character_id: str = Query(None),
+        ):
+            """Return a single picture's character likeness score."""
+            try:
+                pic_id = int(id)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Invalid picture id")
+
+            def fetch_picture_characters(session):
+                pic = session.exec(select(Picture).where(Picture.id == pic_id)).first()
+                if not pic:
+                    return None
+                char_ids = [c.id for c in pic.characters] if pic.characters else []
+                return {"character_ids": char_ids}
+
+            context = self.vault.db.run_task(fetch_picture_characters)
+            if not context:
+                raise HTTPException(status_code=404, detail="Picture not found")
+
+            def has_assigned_faces(session):
+                face = session.exec(
+                    select(Face.id).where(
+                        Face.picture_id == pic_id,
+                        Face.character_id.is_not(None),
+                    )
+                ).first()
+                return face is not None
+
+            if character_id == "UNASSIGNED" and self.vault.db.run_task(
+                has_assigned_faces
+            ):
+                return {
+                    "picture_id": pic_id,
+                    "character_likeness": None,
+                    "eligible": False,
+                }
+
+            def fetch_face_ids(session):
+                query = select(Face.id).where(Face.picture_id == pic_id)
+                if character_id == "UNASSIGNED":
+                    query = query.where(Face.character_id.is_(None))
+                elif character_id and character_id != "ALL":
+                    query = query.where(Face.character_id == int(character_id))
+                return session.exec(query).all()
+
+            face_ids = self.vault.db.run_task(fetch_face_ids)
+            if not face_ids:
+                if character_id and character_id not in ("ALL", "UNASSIGNED"):
+                    return {
+                        "picture_id": pic_id,
+                        "character_likeness": None,
+                        "eligible": False,
+                    }
+                return {
+                    "picture_id": pic_id,
+                    "character_likeness": 0.0,
+                    "eligible": True,
+                }
+
+            def fetch_character_likeness(session, ref_id, face_ids):
+                rows = session.exec(
+                    select(
+                        FaceCharacterLikeness.face_id,
+                        FaceCharacterLikeness.likeness,
+                    ).where(
+                        FaceCharacterLikeness.character_id == ref_id,
+                        FaceCharacterLikeness.face_id.in_(face_ids),
+                    )
+                ).all()
+                return {row.face_id: row.likeness for row in rows}
+
+            likeness_map = self.vault.db.run_task(
+                fetch_character_likeness, int(reference_character_id), face_ids
+            )
+            score = 0.0
+            for face_id in face_ids:
+                score = max(score, float(likeness_map.get(face_id, 0.0)))
+
+            return {
+                "picture_id": pic_id,
+                "character_likeness": score,
+                "eligible": True,
+            }
 
         @self.api.post("/pictures/{id}/tags")
         async def add_tag_to_picture(id: str, payload: dict = Body(...)):
