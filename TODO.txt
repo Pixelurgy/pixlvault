@@ -1,9 +1,6 @@
 * Clean up code
-* Token authentication for API Uses
-
-* Crop the thumbnail to include the faces
-* Monitoring of T2I output folders
 * Package better
+* One more "killer feature"
 
 Eventually:
 * Multi-user

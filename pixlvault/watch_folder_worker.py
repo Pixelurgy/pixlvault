@@ -20,6 +20,16 @@ logger = get_logger(__name__)
 class WatchFolderWorker(BaseWorker):
     INTERVAL = 20
 
+    _supported_image_exts = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".bmp",
+        ".heic",
+        ".heif",
+    }
+
     _config_path = None
     _config_lock = threading.Lock()
 
@@ -57,6 +67,12 @@ class WatchFolderWorker(BaseWorker):
             except Exception as exc:
                 logger.error("Failed to persist watch_folders: %s", exc)
 
+    def _is_supported_file(self, file_path: str) -> bool:
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext in self._supported_image_exts:
+            return True
+        return PictureUtils.is_video_file(file_path)
+
     def _run(self):
         logger.info("WatchFolderWorker started.")
         while not self._stop.is_set():
@@ -67,12 +83,14 @@ class WatchFolderWorker(BaseWorker):
                     continue
 
                 new_pictures = []
+                delete_paths = []
                 updated = False
                 now_ts = time.time()
 
                 for entry in watch_folders:
                     folder = entry.get("folder")
                     last_checked = float(entry.get("last_checked") or 0)
+                    delete_after_import = bool(entry.get("delete_after_import", False))
 
                     if not folder:
                         continue
@@ -85,17 +103,29 @@ class WatchFolderWorker(BaseWorker):
 
                     for root, _, files in os.walk(folder):
                         for file_name in files:
+                            logger.info(f"Scanning file {file_name} in {folder}")
                             file_path = os.path.join(root, file_name)
                             try:
                                 mtime = os.path.getmtime(file_path)
                             except OSError:
                                 continue
+                            if not self._is_supported_file(file_path):
+                                logger.warning(
+                                    "Unsupported file extension for watch import: %s",
+                                    file_path,
+                                )
+                                continue
                             if mtime > last_checked:
                                 candidate_files.append(file_path)
+                            else:
+                                logger.info(
+                                    f"File {file_name} not modified since last check."
+                                )
                             if mtime > latest_seen:
                                 latest_seen = mtime
 
                     for file_path in candidate_files:
+                        logger.info(f"##### Found new file {file_path}")
                         try:
                             pixel_sha = PictureUtils.calculate_hash_from_file_path(
                                 file_path
@@ -113,6 +143,9 @@ class WatchFolderWorker(BaseWorker):
 
                         existing = self._db.run_task(find_existing, pixel_sha)
                         if existing:
+                            logger.info(
+                                "Already have picture with sha %s, skipping", pixel_sha
+                            )
                             continue
 
                         try:
@@ -122,6 +155,8 @@ class WatchFolderWorker(BaseWorker):
                                 pixel_sha=pixel_sha,
                             )
                             new_pictures.append(pic)
+                            if delete_after_import:
+                                delete_paths.append(file_path)
                         except Exception as exc:
                             logger.warning(
                                 "Failed to import watched file %s: %s", file_path, exc
@@ -144,7 +179,21 @@ class WatchFolderWorker(BaseWorker):
                         new_pictures,
                         priority=DBPriority.IMMEDIATE,
                     )
+                    logger.info(
+                        "Added %d new pictures from watch folders.", len(new_pictures)
+                    )
                     self._notify_others(EventType.CHANGED_PICTURES)
+
+                    if delete_paths:
+                        for file_path in delete_paths:
+                            try:
+                                os.remove(file_path)
+                            except Exception as exc:
+                                logger.warning(
+                                    "Failed to delete watched file %s: %s",
+                                    file_path,
+                                    exc,
+                                )
 
                 if updated:
                     self._persist_watch_folders(watch_folders)

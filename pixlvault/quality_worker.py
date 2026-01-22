@@ -317,8 +317,13 @@ class FaceQualityWorker(BaseWorker):
 
         for face, pic in faces:
             pic_format = pic.format.lower()
-            assert face.bbox is not None, "Face bbox is None."
-            assert len(face.bbox) == 4, "Face bbox is invalid."
+            if face.bbox is None or len(face.bbox) != 4:
+                logger.warning(
+                    "Skipping face with missing/invalid bbox for picture_id=%s face_id=%s",
+                    pic.id,
+                    face.id,
+                )
+                continue
 
             x1, y1, x2, y2 = face.bbox
             bbox_width = int(round((x2 - x1) / 64.0) * 64)
