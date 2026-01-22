@@ -2113,6 +2113,17 @@ class Server:
                         "thumbnail_width": 256 if mapped_any else None,
                         "thumbnail_height": 256 if mapped_any else None,
                     }
+                    logger.info(
+                        "[thumbnails] id=%s has_thumbnail=%s thumb_bytes=%s faces=%s mapped_any=%s thumb_left=%s thumb_top=%s thumb_side=%s",
+                        pic.id,
+                        bool(thumbnail_bytes),
+                        len(thumbnail_bytes) if thumbnail_bytes else 0,
+                        len(face_data),
+                        mapped_any,
+                        getattr(pic, "thumbnail_left", None),
+                        getattr(pic, "thumbnail_top", None),
+                        getattr(pic, "thumbnail_side", None),
+                    )
                 except Exception as exc:
                     logger.error(
                         f"Picture not found or error for id={pic.id} (thumbnail request): {exc}"
@@ -2546,6 +2557,11 @@ class Server:
                 file_path = PictureUtils.resolve_picture_path(
                     self.vault.image_root, pic.file_path
                 )
+                logger.info(
+                    "[metadata] Extracting embedded metadata for id=%s path=%s",
+                    pic.id,
+                    file_path,
+                )
                 embedded_metadata = PictureUtils.extract_embedded_metadata(file_path)
             except Exception as exc:
                 logger.warning(
@@ -2556,6 +2572,21 @@ class Server:
 
             if embedded_metadata:
                 pic_dict["metadata"] = embedded_metadata
+
+            logger.info(
+                "[metadata] id=%s fields=%d tags=%d embedded_keys=%d has_metadata=%s",
+                pic.id,
+                len(metadata_fields),
+                len(tags),
+                len(embedded_metadata.keys()) if embedded_metadata else 0,
+                "metadata" in pic_dict,
+            )
+            if embedded_metadata:
+                logger.info(
+                    "[metadata] id=%s embedded_top_keys=%s",
+                    pic.id,
+                    list(embedded_metadata.keys()),
+                )
 
             logger.info("Returning dict: " + str(pic_dict))
             return pic_dict

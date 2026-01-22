@@ -357,24 +357,42 @@
                       }
                     "
                   >
-                    <span
-                      style="
-                        position: absolute;
-                        left: 0;
-                        top: 0;
-                        background: #222c;
-                        color: #fff;
-                        font-size: 0.8em;
-                        padding: 1px 4px;
-                        border-bottom-right-radius: 6px;
+                    <select
+                      class="face-bbox-select"
+                      :value="
+                        overlay.face && overlay.face.character_id != null
+                          ? String(overlay.face.character_id)
+                          : ''
                       "
+                      @change="
+                        handleFaceBboxCharacterChange(img, overlay, $event)
+                      "
+                      @pointerdown.stop
+                      @mousedown.stop
+                      @click.stop
                     >
-                      {{
-                        overlay.face && overlay.face.character_name
-                          ? overlay.face.character_name
-                          : `Face ${overlay.colorIdx + 1}`
-                      }}
-                    </span>
+                      <option value="">Unassigned</option>
+                      <option
+                        v-if="
+                          overlay.face &&
+                          overlay.face.character_id != null &&
+                          !hasCharacterOption(overlay.face.character_id)
+                        "
+                        :value="String(overlay.face.character_id)"
+                      >
+                        {{
+                          overlay.face.character_name ||
+                          `Character ${overlay.face.character_id}`
+                        }}
+                      </option>
+                      <option
+                        v-for="char in sortedCharacters"
+                        :key="char.id"
+                        :value="String(char.id)"
+                      >
+                        {{ char.displayName }}
+                      </option>
+                    </select>
                   </div>
                 </template>
                 <div
@@ -595,6 +613,95 @@ const lastWsUpdateKey = ref(0);
 const faceOverlayRedrawKey = ref(0);
 let gridResizeObserver = null;
 
+const characters = ref([]);
+const charactersLoading = ref(false);
+
+const sortedCharacters = computed(() => {
+  const list = Array.isArray(characters.value) ? characters.value : [];
+  return [...list]
+    .filter((char) => char && typeof char.name === "string")
+    .sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+    )
+    .map((char) => ({
+      ...char,
+      displayName: char.name.charAt(0).toUpperCase() + char.name.slice(1),
+    }));
+});
+
+function hasCharacterOption(characterId) {
+  if (characterId == null) return false;
+  return sortedCharacters.value.some(
+    (char) => String(char.id) === String(characterId),
+  );
+}
+
+async function fetchCharacters(force = false) {
+  if (!props.backendUrl || charactersLoading.value) return;
+  if (!force && Array.isArray(characters.value) && characters.value.length)
+    return;
+  charactersLoading.value = true;
+  try {
+    const res = await apiClient.get(`${props.backendUrl}/characters`);
+    const data = await res.data;
+    characters.value = Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.error("Failed to fetch characters:", e);
+    characters.value = [];
+  } finally {
+    charactersLoading.value = false;
+  }
+}
+
+function updateFaceCharacterLocal(img, faceId, characterId, characterName) {
+  if (!img || !Array.isArray(img.faces)) return;
+  img.faces = img.faces.map((face) => {
+    if (face?.id !== faceId) return face;
+    return {
+      ...face,
+      character_id: characterId,
+      character_name: characterName,
+    };
+  });
+}
+
+async function handleFaceBboxCharacterChange(img, overlay, event) {
+  const faceId = overlay?.faceId;
+  if (!faceId) return;
+  const nextValue = event?.target?.value ?? "";
+  const nextId = nextValue === "" ? null : nextValue;
+  const previousId = overlay?.face?.character_id ?? null;
+
+  try {
+    if (!nextId) {
+      if (previousId != null) {
+        await apiClient.delete(
+          `${props.backendUrl}/characters/${previousId}/faces`,
+          { data: { face_ids: [faceId] } },
+        );
+      }
+      updateFaceCharacterLocal(img, faceId, null, null);
+    } else {
+      await apiClient.post(`${props.backendUrl}/characters/${nextId}/faces`, {
+        face_ids: [faceId],
+      });
+      const selected = sortedCharacters.value.find(
+        (char) => String(char.id) === String(nextId),
+      );
+      updateFaceCharacterLocal(
+        img,
+        faceId,
+        Number(nextId),
+        selected?.displayName || selected?.name || null,
+      );
+    }
+  } catch (e) {
+    console.error("Failed to update face character:", e);
+  } finally {
+    refreshImageFromOverlay({ imageId: img.id, faces: img.faces });
+  }
+}
+
 function triggerFaceOverlayRedraw() {
   faceOverlayRedrawKey.value++;
 }
@@ -610,6 +717,7 @@ onMounted(() => {
   );
   console.log("[ImageGrid.vue] Initial allGridImages:", allGridImages.value);
   window.addEventListener("resize", triggerFaceOverlayRedraw);
+  fetchCharacters();
   fetchAllPicturesCount();
   nextTick(() => {
     updateRowHeightFromGrid();
@@ -797,6 +905,7 @@ function getFaceBboxStyle(bbox, idx, img, el, isSelected) {
     position: "absolute",
     border: `${isSelected ? 3 : 1.5}px solid ${borderColor}`,
     background: `${borderColor}${isSelected ? "44" : "22"}`,
+    "--face-frame-color": `${borderColor}${isSelected ? "cc" : "aa"}`,
     left: `${left}px`,
     top: `${top}px`,
     width: `${width}px`,
@@ -3228,16 +3337,38 @@ function handleEmptyStateReset() {
   font-size: 0.8em;
   opacity: 0.85;
 }
-.face-bbox-overlay span {
-  white-space: pre-line;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  max-width: 90px;
-  display: block;
-  line-height: 1.1;
-  text-overflow: ellipsis;
+.face-bbox-select {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: var(--face-frame-color, rgba(34, 34, 34, 0.8));
+  color: #fff;
+  font-size: 0.7em;
+  padding: 1px 16px 1px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  appearance: none;
+  white-space: nowrap;
   overflow: hidden;
-  max-height: 1.1em;
+  text-overflow: ellipsis;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #fff 50%),
+    linear-gradient(135deg, #fff 50%, transparent 50%);
+  background-position:
+    calc(100% - 10px) 55%,
+    calc(100% - 5px) 55%;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+}
+
+.face-bbox-select option {
+  background: var(--face-frame-color, rgba(34, 34, 34, 0.95));
+  color: #fff;
 }
 .grid-scroll-wrapper {
   height: calc(100vh - 60px);

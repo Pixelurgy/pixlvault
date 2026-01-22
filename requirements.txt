@@ -5,6 +5,7 @@ httpx
 open_clip_torch
 fastapi
 uvicorn
+uvicorn[standard]
 setuptools
 wheel
 twine
