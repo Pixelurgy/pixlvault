@@ -17,6 +17,58 @@ logger = get_logger(__name__)
 
 class PictureUtils:
     @staticmethod
+    def _coerce_metadata_value(value):
+        if isinstance(value, bytes):
+            try:
+                return value.decode("utf-8", errors="replace")
+            except Exception:
+                return repr(value)
+        if isinstance(value, (list, tuple)):
+            return [PictureUtils._coerce_metadata_value(v) for v in value]
+        if isinstance(value, dict):
+            return {
+                str(k): PictureUtils._coerce_metadata_value(v) for k, v in value.items()
+            }
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return value
+
+    @staticmethod
+    def extract_embedded_metadata(file_path: str) -> dict:
+        if not file_path or not os.path.exists(file_path):
+            return {}
+        metadata = {}
+        try:
+            from PIL import ExifTags
+
+            with Image.open(file_path) as img:
+                info = img.info or {}
+                png_text = {}
+                for key, value in info.items():
+                    if key == "exif":
+                        continue
+                    png_text[str(key)] = PictureUtils._coerce_metadata_value(value)
+                if png_text:
+                    metadata["png"] = png_text
+
+                try:
+                    exif_data = img.getexif()
+                    if exif_data:
+                        exif_map = {}
+                        for tag_id, value in exif_data.items():
+                            tag_name = ExifTags.TAGS.get(tag_id, str(tag_id))
+                            exif_map[str(tag_name)] = (
+                                PictureUtils._coerce_metadata_value(value)
+                            )
+                        if exif_map:
+                            metadata["exif"] = exif_map
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.warning("Failed to extract embedded metadata: %s", exc)
+        return metadata
+
+    @staticmethod
     def resolve_picture_path(
         image_root: Optional[str], file_path: Optional[str]
     ) -> Optional[str]:
