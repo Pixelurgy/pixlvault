@@ -768,8 +768,8 @@ class Server:
             pic_dict["character_likeness"] = picture_likeness_map.get(pic_id, 0.0)
             dicts.append(pic_dict)
 
-        # Sort by character_likeness descending
-        dicts.sort(key=lambda x: x["character_likeness"], reverse=True)
+        # Sort by character_likeness honoring descending flag
+        dicts.sort(key=lambda x: x["character_likeness"], reverse=descending)
 
         # Apply offset and limit
         selected_pics = dicts[offset : offset + limit]
