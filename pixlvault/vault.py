@@ -1,6 +1,7 @@
 import concurrent
 
 import os
+import threading
 import numpy as np
 
 from typing import Optional
@@ -94,6 +95,8 @@ class Vault:
         self._picture_tagger = None
 
         self._workers = {}
+        self._event_listeners = []
+        self._event_listeners_lock = threading.Lock()
 
     def stop_workers(self, workers_to_stop: set[WorkerType] = WorkerType.all()):
         logger.debug("Stopping background workers...")
@@ -133,6 +136,21 @@ class Vault:
                 worker.notify()
             else:
                 logger.debug(f"Worker {worker_type} not found for event {event_type}")
+        with self._event_listeners_lock:
+            listeners = list(self._event_listeners)
+        for listener in listeners:
+            try:
+                listener(event_type)
+            except Exception as exc:
+                logger.warning("Event listener failed for %s: %s", event_type, exc)
+
+    def add_event_listener(self, listener):
+        """Register a callback to be invoked when vault events occur."""
+        if not callable(listener):
+            raise ValueError("listener must be callable")
+        with self._event_listeners_lock:
+            if listener not in self._event_listeners:
+                self._event_listeners.append(listener)
 
     def __repr__(self):
         """

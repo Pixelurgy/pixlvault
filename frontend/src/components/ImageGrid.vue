@@ -167,7 +167,10 @@
           @mouseleave="handleImageMouseLeave(img)"
         >
           <v-card
-            class="thumbnail-card"
+            :class="[
+              'thumbnail-card',
+              { 'thumbnail-card-new': isImageRecentlyAdded(img.id) },
+            ]"
             @click.stop="handleThumbnailClick(img, img.idx, $event)"
           >
             <div
@@ -539,6 +542,7 @@ const props = defineProps({
   allPicturesId: String,
   unassignedPicturesId: String,
   gridVersion: { type: Number, default: 0 },
+  wsUpdateKey: { type: Number, default: 0 },
   mediaTypeFilter: { type: String, default: "all" },
   columns: { type: Number, required: true },
 });
@@ -578,6 +582,13 @@ const exportProgressPercent = computed(() => {
   const percent = (exportProgress.processed / exportProgress.total) * 100;
   return Math.min(100, Math.max(0, Math.round(percent)));
 });
+
+const recentlyAddedIds = ref({});
+const recentlyAddedTimers = new Map();
+const previousImageIds = new Set();
+const hasLoadedOnce = ref(false);
+const highlightNextFetch = ref(false);
+const lastWsUpdateKey = ref(0);
 
 // Key to force face bbox overlay recompute
 const faceOverlayRedrawKey = ref(0);
@@ -624,7 +635,41 @@ onUnmounted(() => {
     clearTimeout(emptyStateDelayTimer);
     emptyStateDelayTimer = null;
   }
+  for (const timer of recentlyAddedTimers.values()) {
+    clearTimeout(timer);
+  }
+  recentlyAddedTimers.clear();
+  recentlyAddedIds.value = {};
 });
+
+watch(
+  () => props.wsUpdateKey,
+  (nextKey) => {
+    if (!nextKey || nextKey === lastWsUpdateKey.value) return;
+    lastWsUpdateKey.value = nextKey;
+    highlightNextFetch.value = true;
+  },
+);
+
+function triggerNewImageHighlight(ids) {
+  ids.forEach((id) => {
+    if (!id) return;
+    if (recentlyAddedTimers.has(id)) {
+      clearTimeout(recentlyAddedTimers.get(id));
+      recentlyAddedTimers.delete(id);
+    }
+    recentlyAddedIds.value[id] = true;
+    const timeout = setTimeout(() => {
+      recentlyAddedIds.value[id] = false;
+      recentlyAddedTimers.delete(id);
+    }, 2200);
+    recentlyAddedTimers.set(id, timeout);
+  });
+}
+
+function isImageRecentlyAdded(id) {
+  return Boolean(id && recentlyAddedIds.value[id]);
+}
 
 function onThumbnailLoad(id) {
   thumbnailLoadedMap[id] = (thumbnailLoadedMap[id] || 0) + 1;
@@ -1886,6 +1931,25 @@ async function fetchAllGridImages() {
         totalMs: (parseEnd - requestStart).toFixed(1),
       });
     }
+    const shouldHighlight = highlightNextFetch.value && hasLoadedOnce.value;
+    const nextIdSet = new Set(
+      Array.isArray(images) ? images.map((img) => img?.id).filter(Boolean) : [],
+    );
+    if (shouldHighlight) {
+      const newIds = [];
+      nextIdSet.forEach((id) => {
+        if (!previousImageIds.has(id)) {
+          newIds.push(id);
+        }
+      });
+      if (newIds.length) {
+        triggerNewImageHighlight(newIds);
+      }
+    }
+    previousImageIds.clear();
+    nextIdSet.forEach((id) => previousImageIds.add(id));
+    highlightNextFetch.value = false;
+    hasLoadedOnce.value = true;
     const mapStart = performance.now();
     const newImages = images.map((img, i) => ({
       ...img,
@@ -3182,6 +3246,28 @@ function handleEmptyStateReset() {
   min-width: none;
   position: relative;
   padding: 8px;
+}
+
+.thumbnail-card-new {
+  animation: gridNewPulse 2.2s ease-out;
+  box-shadow: 0 0 0 rgba(var(--v-theme-accent), 0);
+}
+
+@keyframes gridNewPulse {
+  0% {
+    transform: translateZ(0) scale(1);
+    box-shadow: 0 0 0 rgba(var(--v-theme-accent), 0);
+  }
+  35% {
+    transform: translateZ(0) scale(1.015);
+    box-shadow:
+      0 0 10px rgba(var(--v-theme-accent), 0.5),
+      0 0 18px rgba(var(--v-theme-accent), 0.25);
+  }
+  100% {
+    transform: translateZ(0) scale(1);
+    box-shadow: 0 0 0 rgba(var(--v-theme-accent), 0);
+  }
 }
 /* Overlay for image index on thumbnail */
 .thumbnail-index-overlay {

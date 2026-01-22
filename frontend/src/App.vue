@@ -68,13 +68,99 @@ const MOBILE_BREAKPOINT = 900;
 const mediaTypeFilter = ref("all"); // 'all', 'images', 'videos'
 
 const gridVersion = ref(0);
+const wsUpdateKey = ref(0);
 const columnsMenuOpen = ref(false);
 const configLoaded = ref(false);
 const COLUMNS_MENU_CLOSE_DELAY_MS = 300;
 let columnsMenuCloseTimeout = null;
+const updatesSocket = ref(null);
+let updatesReconnectTimer = null;
 
 function refreshGridVersion() {
   gridVersion.value++;
+}
+
+function buildUpdatesSocketUrl() {
+  if (!BACKEND_URL) return "";
+  const wsBase = BACKEND_URL.replace(/^http/i, "ws");
+  return `${wsBase}/ws/updates`;
+}
+
+function shouldRefreshForPictureChange() {
+  if (selectedSet.value) return false;
+  const selectedChar = selectedCharacter.value;
+  if (
+    selectedChar &&
+    selectedChar !== ALL_PICTURES_ID &&
+    selectedChar !== UNASSIGNED_PICTURES_ID
+  ) {
+    return false;
+  }
+  if ((searchQuery.value || "").trim()) return false;
+  return true;
+}
+
+function sendUpdatesFilters() {
+  if (!updatesSocket.value) return;
+  if (updatesSocket.value.readyState !== WebSocket.OPEN) return;
+  updatesSocket.value.send(
+    JSON.stringify({
+      type: "set_filters",
+      selected_character: selectedCharacter.value,
+      selected_set: selectedSet.value,
+      search_query: searchQuery.value,
+    }),
+  );
+}
+
+function connectUpdatesSocket() {
+  if (updatesSocket.value) return;
+  const url = buildUpdatesSocketUrl();
+  if (!url) return;
+  const ws = new WebSocket(url);
+  updatesSocket.value = ws;
+
+  ws.onopen = () => {
+    sendUpdatesFilters();
+  };
+
+  ws.onmessage = (event) => {
+    let payload = null;
+    try {
+      payload = JSON.parse(event.data);
+    } catch (e) {
+      return;
+    }
+    if (payload?.type === "pictures_changed") {
+      refreshSidebar({ flashCounts: true });
+      if (shouldRefreshForPictureChange()) {
+        wsUpdateKey.value = Date.now();
+        refreshGridVersion();
+      }
+    }
+  };
+
+  ws.onclose = () => {
+    updatesSocket.value = null;
+    if (updatesReconnectTimer) {
+      clearTimeout(updatesReconnectTimer);
+    }
+    updatesReconnectTimer = setTimeout(() => {
+      updatesReconnectTimer = null;
+      connectUpdatesSocket();
+    }, 2000);
+  };
+}
+
+function disconnectUpdatesSocket() {
+  if (updatesReconnectTimer) {
+    clearTimeout(updatesReconnectTimer);
+    updatesReconnectTimer = null;
+  }
+  if (updatesSocket.value) {
+    updatesSocket.value.close();
+    updatesSocket.value = null;
+  }
 }
 
 // --- Export Menu State ---
@@ -104,8 +190,8 @@ const config = reactive({
 const loading = ref(false);
 const error = ref(null);
 
-function refreshSidebar() {
-  sidebarRef.value?.refreshSidebar();
+function refreshSidebar(options = {}) {
+  sidebarRef.value?.refreshSidebar(options);
 }
 
 function updateIsMobile() {
@@ -429,6 +515,10 @@ watch([selectedSort, selectedDescending], () => {
   refreshGridVersion();
 });
 
+watch([selectedCharacter, selectedSet, searchQuery], () => {
+  sendUpdatesFilters();
+});
+
 watch(thumbnailSize, () => {
   patchConfigUIOptions();
   updateMaxColumns();
@@ -463,6 +553,7 @@ onMounted(() => {
   window.addEventListener("keydown", handleGlobalKeydown);
   refreshSidebar();
   updateMaxColumns();
+  connectUpdatesSocket();
   if (typeof ResizeObserver !== "undefined" && mainAreaRef.value) {
     mainAreaResizeObserver = new ResizeObserver(() => {
       updateMaxColumns();
@@ -472,6 +563,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  disconnectUpdatesSocket();
   window.removeEventListener("resize", updateIsMobile);
   window.removeEventListener("keydown", handleGlobalKeydown);
   if (mainAreaResizeObserver) {

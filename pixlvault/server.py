@@ -10,6 +10,8 @@ import concurrent.futures
 import sys
 import time
 import zipfile
+import asyncio
+import threading
 from email.utils import formatdate
 from datetime import datetime
 import secrets
@@ -20,7 +22,17 @@ from sqlalchemy import exists
 from sqlmodel import Session, delete, select
 
 from contextlib import asynccontextmanager
-from fastapi import Body, FastAPI, File, Request, UploadFile, Query, HTTPException
+from fastapi import (
+    Body,
+    FastAPI,
+    File,
+    Request,
+    UploadFile,
+    Query,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi import BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -114,6 +126,11 @@ class Server:
 
         WatchFolderWorker.configure(self._server_config_path)
 
+        self._ws_clients = []
+        self._ws_clients_lock = threading.Lock()
+        self._ws_loop = None
+        self.vault.add_event_listener(self._handle_vault_event)
+
         self._user = self._ensure_user()
         if self._user and self._user.description is not None:
             self.vault.set_description(self._user.description)
@@ -156,6 +173,47 @@ class Server:
             logger.warning("Closing the vault and cleaning up resources")
             self.vault.close()
         gc.collect()
+
+    def _handle_vault_event(self, event_type: EventType):
+        if not self._ws_loop:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast_ws_event(event_type), self._ws_loop
+            )
+        except Exception as exc:
+            logger.debug("Failed to dispatch websocket event: %s", exc)
+
+    def _should_send_ws_update(self, event_type: EventType, filters: dict) -> bool:
+        return event_type == EventType.CHANGED_PICTURES
+
+    async def _broadcast_ws_event(self, event_type: EventType):
+        with self._ws_clients_lock:
+            clients = list(self._ws_clients)
+        if not clients:
+            return
+        payload = {
+            "type": "pictures_changed",
+            "event": event_type.name,
+        }
+        stale = []
+        for client in clients:
+            ws = client.get("ws")
+            filters = client.get("filters") or {}
+            if not ws:
+                stale.append(client)
+                continue
+            if not self._should_send_ws_update(event_type, filters):
+                continue
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                stale.append(client)
+        if stale:
+            with self._ws_clients_lock:
+                for client in stale:
+                    if client in self._ws_clients:
+                        self._ws_clients.remove(client)
 
     def set_password_hash(self, hashed_password):
         def update_user(session: Session):
@@ -234,8 +292,10 @@ class Server:
     @asynccontextmanager
     async def lifespan(self, app):
         # Startup logic (if needed)
+        self._ws_loop = asyncio.get_running_loop()
         yield
         # Shutdown logic
+        self._ws_loop = None
         if self._shutdown_on_lifespan and hasattr(self, "vault"):
             self.vault.close()
 
@@ -730,6 +790,35 @@ class Server:
                 os.path.dirname(__file__), "..", "frontend", "public", "favicon.ico"
             )
             return FileResponse(favicon_path)
+
+        @self.api.websocket("/ws/updates")
+        async def websocket_updates(websocket: WebSocket):
+            await websocket.accept()
+            client = {"ws": websocket, "filters": {}}
+            with self._ws_clients_lock:
+                self._ws_clients.append(client)
+            try:
+                while True:
+                    message = await websocket.receive_text()
+                    if not message:
+                        continue
+                    try:
+                        payload = json.loads(message)
+                    except Exception:
+                        continue
+                    if payload.get("type") == "set_filters":
+                        filters = {
+                            "selected_character": payload.get("selected_character"),
+                            "selected_set": payload.get("selected_set"),
+                            "search_query": payload.get("search_query"),
+                        }
+                        client["filters"] = filters
+            except WebSocketDisconnect:
+                pass
+            finally:
+                with self._ws_clients_lock:
+                    if client in self._ws_clients:
+                        self._ws_clients.remove(client)
 
         @self.api.get("/sort_mechanisms")
         async def get_pictures_sort_mechanisms():
