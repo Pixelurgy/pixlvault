@@ -23,6 +23,7 @@ from pixlvault.face_extraction_worker import FaceExtractionWorker  # noqa: F401
 from pixlvault.face_likeness_worker import FaceLikenessWorker  # noqa: F401
 from pixlvault.face_character_likeness_worker import FaceCharacterLikenessWorker  # noqa: F401
 from pixlvault.likeness_worker import LikenessWorker  # noqa: F401
+from pixlvault.image_embedding_worker import ImageEmbeddingWorker  # noqa: F401
 from pixlvault.quality_worker import FaceQualityWorker, QualityWorker  # noqa: F401
 from pixlvault.watch_folder_worker import WatchFolderWorker  # noqa: F401
 
@@ -38,6 +39,7 @@ class Vault:
             WorkerType.TAGGER,
             WorkerType.QUALITY,
             WorkerType.DESCRIPTION,
+            WorkerType.IMAGE_EMBEDDING,
         ],
         EventType.CHANGED_TAGS: [],
         EventType.CHANGED_FACES: [
@@ -189,7 +191,13 @@ class Vault:
             Optional[np.ndarray]: Generated text embedding or None if failed.
         """
         embedding = self._picture_tagger.generate_text_embedding(query=query)
-        return embedding[0] if embedding is not None else None
+        return embedding[0] if embedding is not None and len(embedding) > 0 else None
+
+    def generate_clip_text_embedding(self, query: str) -> Optional[np.ndarray]:
+        """
+        Generate a CLIP text embedding for the provided query text.
+        """
+        return self._picture_tagger.generate_clip_text_embedding(query=query)
 
     def preprocess_query_words(self, words: list[str]) -> list[str]:
         """

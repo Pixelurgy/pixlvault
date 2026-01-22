@@ -20,6 +20,7 @@ class WorkerType(str, Enum):
     LIKENESS = "LikenessWorker"
     DESCRIPTION = "DescriptionWorker"
     TEXT_EMBEDDING = "EmbeddingWorker"
+    IMAGE_EMBEDDING = "ImageEmbeddingWorker"
     WATCH_FOLDERS = "WatchFolderWorker"
 
     @staticmethod

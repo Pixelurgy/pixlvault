@@ -455,6 +455,16 @@
             </div>
             <div
               v-if="
+                typeof props.selectedSort === 'string' &&
+                props.selectedSort.includes('SMART_SCORE') &&
+                img.smartScore !== undefined
+              "
+              class="likeness-score"
+            >
+              Smart Score: {{ img.smartScore.toFixed(1) }}
+            </div>
+            <div
+              v-if="
                 typeof props.searchQuery && img.likeness_score !== undefined
               "
               class="likeness-score"
@@ -1742,6 +1752,12 @@ function isCharacterLikenessSortActive() {
     : false;
 }
 
+function isSmartScoreSortActive() {
+  return typeof props.selectedSort === "string"
+    ? props.selectedSort === "SMART_SCORE"
+    : false;
+}
+
 function invalidateVisibleThumbnailRanges() {
   const start = Math.max(0, visibleStart.value - renderBuffer.value);
   const end = Math.min(
@@ -1811,6 +1827,7 @@ function repositionImageByDate(imageId, createdAt) {
   }
 
   allGridImages.value = items;
+  font;
   invalidateVisibleThumbnailRanges();
 }
 
@@ -2205,7 +2222,7 @@ async function fetchAllGridImages() {
         props.backendUrl
       }/pictures/search?query=${encodeURIComponent(
         props.searchQuery.trim(),
-      )}&top_n=10000${params ? `&${params}` : ""}`;
+      )}&threshold=0.1&top_n=10000${params ? `&${params}` : ""}`;
       const requestStart = performance.now();
       const res = await apiClient.get(url);
       const requestEnd = performance.now();
@@ -3648,7 +3665,7 @@ function handleEmptyStateReset() {
   bottom: 0;
   left: 0;
   width: 100%;
-  z-index: 1000;
+  z-index: 200;
   background-color: #f5f5f5;
   display: flex;
   align-items: center;

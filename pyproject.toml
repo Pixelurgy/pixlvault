@@ -36,6 +36,7 @@ dependencies = [
     "spacy",
     "pillow-heif",
     "sqlmodel",
+    "alembic",
     "python-jose[cryptography]",
     "dotenv",
     "passlib",

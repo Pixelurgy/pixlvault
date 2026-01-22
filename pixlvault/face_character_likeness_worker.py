@@ -115,7 +115,7 @@ class FaceCharacterLikenessWorker(BaseWorker):
                         [arr_face] * len(ref_arrs), ref_arrs
                     )
                     softmax_likeness = PictureUtils.softmax_weighted_average(
-                        sims, alpha=2.0
+                        sims, alpha=5.0
                     )
 
                     likeness_result = FaceCharacterLikeness(

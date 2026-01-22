@@ -23,6 +23,186 @@ logger = get_logger(__name__)
 
 class PictureUtils:
     @staticmethod
+    def calculate_smart_score_batch_numpy(
+        candidates: List[dict],
+        good_anchors: List[dict],
+        bad_anchors: List[dict],
+        config: Optional[dict] = None,
+    ) -> np.ndarray:
+        """
+        Calculate smart scores for a batch of candidates using numpy.
+        
+        Args:
+            candidates: List of dicts with 'id', 'embedding' (numpy array), 'aesthetic_score'.
+            good_anchors: List of dicts with 'embedding', 'score'.
+            bad_anchors: List of dicts with 'embedding', 'score'.
+            config: Config dict overrides.
+            
+        Returns:
+            np.ndarray: Array of floating point scores corresponding to candidates.
+        """
+        import pickle
+        
+        # Default configuration
+        cfg = {
+            # Character Likeness Pivot:
+            "char_pivot": 0.75,
+            "w_char_bonus": 0.50,
+            "w_char_penalty": 2.0,
+
+            "w_good": 0.60,
+            "w_bad": 0.20,
+            "w_aest": 0.20,
+            "topk": 3,
+            "minSim": 0.75,
+            "minBadSim": 0.88,
+
+            # Normalization range for Neural Aesthetic Score
+            # Adjusted based on user observation (Max ~4.5)
+            # We set max to 5.0 to allow some headroom, but map 4.5 to a strong 0.75
+            "aest_min": 0.0,
+            "aest_max": 7.0,
+        }
+        if config:
+            cfg.update(config)
+
+        if not candidates:
+            return np.array([])
+            
+        # Extract candidate vectors
+        cand_vecs = [c["embedding"] for c in candidates]
+
+        # Aesthetic score: normalize using configured range (e.g. 3.0-6.5 -> 0-1)
+        # DB stores raw outputs from aesthetic model (typically 1-10 scale)
+        raw_aest = np.array([float(c.get("aesthetic_score") or 5.0) for c in candidates])
+        
+        a_min = cfg.get("aest_min", 3.0)
+        a_max = cfg.get("aest_max", 7.0)
+        
+        # Avoid division by zero
+        denom = max(0.1, a_max - a_min)
+        
+        cand_aest = np.clip((raw_aest - a_min) / denom, 0.0, 1.0)
+        
+        M_cand = np.stack(cand_vecs)
+        scores = np.zeros(len(candidates))
+
+        # Helper: Normalized weight from score (1..5 -> 0..1)
+        def norm_weight(s):
+            effective = s if s > 0 else 2.5
+            return max(0, min(1, (effective - 1) / 4.0))
+
+        # Dot product helper: 0.5 * (1 + sum(a*b))
+        def sim01_batch(A, B):
+            # A: (N, D), B: (M, D) -> (N, M)
+            return 0.5 * (1 + np.dot(A, B.T))
+
+        # 1. Character Similarity (Uses Pre-calculated Face-Character Likeness if available)
+        # We apply a hinge loss logic:
+        # If likeness > pivot, gain small bonus.
+        # If likeness < pivot, suffer heavy penalty.
+        char_raw = np.array([c.get("character_likeness", 0.0) for c in candidates])
+        
+        # Calculate delta from pivot
+        char_deltas = char_raw - cfg["char_pivot"]
+        
+        # Apply different weights for positive vs negative deltas
+        char_component = np.where(
+            char_deltas > 0,
+            char_deltas * cfg["w_char_bonus"],
+            char_deltas * cfg["w_char_penalty"]
+        )
+        scores += char_component
+
+        # 2. Good Anchors
+        mask_good = np.zeros(len(candidates), dtype=bool)
+        good_component = np.zeros(len(candidates))
+        raw_good_sim = np.zeros(len(candidates))
+        if good_anchors:
+            good_vecs = [a["embedding"] for a in good_anchors]
+            good_weights = np.array([norm_weight(a["score"]) for a in good_anchors])
+            M_good = np.stack(good_vecs)
+            
+            sims = sim01_batch(M_cand, M_good)
+
+            # Max raw sim for gating
+            max_raw = np.max(sims, axis=1)
+            raw_good_sim = max_raw
+            mask_good = max_raw >= cfg["minSim"]
+
+            # Weighted average of top K
+            weighted = sims * good_weights
+            K = min(cfg["topk"], weighted.shape[1])
+            
+            if K > 0:
+                if K < weighted.shape[1]:
+                    # -partition gives K largest
+                    topk = -np.partition(-weighted, K - 1, axis=1)[:, :K]
+                else:
+                    topk = weighted
+                
+                # abs() because we negated to sort (though partitioning is not sorting, values are negative)
+                # Actually, -weighted values are negative. partition keeps them negative.
+                # Taking abs() restores them to positive.
+                avg_good = np.mean(np.abs(topk), axis=1)
+                good_component = cfg["w_good"] * (avg_good * mask_good)
+                scores += good_component
+
+        # 3. Bad Anchors
+        bad_component = np.zeros(len(candidates))
+        raw_bad_sim = np.zeros(len(candidates))
+        if bad_anchors:
+            bad_vecs = [a["embedding"] for a in bad_anchors]
+            # Bad weight is (1.0 - norm_score)
+            bad_weights = np.array([1.0 - norm_weight(a["score"]) for a in bad_anchors])
+            M_bad = np.stack(bad_vecs)
+            
+            sims = sim01_batch(M_cand, M_bad)
+
+            # Max raw sim for gating negative penalty
+            max_raw_bad = np.max(sims, axis=1)
+            raw_bad_sim = max_raw_bad
+            mask_bad = max_raw_bad >= cfg["minBadSim"]
+
+            weighted = sims * bad_weights
+            
+            K = min(cfg["topk"], weighted.shape[1])
+            if K > 0:
+                if K < weighted.shape[1]:
+                    topk = -np.partition(-weighted, K - 1, axis=1)[:, :K]
+                else:
+                    topk = weighted
+                avg_bad = np.mean(np.abs(topk), axis=1)
+                
+                # Apply bad anchor penalty only if similarity exceeds threshold
+                bad_component = cfg["w_bad"] * (avg_bad * mask_bad)
+                scores -= bad_component
+
+        # 4. Aesthetic
+        aest_component = cfg["w_aest"] * cand_aest
+        scores += aest_component
+
+        # Rescale [0, 1] to [1, 5]
+        final_scores = 1.0 + (np.clip(scores, 0.0, 1.0) * 4.0)
+
+        # Logging Breakdown for all candidates
+        # Sort indices by final score descending
+        sorted_indices = np.argsort(-final_scores)
+
+        logger.info(f"[SMART SCORE] Analyzed {len(candidates)} candidates. Breakdown:")
+        for rank, i in enumerate(sorted_indices):
+            logger.info(
+                f"[#{rank+1}] ID={candidates[i]['id']} Score={final_scores[i]:.2f} "
+                f"Char={char_component[i]:.3f} (raw={char_raw[i]:.2f}) "
+                f"Good={good_component[i]:.3f} (maxSim={raw_good_sim[i]:.3f}) "
+                f"Bad={bad_component[i]:.3f} (maxSim={raw_bad_sim[i]:.3f}) "
+                f"Aest={aest_component[i]:.3f} (raw={raw_aest[i]:.2f}) "
+                f"MaskBad={mask_bad[i]} PreClip={scores[i]:.3f} "
+            )
+        
+        return final_scores
+
+    @staticmethod
     def _coerce_metadata_value(value):
         if IFDRational is not None and isinstance(value, IFDRational):
             try:
@@ -187,15 +367,16 @@ class PictureUtils:
         return crop
 
     @staticmethod
-    def extract_video_frames(file_path, max_frames=None, specific_frame=None):
+    def extract_video_frames(file_path, frame_indices=None):
         """
         Extract frames from a video file and return them as PIL Images.
         Args:
             file_path (str): Path to video file.
             max_frames (int, optional): Maximum number of frames to extract.
             specific_frame (int, optional): If set, only extract this frame index (0-based).
+            frame_indices (list[int], optional): Dictionary of specific frame indices to extract.
         Returns:
-            List of PIL.Image objects (or single image if specific_frame is set).
+            List of PIL.Image objects.
         """
         import cv2
         from PIL import Image
@@ -203,16 +384,21 @@ class PictureUtils:
         frames = []
         cap = cv2.VideoCapture(file_path)
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if specific_frame is not None:
-            # Seek to specific frame
-            cap.set(cv2.CAP_PROP_POS_FRAMES, specific_frame)
-            ret, frame = cap.read()
-            if ret and frame is not None:
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pil_img = Image.fromarray(frame_rgb)
-                frames.append(pil_img)
-            cap.release()
-            return frames
+                
+        if frame_indices is not None:
+             # Extract specific listed frames
+             sorted_indices = sorted(list(set(frame_indices)))
+             for idx in sorted_indices:
+                  if 0 <= idx < frame_count:
+                       cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                       ret, frame = cap.read()
+                       if ret and frame is not None:
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            pil_img = Image.fromarray(frame_rgb)
+                            frames.append(pil_img)
+             cap.release()
+             return frames
+
         count = 0
         for idx in range(frame_count):
             ret, frame = cap.read()
@@ -222,8 +408,6 @@ class PictureUtils:
             pil_img = Image.fromarray(frame_rgb)
             frames.append(pil_img)
             count += 1
-            if max_frames is not None and count >= max_frames:
-                break
         cap.release()
         return frames
 
@@ -243,6 +427,32 @@ class PictureUtils:
         # Cosine similarity matrix
         likeness_matrix = np.dot(X_norm, X_norm.T)
         return likeness_matrix
+
+    @staticmethod
+    def extract_representative_video_frames(file_path: str, count: int = 3) -> List[Image.Image]:
+        """
+        Extract 'count' evenly spaced frames from a video (e.g. start, middle, end).
+        """
+        import cv2
+        cap = cv2.VideoCapture(file_path)
+        if not cap.isOpened():
+            return []
+            
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
+        
+        if total_frames <= 0:
+            total_frames = 1
+            
+        # Calculate indices
+        if count == 1:
+            indices = [0]
+        else:
+            # e.g. count=3 -> 0, 50%, 100%
+            step = (total_frames - 1) / (count - 1)
+            indices = sorted(list(set([int(i * step) for i in range(count)])))
+            
+        return PictureUtils.extract_video_frames(file_path, frame_indices=indices)
 
     @staticmethod
     def load_metadata(file_path):

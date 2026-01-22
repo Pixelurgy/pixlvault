@@ -3,6 +3,7 @@
 # Under the Apache 2.0 License                                  #
 # https://github.com/kohya-ss/sd-scripts/blob/main/LICENSE.md   #
 #################################################################
+from typing import Optional
 import open_clip
 import csv
 import numpy as np
@@ -34,7 +35,7 @@ BATCH_SIZE = 1
 MAX_CONCURRENT_IMAGES_GPU = 32
 MAX_CONCURRENT_IMAGES_CPU = 8
 GENERAL_THRESHOLD = 0.4
-UNDESIRED_TAGS = "solo, general, male_focus, meme, blurry, sensitive, realistic"
+UNDESIRED_TAGS = "solo, general, male_focus, meme, sensitive"
 CAPTION_SEPARATOR = ", "
 FLORENCE_REVISION = "5ca5edf5bd017b9919c05d08aebef5e4c7ac3bac"
 
@@ -88,15 +89,16 @@ class PictureTagger:
         self._init_onnx_session()
         self._load_and_preprocess_tags()
         # Load CLIP model at construction for efficiency
+        # Upgraded to ViT-L-14 for better aesthetics and embedding quality
         self._clip_model, _, self._clip_preprocess = (
             open_clip.create_model_and_transforms(
-                "ViT-B-32", pretrained="laion2b_s34b_b79k"
+                "ViT-L-14", pretrained="laion2b_s32b_b82k"
             )
         )
 
         self._clip_device = self._device
         self._clip_model = self._clip_model.to(self._clip_device)
-        self._clip_tokenizer = open_clip.get_tokenizer("ViT-B-32")
+        self._clip_tokenizer = open_clip.get_tokenizer("ViT-L-14")
 
         self._tag_naturaliser = TagNaturaliser()
 
@@ -330,7 +332,7 @@ class PictureTagger:
             if ext in video_exts:
                 from pixlvault.picture_utils import PictureUtils
 
-                frames = PictureUtils.extract_video_frames(image_path)
+                frames = PictureUtils.extract_representative_video_frames(image_path, count=3)
                 for idx, pil_img in enumerate(frames):
                     # Resize large images to speed up processing
                     MAX_DIM = 640
@@ -857,6 +859,29 @@ class PictureTagger:
 
         embeddings_array = np.asarray(text_embeddings)
         return [embeddings_array[i] for i in range(len(texts))]
+
+    def generate_clip_text_embedding(self, query: str) -> Optional[np.ndarray]:
+        """
+        Generate a CLIP text embedding for the provided query text.
+        Returns a single embedding (np.ndarray) or None.
+        """
+        if not query:
+            return None
+
+        import torch
+        try:
+             if not hasattr(self, "_clip_model") or self._clip_model is None:
+                 logger.warning("PictureTagger: CLIP model not available for text embedding.")
+                 return None
+
+             with torch.no_grad():
+                 text = self._clip_tokenizer([query]).to(self._clip_device)
+                 text_features = self._clip_model.encode_text(text)
+                 text_features /= text_features.norm(dim=-1, keepdim=True)
+                 return text_features.cpu().numpy()[0]
+        except Exception as e:
+             logger.error(f"PictureTagger: Failed to generate CLIP text embedding: {e}")
+             return None
 
     def generate_facial_features(self, picture, face_bboxes):
         """
