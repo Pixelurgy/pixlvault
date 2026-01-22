@@ -306,10 +306,12 @@
                 class="face-assign-card"
               >
                 <div class="face-assign-row">
-                  <div
-                    class="face-assign-thumb"
-                    :style="getFaceThumbStyle(face, face.faceIdx)"
-                  ></div>
+                  <div class="face-assign-thumb">
+                    <div
+                      class="face-assign-crop"
+                      :style="getFaceThumbStyle(face, face.faceIdx)"
+                    ></div>
+                  </div>
                   <div class="face-assign-meta">
                     <div class="face-assign-label">{{ face.label }}</div>
                     <select
@@ -395,7 +397,11 @@
           <div class="sidebar-section">
             <div class="section-header">Metadata</div>
             <div
-              v-if="!metadataEntries.length && !comfyMetadata"
+              v-if="
+                !metadataEntries.length &&
+                !comfyMetadata &&
+                !pictureInfoEntries.length
+              "
               class="metadata-empty"
             >
               No metadata available
@@ -1167,8 +1173,12 @@ async function fetchOverlayMetadata(imageId) {
     if (image.value?.description == null) {
       merged.description = data.description ?? null;
     }
-    if (image.value?.metadata == null) {
-      merged.metadata = data.metadata ?? {};
+    const currentMeta = image.value?.metadata;
+    const dataMeta = data.metadata ?? {};
+    if (currentMeta == null || Object.keys(currentMeta).length === 0) {
+      merged.metadata = dataMeta;
+    } else if (Object.keys(dataMeta).length) {
+      merged.metadata = { ...currentMeta, ...dataMeta };
     }
     image.value = merged;
     syncDescriptionDraft();
@@ -1253,15 +1263,41 @@ async function fetchOverlayThumbnail(imageId) {
       : null;
     const width = Number(entry.thumbnail_width);
     const height = Number(entry.thumbnail_height);
+    const hasThumbDims =
+      Number.isFinite(width) &&
+      width > 0 &&
+      Number.isFinite(height) &&
+      height > 0;
+    const thumbWidth = hasThumbDims ? width : 256;
+    const thumbHeight = hasThumbDims ? height : 256;
     overlayThumbnailDims.value = {
-      width: Number.isFinite(width) && width > 0 ? width : 256,
-      height: Number.isFinite(height) && height > 0 ? height : 256,
+      width: thumbWidth,
+      height: thumbHeight,
     };
+    const sourceWidth = Number(
+      image.value?.width || overlayDims.value.naturalWidth,
+    );
+    const sourceHeight = Number(
+      image.value?.height || overlayDims.value.naturalHeight,
+    );
+    const shouldScale = !hasThumbDims && sourceWidth > 0 && sourceHeight > 0;
+    const scaleX = shouldScale ? thumbWidth / sourceWidth : 1;
+    const scaleY = shouldScale ? thumbHeight / sourceHeight : 1;
     const faceMap = {};
     if (Array.isArray(entry.faces)) {
       entry.faces.forEach((face) => {
         if (face?.id != null && Array.isArray(face.bbox)) {
-          faceMap[face.id] = { bbox: face.bbox };
+          const bbox = face.bbox;
+          const mapped =
+            shouldScale && bbox.length === 4
+              ? [
+                  Math.round(bbox[0] * scaleX),
+                  Math.round(bbox[1] * scaleY),
+                  Math.round(bbox[2] * scaleX),
+                  Math.round(bbox[3] * scaleY),
+                ]
+              : bbox;
+          faceMap[face.id] = { bbox: mapped };
         }
       });
     }
@@ -1344,36 +1380,43 @@ function getFaceThumbStyle(face, idx) {
   const base = {
     borderColor: color,
   };
-  const faceId = face?.id;
-  const mapped = faceId != null ? overlayThumbnailFaceMap.value[faceId] : null;
-  const thumbUrl = overlayThumbnail.value;
-  if (!thumbUrl || !mapped?.bbox || mapped.bbox.length !== 4) {
+  const bbox = Array.isArray(face?.bbox) ? face.bbox : null;
+  const sourceWidth = Number(
+    image.value?.width || overlayDims.value.naturalWidth || 0,
+  );
+  const sourceHeight = Number(
+    image.value?.height || overlayDims.value.naturalHeight || 0,
+  );
+  const sourceUrl = getFullImageUrl(image.value);
+  if (!sourceUrl || !bbox || bbox.length !== 4) {
     return {
       ...base,
       width: `${FACE_THUMB_BASE}px`,
       height: `${FACE_THUMB_BASE}px`,
     };
   }
-  const [x1, y1, x2, y2] = mapped.bbox;
+  const [x1, y1, x2, y2] = bbox;
   const faceW = Math.max(1, x2 - x1);
   const faceH = Math.max(1, y2 - y1);
-  const thumbW = overlayThumbnailDims.value.width || 256;
-  const thumbH = overlayThumbnailDims.value.height || 256;
-  const ratio = faceW / faceH;
-  const targetH = FACE_THUMB_BASE;
-  const rawW = Math.round(targetH * ratio);
-  const targetW = Math.min(FACE_THUMB_MAX, Math.max(FACE_THUMB_MIN, rawW));
-  const scaleX = targetW / faceW;
-  const scaleY = targetH / faceH;
-  const bgWidth = Math.round(thumbW * scaleX);
-  const bgHeight = Math.round(thumbH * scaleY);
-  const bgPosX = Math.round(-x1 * scaleX);
-  const bgPosY = Math.round(-y1 * scaleY);
+  const imageW = sourceWidth || overlayDims.value.naturalWidth || 1;
+  const imageH = sourceHeight || overlayDims.value.naturalHeight || 1;
+  const maxDim = Math.max(faceW, faceH);
+  const targetMax = Math.min(
+    FACE_THUMB_MAX,
+    Math.max(FACE_THUMB_MIN, FACE_THUMB_BASE),
+  );
+  const scale = targetMax / maxDim;
+  const targetW = Math.max(1, Math.round(faceW * scale));
+  const targetH = Math.max(1, Math.round(faceH * scale));
+  const bgWidth = Math.round(imageW * scale);
+  const bgHeight = Math.round(imageH * scale);
+  const bgPosX = Math.round(-x1 * scale);
+  const bgPosY = Math.round(-y1 * scale);
   return {
     ...base,
     width: `${targetW}px`,
     height: `${targetH}px`,
-    backgroundImage: `url(${thumbUrl})`,
+    backgroundImage: `url(${sourceUrl})`,
     backgroundSize: `${bgWidth}px ${bgHeight}px`,
     backgroundPosition: `${bgPosX}px ${bgPosY}px`,
   };
@@ -2510,12 +2553,22 @@ function removeTag(tag) {
 
 .face-assign-thumb {
   border-radius: 2px;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+.face-assign-crop {
+  border-radius: 2px;
   border: 1px solid transparent;
-  background: rgba(0, 0, 0, 0.4);
   background-repeat: no-repeat;
   background-position: center;
   background-size: cover;
-  flex: 0 0 auto;
+  margin: 0 auto;
 }
 
 .face-assign-meta {
