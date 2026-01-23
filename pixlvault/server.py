@@ -1,5 +1,7 @@
 import base64
 import gc
+import pickle
+import numpy as np
 import uvicorn
 import os
 import json
@@ -18,7 +20,7 @@ import secrets
 
 from collections import defaultdict, deque
 from sqlalchemy.orm import load_only, selectinload
-from sqlalchemy import exists
+from sqlalchemy import exists, desc
 from sqlmodel import Session, delete, select
 
 from contextlib import asynccontextmanager
@@ -774,6 +776,169 @@ class Server:
         # Apply offset and limit
         selected_pics = dicts[offset : offset + limit]
         return selected_pics
+
+    def _fetch_smart_score_data(self, character_id, format):
+        """Fetch anchors, character references, and candidates for smart score calculation."""
+        def fetch_data(session: Session):
+            # Anchors
+            good = session.exec(
+                select(Picture.image_embedding, Picture.score)
+                .where(Picture.score >= 4)
+                .where(Picture.image_embedding.is_not(None))
+                .order_by(desc(Picture.score), desc(Picture.created_at))
+                .limit(200)
+            ).all()
+
+            bad = session.exec(
+                select(Picture.image_embedding, Picture.score)
+                .where(Picture.score <= 1)
+                .where(Picture.score > 0)
+                .where(Picture.image_embedding.is_not(None))
+                .order_by(Picture.score, desc(Picture.created_at))
+                .limit(200)
+            ).all()
+
+            char_refs = []
+            if character_id and character_id not in ("UNASSIGNED", "ALL"):
+                try:
+                    cid = int(character_id)
+                    char_refs = session.exec(
+                        select(Picture.image_embedding, Picture.score)
+                        .join(Face)
+                        .where(Face.picture_id == Picture.id)
+                        .where(Face.character_id == cid)
+                        .where(Picture.image_embedding.is_not(None))
+                        .order_by(desc(Picture.score), desc(Picture.created_at))
+                        .limit(5)
+                    ).all()
+                except ValueError:
+                    pass
+
+            # Candidates
+            query = select(Picture.id, Picture.image_embedding, Picture.aesthetic_score)
+
+            # Apply Filter Logic Matches list_pictures
+            if character_id == "UNASSIGNED":
+                query = query.where(
+                    ~exists(
+                        select(Face.id).where(
+                            Face.picture_id == Picture.id,
+                            Face.character_id.is_not(None),
+                        )
+                    )
+                )
+            elif character_id and character_id != "ALL":
+                try:
+                    cid = int(character_id)
+                    query = query.join(Face).where(Face.character_id == cid)
+                except ValueError:
+                    pass
+
+            if format:
+                query = query.where(Picture.format.in_(format))
+
+            query = query.where(Picture.image_embedding.is_not(None))
+
+            candidates = session.exec(query).all()
+            return good, bad, char_refs, candidates
+
+        return self.vault.db.run_task(fetch_data, priority=DBPriority.IMMEDIATE)
+
+    def _prepare_smart_score_inputs(self, good_anchors, bad_anchors, char_refs, candidates):
+        """Unpickle embeddings and prepare lists of dictionaries for calculation."""
+        def get_vec(blob):
+            try:
+                obj = pickle.loads(blob)
+                if isinstance(obj, np.ndarray):
+                    return obj
+                return np.array(obj)
+            except Exception:
+                return None
+
+        def process_list(items):
+            result = []
+            for p in items:
+                v = get_vec(p.image_embedding)
+                if v is not None:
+                    result.append({"embedding": v, "score": getattr(p, "score", 0)})
+            return result
+
+        good_list = process_list(good_anchors)
+        bad_list = process_list(bad_anchors)
+        char_list = process_list(char_refs)
+        
+        cand_list = []
+        cand_ids = []
+        
+        for p in candidates:
+            v = get_vec(p.image_embedding)
+            if v is not None:
+                cand_ids.append(p.id)
+                cand_list.append({
+                    "id": p.id, 
+                    "embedding": v, 
+                    "aesthetic_score": p.aesthetic_score
+                })
+                
+        return good_list, bad_list, char_list, cand_list, cand_ids
+
+    def _find_pictures_by_smart_score(
+        self, character_id, format, offset, limit, descending
+    ):
+        # 1. Fetch data
+        good_anchors, bad_anchors, char_refs, candidates = self._fetch_smart_score_data(
+            character_id, format
+        )
+
+        if not candidates:
+            return []
+
+        # 2. Prepare inputs (unpickling)
+        good_list, bad_list, char_list, cand_list, cand_ids = self._prepare_smart_score_inputs(
+            good_anchors, bad_anchors, char_refs, candidates
+        )
+
+        if not cand_list:
+            return []
+
+        # 3. Calculate Scores (delegated to PictureUtils)
+        scores = PictureUtils.calculate_smart_score_batch_numpy(
+            cand_list, good_list, bad_list, char_list
+        )
+
+        # 4. Sort and Paginate
+        if descending:
+            sorted_indices = np.argsort(-scores)
+        else:
+            sorted_indices = np.argsort(scores)
+
+        final_indices = sorted_indices[offset : offset + limit]
+
+        if len(final_indices) == 0:
+            return []
+
+        final_ids = [cand_ids[i] for i in final_indices]
+
+        # 5. Fetch Final Objects
+        def fetch_final_pics(session, ids):
+            return session.exec(select(Picture).where(Picture.id.in_(ids))).all()
+
+        res_pics = self.vault.db.run_task(
+            fetch_final_pics, final_ids, priority=DBPriority.IMMEDIATE
+        )
+        pmap = {p.id: p for p in res_pics}
+        metadata_fields = Picture.metadata_fields()
+
+        results = []
+        for idx in final_indices:
+            pid = cand_ids[idx]
+            if pid in pmap:
+                p = pmap[pid]
+                d = {field: getattr(p, field) for field in metadata_fields}
+                d["smartScore"] = float(scores[idx])
+                results.append(d)
+
+        return results
 
     def _setup_routes(self):
         ###############################
@@ -2113,17 +2278,6 @@ class Server:
                         "thumbnail_width": 256 if mapped_any else None,
                         "thumbnail_height": 256 if mapped_any else None,
                     }
-                    logger.info(
-                        "[thumbnails] id=%s has_thumbnail=%s thumb_bytes=%s faces=%s mapped_any=%s thumb_left=%s thumb_top=%s thumb_side=%s",
-                        pic.id,
-                        bool(thumbnail_bytes),
-                        len(thumbnail_bytes) if thumbnail_bytes else 0,
-                        len(face_data),
-                        mapped_any,
-                        getattr(pic, "thumbnail_left", None),
-                        getattr(pic, "thumbnail_top", None),
-                        getattr(pic, "thumbnail_side", None),
-                    )
                 except Exception as exc:
                     logger.error(
                         f"Picture not found or error for id={pic.id} (thumbnail request): {exc}"
@@ -3135,6 +3289,11 @@ class Server:
                     )
                 return self._find_pictures_by_character_likeness(
                     character_id, reference_character_id, offset, limit, descending
+                )
+
+            if sort_mech and sort_mech.key == SortMechanism.Keys.SMART_SCORE:
+                return self._find_pictures_by_smart_score(
+                    character_id, format, offset, limit, descending
                 )
 
             if character_id == "UNASSIGNED":

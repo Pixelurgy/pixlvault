@@ -37,6 +37,7 @@ class SortMechanism:
         CHARACTER_LIKENESS = auto()
         PICTURE_STACKS = auto()
         IMAGE_SIZE = auto()
+        SMART_SCORE = auto()
 
     MECHANISMS = {
         Keys.DATE: {
@@ -46,6 +47,10 @@ class SortMechanism:
         Keys.SCORE: {
             "field": "score",
             "description": "Score",
+        },
+        Keys.SMART_SCORE: {
+            "field": None,
+            "description": "Sort by Smart Score",
         },
         Keys.CHARACTER_LIKENESS: {
             "field": "character_likeness",
@@ -100,6 +105,9 @@ class Picture(SQLModel, table=True):
     text_embedding: Optional[np.ndarray] = Field(
         sa_column=Column("text_embedding", LargeBinary, default=None, nullable=True)
     )
+    image_embedding: Optional[np.ndarray] = Field(
+        sa_column=Column("image_embedding", LargeBinary, default=None, nullable=True)
+    )
     thumbnail: Optional[Image.Image] = Field(
         sa_column=Column("thumbnail", LargeBinary, default=None, nullable=True)
     )
@@ -107,6 +115,7 @@ class Picture(SQLModel, table=True):
     thumbnail_top: Optional[int] = Field(default=None)
     thumbnail_side: Optional[int] = Field(default=None)
     score: Optional[int] = None
+    aesthetic_score: Optional[float] = None
     pixel_sha: Optional[str] = Field(default=None, index=True)
 
     # Relationships

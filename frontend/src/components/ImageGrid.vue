@@ -455,6 +455,16 @@
             </div>
             <div
               v-if="
+                typeof props.selectedSort === 'string' &&
+                props.selectedSort.includes('SMART_SCORE') &&
+                img.smartScore !== undefined
+              "
+              class="likeness-score"
+            >
+              Smart Score: {{ img.smartScore.toFixed(1) }}
+            </div>
+            <div
+              v-if="
                 typeof props.searchQuery && img.likeness_score !== undefined
               "
               class="likeness-score"
@@ -1742,6 +1752,12 @@ function isCharacterLikenessSortActive() {
     : false;
 }
 
+function isSmartScoreSortActive() {
+  return typeof props.selectedSort === "string"
+    ? props.selectedSort === "SMART_SCORE"
+    : false;
+}
+
 function invalidateVisibleThumbnailRanges() {
   const start = Math.max(0, visibleStart.value - renderBuffer.value);
   const end = Math.min(
@@ -1811,6 +1827,7 @@ function repositionImageByDate(imageId, createdAt) {
   }
 
   allGridImages.value = items;
+  font;
   invalidateVisibleThumbnailRanges();
 }
 

@@ -330,7 +330,7 @@ class PictureTagger:
             if ext in video_exts:
                 from pixlvault.picture_utils import PictureUtils
 
-                frames = PictureUtils.extract_video_frames(image_path)
+                frames = PictureUtils.extract_representative_video_frames(image_path, count=3)
                 for idx, pil_img in enumerate(frames):
                     # Resize large images to speed up processing
                     MAX_DIM = 640

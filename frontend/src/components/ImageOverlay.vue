@@ -28,6 +28,14 @@
             {{ descriptionTeaser || "Add a description" }}
           </button>
         </div>
+        <div v-for="(face, idx) in faceBboxes" :key="idx">
+          <span
+            v-if="face.character_name"
+            :style="{ color: faceBoxColor(idx) }"
+          >
+            {{ face.character_name || "Unknown" }}
+          </span>
+        </div>
         <div class="overlay-top-actions">
           <div
             class="star-overlay"
