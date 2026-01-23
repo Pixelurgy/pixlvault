@@ -29,6 +29,7 @@ spacy
 sentence_transformers
 pillow-heif
 sqlmodel
+alembic
 nltk
 python-jose[cryptography]
 dotenv

@@ -3,10 +3,11 @@ import math
 import os
 import threading
 import queue
+from pathlib import Path
 from concurrent.futures import Future
 from enum import IntEnum
-from sqlalchemy import event
-from sqlmodel import SQLModel, create_engine, Session
+from sqlalchemy import event, inspect as sa_inspect
+from sqlmodel import create_engine, Session
 from rapidfuzz.distance import Levenshtein
 
 from pixlvault.pixl_logging import get_logger
@@ -109,6 +110,48 @@ def init_database(dbapi_conn, conn_record):
     cursor.close()
 
 
+def _run_migrations(engine, db_path: str, db_exists: bool) -> None:
+    try:
+        from alembic import command
+        from alembic.config import Config
+    except Exception as exc:
+        logger.error("Alembic is required for database migrations: %s", exc)
+        raise
+
+    repo_root = Path(__file__).resolve().parents[1]
+    alembic_ini = repo_root / "alembic.ini"
+    migrations_dir = repo_root / "migrations"
+
+    if not alembic_ini.exists() or not migrations_dir.exists():
+        raise RuntimeError(
+            f"Alembic config missing. Expected {alembic_ini} and {migrations_dir}."
+        )
+
+    config = Config(str(alembic_ini))
+    config.set_main_option("script_location", str(migrations_dir))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+
+    if db_exists:
+        inspector = sa_inspect(engine)
+        table_names = [
+            name
+            for name in inspector.get_table_names()
+            if not name.startswith("sqlite_")
+        ]
+        has_version = "alembic_version" in table_names
+        if has_version:
+            command.upgrade(config, "head")
+            return
+        if table_names:
+            logger.info(
+                "Existing database without Alembic version table detected; stamping head."
+            )
+            command.stamp(config, "head")
+            return
+
+    command.upgrade(config, "head")
+
+
 class VaultDatabase:
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -119,7 +162,7 @@ class VaultDatabase:
         self._engine = create_engine(f"sqlite:///{self._db_path}", echo=False)
         event.listen(self._engine, "connect", init_database)
 
-        SQLModel.metadata.create_all(self._engine)
+        _run_migrations(self._engine, self._db_path, db_exists)
 
         # Write queue and worker
         self._task_queue = queue.PriorityQueue()
