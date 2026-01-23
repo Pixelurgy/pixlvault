@@ -166,28 +166,6 @@ class Quality(SQLModel, table=True):
     Fractional parameters can be calculated automatically.
     """
 
-    def __init__(
-        self,
-        picture_id: Optional[int] = None,
-        face_id: Optional[int] = None,
-        sharpness: Optional[float] = None,
-        edge_density: Optional[float] = None,
-        contrast: Optional[float] = None,
-        brightness: Optional[float] = None,
-        noise_level: Optional[float] = None,
-        color_histogram: Optional[bytes] = None,
-    ):
-        self.picture_id = picture_id
-        self.face_id = face_id
-        self.sharpness = sharpness  # Objective sharpness metric (0.0-1.0)
-        self.edge_density = edge_density  # Fraction of edge pixels (0.0-1.0)
-        self.contrast = contrast  # Normalized contrast (0.0-1.0)
-        self.brightness = brightness  # Normalized brightness (0.0-1.0)
-        self.noise_level = noise_level  # Estimated noise (0.0-1.0)
-        self.color_histogram = (
-            color_histogram  # Serialized color histogram (np.float32)
-        )
-
     @staticmethod
     def calculate_quality(
         image: np.ndarray, face_crop: Optional[np.ndarray] = None
