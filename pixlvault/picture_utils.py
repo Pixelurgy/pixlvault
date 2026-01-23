@@ -23,6 +23,130 @@ logger = get_logger(__name__)
 
 class PictureUtils:
     @staticmethod
+    def calculate_smart_score_batch_numpy(
+        candidates: List[dict],
+        good_anchors: List[dict],
+        bad_anchors: List[dict],
+        char_refs: List[dict],
+        config: Optional[dict] = None,
+    ) -> np.ndarray:
+        """
+        Calculate smart scores for a batch of candidates using numpy.
+        
+        Args:
+            candidates: List of dicts with 'id', 'embedding' (numpy array), 'aesthetic_score'.
+            good_anchors: List of dicts with 'embedding', 'score'.
+            bad_anchors: List of dicts with 'embedding', 'score'.
+            char_refs: List of dicts with 'embedding', 'score'.
+            config: Config dict overrides.
+            
+        Returns:
+            np.ndarray: Array of floating point scores corresponding to candidates.
+        """
+        import pickle
+        
+        # Default configuration
+        cfg = {
+            "w_char": 0.35,
+            "w_good": 0.30,
+            "w_bad": 0.25,
+            "w_aest": 0.10,
+            "topk": 3,
+            "minSim": 0.35,
+        }
+        if config:
+            cfg.update(config)
+
+        if not candidates:
+            return np.array([])
+            
+        # Extract candidate vectors
+        cand_vecs = [c["embedding"] for c in candidates]
+        cand_aest = [c.get("aesthetic_score", 0.5) or 0.5 for c in candidates]
+        
+        M_cand = np.stack(cand_vecs)
+        scores = np.zeros(len(candidates))
+
+        # Helper: Normalized weight from score (1..5 -> 0..1)
+        def norm_weight(s):
+            effective = s if s > 0 else 2.5
+            return max(0, min(1, (effective - 1) / 4.0))
+
+        # Dot product helper: 0.5 * (1 + sum(a*b))
+        def sim01_batch(A, B):
+            # A: (N, D), B: (M, D) -> (N, M)
+            return 0.5 * (1 + np.dot(A, B.T))
+
+        # 1. Character Similarity
+        if char_refs:
+            ref_vecs = [r["embedding"] for r in char_refs]
+            ref_weights = np.array([norm_weight(r["score"]) for r in char_refs])
+            M_ref = np.stack(ref_vecs)
+            
+            sims = sim01_batch(M_cand, M_ref)
+            weighted = sims * ref_weights
+            char_sim = np.max(weighted, axis=1)
+            scores += cfg["w_char"] * char_sim
+
+        # 2. Good Anchors
+        mask_good = np.zeros(len(candidates), dtype=bool)
+        if good_anchors:
+            good_vecs = [a["embedding"] for a in good_anchors]
+            good_weights = np.array([norm_weight(a["score"]) for a in good_anchors])
+            M_good = np.stack(good_vecs)
+            
+            sims = sim01_batch(M_cand, M_good)
+
+            # Max raw sim for gating
+            max_raw = np.max(sims, axis=1)
+            mask_good = max_raw >= cfg["minSim"]
+
+            # Weighted average of top K
+            weighted = sims * good_weights
+            K = min(cfg["topk"], weighted.shape[1])
+            
+            if K > 0:
+                if K < weighted.shape[1]:
+                    # -partition gives K largest
+                    topk = -np.partition(-weighted, K - 1, axis=1)[:, :K]
+                else:
+                    topk = weighted
+                
+                # abs() because we negated to sort (though partitioning is not sorting, values are negative)
+                # Actually, -weighted values are negative. partition keeps them negative.
+                # Taking abs() restores them to positive.
+                avg_good = np.mean(np.abs(topk), axis=1)
+                scores += cfg["w_good"] * (avg_good * mask_good)
+
+        # 3. Bad Anchors
+        if bad_anchors:
+            bad_vecs = [a["embedding"] for a in bad_anchors]
+            # Bad weight is (1.0 - norm_score)
+            bad_weights = np.array([1.0 - norm_weight(a["score"]) for a in bad_anchors])
+            M_bad = np.stack(bad_vecs)
+            
+            sims = sim01_batch(M_cand, M_bad)
+            weighted = sims * bad_weights
+            
+            K = min(cfg["topk"], weighted.shape[1])
+            if K > 0:
+                if K < weighted.shape[1]:
+                    topk = -np.partition(-weighted, K - 1, axis=1)[:, :K]
+                else:
+                    topk = weighted
+                avg_bad = np.mean(np.abs(topk), axis=1)
+                
+                # Apply only if goodSim > 0 (approximated by mask_good)
+                scores -= cfg["w_bad"] * (avg_bad * mask_good)
+
+        # 4. Aesthetic
+        scores += cfg["w_aest"] * np.array(cand_aest)
+        
+        # Rescale [0, 1] to [1, 5]
+        scores = np.clip(scores, 0.0, 1.0)
+        return 1.0 + (scores * 4.0)
+
+    @staticmethod
     def _coerce_metadata_value(value):
         if IFDRational is not None and isinstance(value, IFDRational):
             try:
@@ -187,15 +311,16 @@ class PictureUtils:
         return crop
 
     @staticmethod
-    def extract_video_frames(file_path, max_frames=None, specific_frame=None):
+    def extract_video_frames(file_path, frame_indices=None):
         """
         Extract frames from a video file and return them as PIL Images.
         Args:
             file_path (str): Path to video file.
             max_frames (int, optional): Maximum number of frames to extract.
             specific_frame (int, optional): If set, only extract this frame index (0-based).
+            frame_indices (list[int], optional): Dictionary of specific frame indices to extract.
         Returns:
-            List of PIL.Image objects (or single image if specific_frame is set).
+            List of PIL.Image objects.
         """
         import cv2
         from PIL import Image
@@ -203,16 +328,21 @@ class PictureUtils:
         frames = []
         cap = cv2.VideoCapture(file_path)
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if specific_frame is not None:
-            # Seek to specific frame
-            cap.set(cv2.CAP_PROP_POS_FRAMES, specific_frame)
-            ret, frame = cap.read()
-            if ret and frame is not None:
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pil_img = Image.fromarray(frame_rgb)
-                frames.append(pil_img)
-            cap.release()
-            return frames
+                
+        if frame_indices is not None:
+             # Extract specific listed frames
+             sorted_indices = sorted(list(set(frame_indices)))
+             for idx in sorted_indices:
+                  if 0 <= idx < frame_count:
+                       cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                       ret, frame = cap.read()
+                       if ret and frame is not None:
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            pil_img = Image.fromarray(frame_rgb)
+                            frames.append(pil_img)
+             cap.release()
+             return frames
+
         count = 0
         for idx in range(frame_count):
             ret, frame = cap.read()
@@ -222,8 +352,6 @@ class PictureUtils:
             pil_img = Image.fromarray(frame_rgb)
             frames.append(pil_img)
             count += 1
-            if max_frames is not None and count >= max_frames:
-                break
         cap.release()
         return frames
 
@@ -243,6 +371,32 @@ class PictureUtils:
         # Cosine similarity matrix
         likeness_matrix = np.dot(X_norm, X_norm.T)
         return likeness_matrix
+
+    @staticmethod
+    def extract_representative_video_frames(file_path: str, count: int = 3) -> List[Image.Image]:
+        """
+        Extract 'count' evenly spaced frames from a video (e.g. start, middle, end).
+        """
+        import cv2
+        cap = cv2.VideoCapture(file_path)
+        if not cap.isOpened():
+            return []
+            
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
+        
+        if total_frames <= 0:
+            total_frames = 1
+            
+        # Calculate indices
+        if count == 1:
+            indices = [0]
+        else:
+            # e.g. count=3 -> 0, 50%, 100%
+            step = (total_frames - 1) / (count - 1)
+            indices = sorted(list(set([int(i * step) for i in range(count)])))
+            
+        return PictureUtils.extract_video_frames(file_path, frame_indices=indices)
 
     @staticmethod
     def load_metadata(file_path):
