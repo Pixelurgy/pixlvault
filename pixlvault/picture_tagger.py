@@ -45,6 +45,8 @@ CUSTOM_TAGGER_PATH = os.path.join(
 CUSTOM_TAGGER_THRESHOLD = 0.5
 CUSTOM_TAGGER_IMAGE_SIZE = 576
 CUSTOM_TAGGER_BATCH = 16
+CLIP_MODEL_NAME = "ViT-L-14"
+CLIP_MODEL_WEIGHTS = "laion2b_s32b_b82k"
 
 
 class PictureTagger:
@@ -102,7 +104,7 @@ class PictureTagger:
         self._init_onnx_session()
         self._load_and_preprocess_tags()
 
-        if self._use_custom_tagger:
+        if self._use_custom_tagger and os.path.isfile(self._custom_tagger_path):
             logger.info(
                 "Using custom tagger checkpoint: %s", self._custom_tagger_path
             )
@@ -111,7 +113,7 @@ class PictureTagger:
         # Upgraded to ViT-L-14 for better aesthetics and embedding quality
         self._clip_model, _, self._clip_preprocess = (
             open_clip.create_model_and_transforms(
-                "ViT-L-14", pretrained="laion2b_s32b_b82k"
+                CLIP_MODEL_NAME, pretrained=CLIP_MODEL_WEIGHTS
             )
         )
 
@@ -119,7 +121,7 @@ class PictureTagger:
         self._clip_model = self._clip_model.to(self._clip_device)
         if self._clip_device == "cuda":
             self._clip_model = self._clip_model.half()
-        self._clip_tokenizer = open_clip.get_tokenizer("ViT-L-14")
+        self._clip_tokenizer = open_clip.get_tokenizer(CLIP_MODEL_NAME)
 
         self._tag_naturaliser = TagNaturaliser()
 
