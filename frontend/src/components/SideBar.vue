@@ -93,6 +93,11 @@ const newlyCreatedToken = ref("");
 const tokenDialogOpen = ref(false);
 const tokenDeleteDialogOpen = ref(false);
 const tokenToDelete = ref(null);
+const smartScorePenalizedTags = ref([]);
+const smartScoreTagInput = ref("");
+const smartScoreTagsLoading = ref(false);
+const smartScoreTagsError = ref("");
+const smartScoreTagsSuccess = ref("");
 
 async function fetchSettingsAuth() {
   settingsLoading.value = true;
@@ -120,6 +125,80 @@ function resetSettingsForm() {
   tokenDialogOpen.value = false;
   tokenDeleteDialogOpen.value = false;
   tokenToDelete.value = null;
+  smartScoreTagInput.value = "";
+  smartScoreTagsError.value = "";
+  smartScoreTagsSuccess.value = "";
+}
+
+function normalizeSmartScoreTags(tags) {
+  const list = Array.isArray(tags) ? tags : [];
+  const normalized = [];
+  const seen = new Set();
+  for (const tag of list) {
+    if (tag == null) continue;
+    const clean = String(tag).trim().toLowerCase();
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    normalized.push(clean);
+  }
+  return normalized;
+}
+
+async function fetchSmartScoreSettings() {
+  smartScoreTagsLoading.value = true;
+  smartScoreTagsError.value = "";
+  try {
+    const res = await apiClient.get("/users/me/config");
+    smartScorePenalizedTags.value = normalizeSmartScoreTags(
+      res.data?.smart_score_penalized_tags,
+    );
+  } catch (e) {
+    smartScoreTagsError.value = "Failed to load smart score settings.";
+  } finally {
+    smartScoreTagsLoading.value = false;
+  }
+}
+
+async function saveSmartScoreTags(nextTags) {
+  smartScoreTagsLoading.value = true;
+  smartScoreTagsError.value = "";
+  smartScoreTagsSuccess.value = "";
+  try {
+    const normalized = normalizeSmartScoreTags(nextTags);
+    await apiClient.patch("/users/me/config", {
+      smart_score_penalized_tags: normalized,
+    });
+    smartScorePenalizedTags.value = normalized;
+    smartScoreTagsSuccess.value = "Saved.";
+  } catch (e) {
+    smartScoreTagsError.value =
+      e?.response?.data?.detail || "Failed to update smart score tags.";
+  } finally {
+    smartScoreTagsLoading.value = false;
+    if (smartScoreTagsSuccess.value) {
+      setTimeout(() => {
+        smartScoreTagsSuccess.value = "";
+      }, 2000);
+    }
+  }
+}
+
+async function addSmartScoreTag() {
+  const trimmed = smartScoreTagInput.value.trim().toLowerCase();
+  if (!trimmed) return;
+  const next = normalizeSmartScoreTags([
+    ...smartScorePenalizedTags.value,
+    trimmed,
+  ]);
+  smartScoreTagInput.value = "";
+  await saveSmartScoreTags(next);
+}
+
+async function removeSmartScoreTag(tag) {
+  const next = normalizeSmartScoreTags(
+    smartScorePenalizedTags.value.filter((t) => t !== tag),
+  );
+  await saveSmartScoreTags(next);
 }
 
 function formatTokenTimestamp(value) {
@@ -971,6 +1050,7 @@ watch(
       resetSettingsForm();
       fetchSettingsAuth();
       fetchUserTokens();
+      fetchSmartScoreSettings();
     }
   },
 );
@@ -1132,6 +1212,63 @@ defineExpose({ refreshSidebar });
             >
               Add Import Folder (coming soon)
             </v-btn>
+          </div>
+          <v-divider class="settings-section-divider" />
+          <div class="settings-section">
+            <div class="settings-section-title">Smart Score</div>
+            <div class="settings-section-desc">
+              Tags listed here reduce Smart Score when present on a picture.
+            </div>
+            <div class="settings-form">
+              <v-text-field
+                v-model="smartScoreTagInput"
+                label="Add penalized tag"
+                density="comfortable"
+                variant="filled"
+                :disabled="smartScoreTagsLoading"
+                @keydown.enter.prevent="addSmartScoreTag"
+              />
+              <v-btn
+                variant="outlined"
+                color="primary"
+                class="settings-action-btn"
+                :loading="smartScoreTagsLoading"
+                :disabled="smartScoreTagsLoading"
+                @click="addSmartScoreTag"
+              >
+                Add Tag
+              </v-btn>
+              <div v-if="smartScoreTagsError" class="settings-error">
+                {{ smartScoreTagsError }}
+              </div>
+              <div v-if="smartScoreTagsSuccess" class="settings-success">
+                {{ smartScoreTagsSuccess }}
+              </div>
+              <div class="settings-tag-list">
+                <div
+                  v-for="tag in smartScorePenalizedTags"
+                  :key="tag"
+                  class="settings-tag-chip"
+                >
+                  <span class="settings-tag-label">{{ tag }}</span>
+                  <v-btn
+                    icon
+                    variant="text"
+                    class="settings-tag-delete"
+                    :disabled="smartScoreTagsLoading"
+                    @click="removeSmartScoreTag(tag)"
+                  >
+                    <v-icon size="16">mdi-close</v-icon>
+                  </v-btn>
+                </div>
+                <div
+                  v-if="!smartScoreTagsLoading && !smartScorePenalizedTags.length"
+                  class="settings-token-empty"
+                >
+                  No penalized tags yet.
+                </div>
+              </div>
+            </div>
           </div>
           <v-divider class="settings-section-divider" />
           <div class="settings-section">
@@ -2185,6 +2322,30 @@ defineExpose({ refreshSidebar });
 .settings-token-empty {
   font-size: 0.9em;
   color: rgba(var(--v-theme-on-surface), 0.6);
+}
+
+.settings-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(var(--v-theme-surface), 0.25);
+  color: rgba(var(--v-theme-on-surface), 0.9);
+}
+
+.settings-tag-label {
+  font-size: 0.85em;
+}
+
+.settings-tag-delete {
+  color: rgba(var(--v-theme-error), 0.9);
 }
 
 .settings-token-dialog {
