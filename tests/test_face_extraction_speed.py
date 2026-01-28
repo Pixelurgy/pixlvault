@@ -4,7 +4,7 @@ import insightface
 
 from time import time
 
-from pixlvault.face_extraction_worker import FaceExtractionWorker
+from pixlvault.feature_extraction_worker import FeatureExtractionWorker
 from pixlvault.db_models.picture import Picture
 from pixlvault.pixl_logging import get_logger
 from pixlvault.server import Server
@@ -38,7 +38,7 @@ def test_face_extraction_speed_cpu():
             def notify(event_type) -> None:
                 pass
 
-            worker = FaceExtractionWorker(server.vault.db, None, notify)
+            worker = FeatureExtractionWorker(server.vault.db, None, notify)
             worker._insightface_app = insightface.app.FaceAnalysis()
             worker._insightface_app.prepare(ctx_id=-1, det_thresh=0.25)
 
@@ -78,7 +78,7 @@ def test_face_extraction_speed_gpu():
             def notify(event_type) -> None:
                 pass
 
-            worker = FaceExtractionWorker(server.vault.db, None, notify)
+            worker = FeatureExtractionWorker(server.vault.db, None, notify)
             # worker._insightface_app = insightface.model_zoo.get_model('buffalo_l.onnx')
             worker._insightface_app = insightface.app.FaceAnalysis(
                 providers=["CUDAExecutionProvider", "CPUExecutionProvider"]

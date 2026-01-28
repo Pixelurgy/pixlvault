@@ -19,7 +19,7 @@ from .worker_registry import WorkerRegistry, WorkerType
 # These import lines are all necessary to register the workers with the WorkerRegistry
 from pixlvault.event_types import EventType
 from pixlvault.tag_worker import TagWorker, DescriptionWorker, EmbeddingWorker  # noqa: F401
-from pixlvault.face_extraction_worker import FaceExtractionWorker  # noqa: F401
+from pixlvault.feature_extraction_worker import FeatureExtractionWorker  # noqa: F401
 from pixlvault.face_character_likeness_worker import FaceCharacterLikenessWorker  # noqa: F401
 from pixlvault.likeness_worker import LikenessWorker  # noqa: F401
 from pixlvault.image_embedding_worker import ImageEmbeddingWorker  # noqa: F401
