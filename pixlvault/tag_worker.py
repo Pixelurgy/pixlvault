@@ -1,3 +1,4 @@
+import queue
 import time
 
 from sqlmodel import select, Session
@@ -186,16 +187,36 @@ class TagWorker(BaseWorker):
     def _fetch_missing_tags(self):
         logger.debug("Starting the database fetch for missing tags")
 
-        def fetch_tags(session: Session):
-            statement = (
-                select(Picture)
-                .where(~Picture.tags.any())
-                .options(selectinload(Picture.tags))
-            )
+        picture_ids = []
+        while True:
+            try:
+                payload = self._queue.get_nowait()
+                if isinstance(payload, (list, tuple, set)):
+                    picture_ids.extend(payload)
+                elif isinstance(payload, int):
+                    picture_ids.append(payload)
+            except queue.Empty:
+                break
+
+        def fetch_tags(session: Session, picture_ids):
+            if picture_ids:
+                statement = (
+                    select(Picture)
+                    .where(Picture.id.in_(picture_ids))
+                    .options(selectinload(Picture.tags))
+                )
+            else:
+                statement = (
+                    select(Picture)
+                    .where(~Picture.tags.any())
+                    .options(selectinload(Picture.tags))
+                )
             result = session.exec(statement)
             return result.all()
 
-        return VaultDatabase.result_or_throw(self._db.submit_task(fetch_tags))
+        return VaultDatabase.result_or_throw(
+            self._db.submit_task(fetch_tags, picture_ids)
+        )
 
     def _tag_pictures(self, missing_tags) -> int:
         """Tag all pictures missing tags."""

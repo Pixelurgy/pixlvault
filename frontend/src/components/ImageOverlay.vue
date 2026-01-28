@@ -365,6 +365,15 @@
               <span class="section-meta-group">
                 <button
                   v-if="image"
+                  class="section-meta-btn section-meta-btn--danger"
+                  type="button"
+                  title="Clear tags"
+                  @click.stop="clearTagsForImage"
+                >
+                  <v-icon size="16">mdi-refresh</v-icon>
+                </button>
+                <button
+                  v-if="image"
                   class="section-meta-btn"
                   type="button"
                   title="Add tag"
@@ -704,6 +713,21 @@ function confirmAddTag() {
     image.value.tags.sort(); // Ensure tags remain sorted
   }
   resetTagInput();
+}
+
+async function clearTagsForImage() {
+  if (!image.value?.id || !backendUrl.value) return;
+  try {
+    await apiClient.post(`${backendUrl.value}/pictures/clear_tags`, {
+      picture_ids: [image.value.id],
+    });
+    if (Array.isArray(image.value.tags)) {
+      image.value.tags = [];
+    }
+    emit("refresh-image", image.value.id);
+  } catch (err) {
+    alert(`Failed to clear tags: ${err?.message || err}`);
+  }
 }
 
 function setScore(n) {
@@ -2504,6 +2528,13 @@ function downloadComfyWorkflow(workflow) {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+
+.section-meta-btn--danger {
+  background: rgb(var(--v-theme-error));
+  color: rgb(var(--v-theme-on-error));
+  border-radius: 6px;
+  padding: 2px 6px;
 }
 
 .section-meta-btn:disabled {
