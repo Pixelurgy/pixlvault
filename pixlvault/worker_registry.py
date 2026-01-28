@@ -12,7 +12,7 @@ from .pixl_logging import get_logger
 
 
 class WorkerType(str, Enum):
-    FACE = "FaceExtractionWorker"
+    FACE = "FeatureExtractionWorker"
     TAGGER = "TagWorker"
     QUALITY = "QualityWorker"
     FACE_QUALITY = "FaceQualityWorker"
