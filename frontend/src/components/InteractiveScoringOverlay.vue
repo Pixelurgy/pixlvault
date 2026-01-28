@@ -368,6 +368,7 @@ import {
   isSupportedImageFile,
   getOverlayFormat,
 } from "../utils/media.js";
+import { apiClient } from "../utils/apiClient";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -1370,6 +1371,36 @@ function getPreviewUrl(item) {
   return getFullImageUrl(item);
 }
 
+async function ensureVideoThumbnails(items) {
+  const list = Array.isArray(items) ? items : [];
+  const ids = list
+    .filter((item) => item && isVideo(item) && !item.thumbnail)
+    .map((item) => String(item.id))
+    .filter((id) => id);
+
+  if (!ids.length) return;
+
+  try {
+    const response = await apiClient.post(
+      `${props.backendUrl}/pictures/thumbnails`,
+      JSON.stringify({ ids }),
+    );
+    const thumbData = response.data || {};
+    orderedItems.value = orderedItems.value.map((item) => {
+      const entry = thumbData[String(item.id)];
+      if (entry?.thumbnail) {
+        return {
+          ...item,
+          thumbnail: `data:image/png;base64,${entry.thumbnail}`,
+        };
+      }
+      return item;
+    });
+  } catch (error) {
+    console.warn("[InteractiveScoringOverlay] Thumbnail fetch failed", error);
+  }
+}
+
 watch(
   () => props.open,
   (isOpen) => {
@@ -1385,6 +1416,7 @@ watch(
     }
 
     orderedItems.value = normalized;
+    void ensureVideoThumbnails(normalized);
     if (!hydrateFromSession(props.session)) {
       resetSessionState();
       if (orderedItems.value.length < DEFAULT_CONFIG.bandSizeCount) {
