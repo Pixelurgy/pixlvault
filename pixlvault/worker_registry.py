@@ -1,3 +1,4 @@
+import queue
 import random
 import threading
 
@@ -72,6 +73,7 @@ class BaseWorker(ABC, metaclass=WorkerRegistry):
         self._watched_ids_lock = threading.Lock()
 
         self._event_callback = event_callback
+        self._queue = queue.Queue()
 
     @abstractmethod
     def worker_type(self) -> WorkerType:
@@ -123,11 +125,12 @@ class BaseWorker(ABC, metaclass=WorkerRegistry):
         """
         return self._stop.is_set()
 
-    def notify(self):
+    def notify(self, event_type: EventType = None, data=None):
         """
         Notify the worker that it needs to wake.
         """
         logger.debug("Worker {} woken up.".format(self.name()))
+        self._queue.put(data)
         self._event.set()
 
     def name(self):

@@ -3389,6 +3389,30 @@ class Server:
                 logger.error(f"Failed to remove tag: {e}")
                 raise HTTPException(status_code=500, detail="Failed to remove tag")
 
+        @self.api.post("/pictures/clear_tags")
+        async def clear_tags_for_pictures(payload: dict = Body(...)):
+            """
+            Clear all tags for a list of pictures.
+            """
+            picture_ids = payload.get("picture_ids")
+            if not isinstance(picture_ids, list):
+                raise HTTPException(
+                    status_code=400, detail="picture_ids must be a list"
+                )
+            if not picture_ids:
+                return {"status": "success", "picture_ids": []}
+
+            def clear_tags(session: Session, ids: list[str]):
+                session.exec(delete(Tag).where(Tag.picture_id.in_(ids)))
+                session.commit()
+                return ids
+
+            cleared = self.vault.db.run_task(
+                clear_tags, picture_ids, priority=DBPriority.IMMEDIATE
+            )
+            self.vault.notify(EventType.CLEARED_TAGS, picture_ids)
+            return {"status": "success", "picture_ids": cleared}
+
         @self.api.get("/pictures/import/status")
         async def import_status(task_id: str):
             """Check the status of an import task."""

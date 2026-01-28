@@ -51,6 +51,7 @@ class Vault:
         ],
         EventType.CHANGED_DESCRIPTIONS: [WorkerType.TEXT_EMBEDDING],
         EventType.QUALITY_UPDATED: [WorkerType.LIKENESS],
+        EventType.CLEARED_TAGS: [WorkerType.TAGGER, WorkerType.TEXT_EMBEDDING],
     }
 
     def __enter__(self):
@@ -121,7 +122,7 @@ class Vault:
             else:
                 logger.warning(f"Worker {worker_type} not found in vault workers.")
 
-    def notify(self, event_type: EventType):
+    def notify(self, event_type: EventType, data=None):
         """
         Notify all relevant workers for a given event type.
 
@@ -133,7 +134,7 @@ class Vault:
             worker = self._workers.get(worker_type)
             if worker:
                 logger.debug(f"Notifying worker {worker_type} for event {event_type}")
-                worker.notify()
+                worker.notify(event_type=event_type, data=data)
             else:
                 logger.debug(f"Worker {worker_type} not found for event {event_type}")
         with self._event_listeners_lock:
