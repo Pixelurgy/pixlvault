@@ -1016,7 +1016,7 @@ class Server:
             if penalized_tags_set and candidate_id_list:
                 tag_rows = session.exec(
                     select(Tag.picture_id, Tag.tag).where(
-                        Tag.picture_id.in_(candidate_id_list)
+                        Tag.picture_id.in_(candidate_id_list),
                     )
                 ).all()
                 for pic_id, tag in tag_rows:
@@ -3400,20 +3400,21 @@ class Server:
                     raise HTTPException(status_code=404, detail="Picture not found")
                 pic = pic_list[0]
 
-                full_tag = Tag(tag=tag, picture_id=pic.id)
-                if full_tag not in pic.tags:
+                existing = next((t for t in pic.tags if t.tag == tag), None)
+                if existing is None:
 
                     def update_picture(session, pic_id, tag):
                         pic = Picture.find(session, id=pic_id, select_fields=["tags"])[
                             0
                         ]
-                        pic.tags.append(tag)
+                        if not any(t.tag == tag for t in pic.tags):
+                            pic.tags.append(Tag(tag=tag, picture_id=pic_id))
                         session.add(pic)
                         session.commit()
                         session.refresh(pic)
                         return pic
 
-                    self.vault.db.run_task(update_picture, pic.id, full_tag)
+                    self.vault.db.run_task(update_picture, pic.id, tag)
                     self.vault.notify(EventType.CHANGED_TAGS)
 
                 return {"status": "success", "tags": pic.tags}
@@ -3437,24 +3438,26 @@ class Server:
                     raise HTTPException(status_code=404, detail="Picture not found")
                 pic = pic_list[0]
 
-                full_tag = Tag(tag=tag, picture_id=pic.id)
+                existing = next((t for t in pic.tags if t.tag == tag), None)
 
-                if full_tag in pic.tags:
+                if existing is not None:
                     logger.debug(
                         f"Tag {tag} found in picture tags {pic.tags}, proceeding to remove."
                     )
 
-                    def update_picture(session, pic_id, tag):
+                    def update_picture(session, pic_id, tag_value):
                         pic = Picture.find(session, id=pic_id, select_fields=["tags"])[
                             0
                         ]
-                        pic.tags.remove(tag)
+                        target = next((t for t in pic.tags if t.tag == tag_value), None)
+                        if target is not None:
+                            pic.tags.remove(target)
                         session.add(pic)
                         session.commit()
                         session.refresh(pic)
                         return pic
 
-                    self.vault.db.run_task(update_picture, pic.id, full_tag)
+                    self.vault.db.run_task(update_picture, pic.id, tag)
                     self.vault.notify(EventType.CHANGED_TAGS)
 
                     logger.debug(f"Remaining tags after removal: {pic.tags}")
@@ -3482,7 +3485,11 @@ class Server:
                 return {"status": "success", "picture_ids": []}
 
             def clear_tags(session: Session, ids: list[str]):
-                session.exec(delete(Tag).where(Tag.picture_id.in_(ids)))
+                session.exec(
+                    delete(Tag).where(
+                        Tag.picture_id.in_(ids),
+                    )
+                )
                 session.commit()
                 return ids
 
@@ -3924,7 +3931,10 @@ class Server:
                             query = query.order_by(
                                 order_expr.desc()
                                 if sort_mech.descending
-                                else order_expr.asc()
+                                else order_expr.asc(),
+                                Picture.id.desc()
+                                if sort_mech.descending
+                                else Picture.id.asc(),
                             )
                         else:
                             field = getattr(Picture, sort_mech.field, None)
@@ -3932,7 +3942,10 @@ class Server:
                                 query = query.order_by(
                                     field.desc()
                                     if sort_mech.descending
-                                    else field.asc()
+                                    else field.asc(),
+                                    Picture.id.desc()
+                                    if sort_mech.descending
+                                    else Picture.id.asc(),
                                 )
 
                     if offset > 0 or limit != sys.maxsize:

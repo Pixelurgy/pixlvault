@@ -158,7 +158,6 @@ class PictureUtils:
         scores += char_component
 
         # 2. Good Anchors
-        mask_good = np.zeros(len(candidates), dtype=bool)
         good_component = np.zeros(len(candidates))
         raw_good_sim = np.zeros(len(candidates))
         if good_anchors:
@@ -649,7 +648,7 @@ class PictureUtils:
             return None
 
     @staticmethod
-    def generate_thumbnail_bytes(img, size=(256, 256)) -> Optional[bytes]:
+    def generate_thumbnail_bytes(img, size=(384, 384)) -> Optional[bytes]:
         """
         Crop to square (bottom-cropped for tall images) and resize longest edge to 256px.
         Accepts either a PIL Image or a numpy array (OpenCV image).

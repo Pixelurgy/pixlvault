@@ -1115,8 +1115,6 @@ function getHandBboxStyle(bbox, idx, img, containerEl) {
   const height = (bbox[3] - bbox[1]) * scale;
   return {
     position: "absolute",
-    border: "1.5px dashed rgba(0, 255, 255, 0.9)",
-    background: "rgba(255, 255, 255, 0.06)",
     left: `${left}px`,
     top: `${top}px`,
     width: `${width}px`,
@@ -2164,7 +2162,6 @@ function repositionImageByDate(imageId, createdAt) {
   }
 
   allGridImages.value = items;
-  font;
   invalidateVisibleThumbnailRanges();
 }
 
@@ -2347,6 +2344,9 @@ async function applyScore(img, newScore) {
     if (isScoreSortActive()) {
       repositionImageByScore(imageId, newScore);
     }
+    const pictureIds = Array.isArray(props.wsTagUpdate?.pictureIds)
+      ? props.wsTagUpdate.pictureIds
+      : [];
     if (
       !pictureIds.length ||
       pictureIds.includes(String(overlayImage.value.id))
@@ -2828,7 +2828,11 @@ async function fetchAllGridImages() {
     }
     const shouldHighlight = highlightNextFetch.value && hasLoadedOnce.value;
     const nextIdSet = new Set(
-      Array.isArray(images) ? images.map((img) => img?.id).filter(Boolean) : [],
+      Array.isArray(images)
+        ? images
+            .map((img) => normalizePictureId(img?.id))
+            .filter((id) => id !== null)
+        : [],
     );
     if (shouldHighlight) {
       const newIds = [];
@@ -2849,13 +2853,13 @@ async function fetchAllGridImages() {
     const existingById = new Map(
       allGridImages.value
         .filter((img) => img && img.id != null)
-        .map((img) => [img.id, img]),
+        .map((img) => [normalizePictureId(img.id), img]),
     );
     const uniqueImages = Array.isArray(images)
       ? (() => {
           const seen = new Set();
           return images.filter((img) => {
-            const id = img?.id;
+            const id = normalizePictureId(img?.id);
             if (id == null) return true;
             if (seen.has(id)) return false;
             seen.add(id);
@@ -2864,7 +2868,9 @@ async function fetchAllGridImages() {
         })()
       : [];
     const newImages = uniqueImages.map((img, i) => {
-      const existing = img?.id ? existingById.get(img.id) : null;
+      const existing = img?.id
+        ? existingById.get(normalizePictureId(img.id))
+        : null;
       return {
         ...img,
         idx: i,
@@ -3091,30 +3097,10 @@ const bottomSpacerHeight = computed(() => {
 // Compute grid images (id, idx, thumbnail)
 const allGridImages = ref([]);
 
-watch(
-  [() => props.showFaceBboxes, () => props.showHandBboxes],
-  ([faceEnabled, handEnabled]) => {
-    const images = allGridImages.value || [];
-    const withFaces = images.filter(
-      (img) => Array.isArray(img?.faces) && img.faces.length > 0,
-    );
-    const withHands = images.filter(
-      (img) => Array.isArray(img?.hands) && img.hands.length > 0,
-    );
-    console.debug("[bbox] Toggle", {
-      faceEnabled,
-      handEnabled,
-      totalImages: images.length,
-      imagesWithFaces: withFaces.length,
-      imagesWithHands: withHands.length,
-    });
-    if (faceEnabled || handEnabled) {
-      invalidateVisibleThumbnailRanges();
-    }
-    triggerFaceOverlayRedraw();
-  },
-  { immediate: true },
-);
+function normalizePictureId(id) {
+  if (id === null || id === undefined) return null;
+  return String(id);
+}
 
 watch(
   [
@@ -4232,7 +4218,7 @@ function handleScoringClose() {
   box-sizing: border-box;
   position: absolute;
   pointer-events: none;
-  border: 2px dashed rgb(var(--v-theme-error));
+  border: 2px dashed rgb(var(--v-theme-tertiary));
   display: block;
   z-index: 30;
 }

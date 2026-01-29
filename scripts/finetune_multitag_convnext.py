@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import random
+import re
 import signal
 import time
 from dataclasses import dataclass
@@ -19,6 +20,9 @@ from torch.optim.lr_scheduler import StepLR
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+FACE_VIEW_PATTERN = re.compile(r"(?:^|_)face\d*$")
+HAND_VIEW_PATTERN = re.compile(r"(?:^|_)hand\d*$")
+HANDS_VIEW_PATTERN = re.compile(r"(?:^|_)hands$")
 
 
 def set_seed(seed: int) -> None:
@@ -57,6 +61,15 @@ def parse_tags(txt_path: str) -> List[str]:
     raw = open(txt_path, "r", encoding="utf-8").read()
     tags = [t.strip().lower() for t in raw.split(",") if t.strip()]
     return tags
+
+
+def get_view_type(img_path: str) -> str:
+    stem = os.path.splitext(os.path.basename(img_path))[0].lower()
+    if FACE_VIEW_PATTERN.search(stem):
+        return "face"
+    if HANDS_VIEW_PATTERN.search(stem) or HAND_VIEW_PATTERN.search(stem):
+        return "hand"
+    return "full"
 
 
 @dataclass
@@ -216,6 +229,36 @@ def evaluate_per_class(model, loader, device, threshold=0.5):
         "f1": f1.cpu().tolist(),
         "support": support.cpu().tolist(),
     }
+
+
+def evaluate_recall_by_view(
+    model,
+    samples: List[Sample],
+    label_to_idx: dict,
+    transform,
+    device: str,
+    batch_size: int,
+    threshold: float = 0.5,
+):
+    view_samples = {"full": [], "face": [], "hand": []}
+    for sample in samples:
+        view_samples[get_view_type(sample.img_path)].append(sample)
+
+    results = {}
+    for view, items in view_samples.items():
+        if not items:
+            results[view] = None
+            continue
+        dataset = TagDataset(items, label_to_idx, transform)
+        loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True,
+        )
+        results[view] = evaluate(model, loader, device, threshold)
+    return results
 
 
 def predict_and_report(
@@ -468,6 +511,38 @@ def main():
 
         test_metrics = evaluate(model, test_loader, device)
         print("Test metrics:", test_metrics)
+        val_recall_by_view = evaluate_recall_by_view(
+            model,
+            val_samples,
+            label_to_idx,
+            transform,
+            device,
+            args.batch,
+            threshold=args.predict_threshold,
+        )
+        test_recall_by_view = evaluate_recall_by_view(
+            model,
+            test_samples,
+            label_to_idx,
+            transform,
+            device,
+            args.batch,
+            threshold=args.predict_threshold,
+        )
+        for view_name, metrics in val_recall_by_view.items():
+            if not metrics:
+                continue
+            print(
+                f"Val recall ({view_name}): {metrics['recall']:.4f} "
+                f"p={metrics['precision']:.4f} f1={metrics['f1']:.4f}"
+            )
+        for view_name, metrics in test_recall_by_view.items():
+            if not metrics:
+                continue
+            print(
+                f"Test recall ({view_name}): {metrics['recall']:.4f} "
+                f"p={metrics['precision']:.4f} f1={metrics['f1']:.4f}"
+            )
         if args.per_class_metrics:
             val_per_class = evaluate_per_class(
                 model, val_loader, device, threshold=args.predict_threshold

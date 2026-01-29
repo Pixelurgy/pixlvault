@@ -280,41 +280,6 @@ def main():
     download_model_if_needed(model_path)
     yolo_model = YOLO(model_path)
 
-    def bboxes_overlap(box1, box2):
-        x1_min, y1_min, x1_max, y1_max = box1
-        x2_min, y2_min, x2_max, y2_max = box2
-        return not (
-            x1_max < x2_min or x2_max < x1_min or y1_max < y2_min or y2_max < y1_min
-        )
-
-    def merge_bboxes(boxes):
-        if not boxes:
-            return []
-        merged = []
-        used = [False] * len(boxes)
-        for i, box in enumerate(boxes):
-            if used[i]:
-                continue
-            x_min, y_min, x_max, y_max = box
-            group = [box]
-            used[i] = True
-            for j in range(i + 1, len(boxes)):
-                if used[j]:
-                    continue
-                if bboxes_overlap(box, boxes[j]):
-                    group.append(boxes[j])
-                    used[j] = True
-            if len(group) > 1:
-                # Merge all overlapping boxes
-                x_min = min(b[0] for b in group)
-                y_min = min(b[1] for b in group)
-                x_max = max(b[2] for b in group)
-                y_max = max(b[3] for b in group)
-                merged.append((x_min, y_min, x_max, y_max))
-            else:
-                merged.append(box)
-        return merged
-
     for img_path in Path(input_dir).glob("**/*"):
         if img_path.suffix.lower() not in [".jpg", ".jpeg", ".png", ".bmp", ".webp"]:
             continue

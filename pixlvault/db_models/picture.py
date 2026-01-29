@@ -141,6 +141,7 @@ class Picture(SQLModel, table=True):
         sa_relationship_kwargs={
             "cascade": "all, delete-orphan",
             "passive_deletes": True,
+            "foreign_keys": "[Tag.picture_id]",
         },
     )
     characters: List["Character"] = Relationship(  # Many-to-many via Face
@@ -416,17 +417,19 @@ class Picture(SQLModel, table=True):
             if sort_mech.key == SortMechanism.Keys.IMAGE_SIZE:
                 # Sort by width * height
                 if sort_mech.descending:
-                    query = query.order_by((cls.width * cls.height).desc())
+                    query = query.order_by(
+                        (cls.width * cls.height).desc(), cls.id.desc()
+                    )
                 else:
-                    query = query.order_by((cls.width * cls.height).asc())
+                    query = query.order_by((cls.width * cls.height).asc(), cls.id.asc())
             else:
                 field_name = sort_mech.field
                 field = getattr(cls, field_name, None)
                 if field is not None:
                     if sort_mech.descending:
-                        query = query.order_by(field.desc())
+                        query = query.order_by(field.desc(), cls.id.desc())
                     else:
-                        query = query.order_by(field.asc())
+                        query = query.order_by(field.asc(), cls.id.asc())
         if offset > 0 or limit != sys.maxsize:
             query = query.offset(offset).limit(limit)
 

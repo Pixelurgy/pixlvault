@@ -25,6 +25,11 @@ HAND_MODEL_PATH = os.path.join(
     os.path.dirname(__file__), "..", MODEL_DIR, HAND_MODEL_NAME
 )
 
+HAND_DETECT_IMGSZ = 256
+HAND_DETECT_CONF = 0.3
+HAND_DETECT_MAX_DET = 4
+HAND_DETECT_VIDEO_FRAMES = 1
+
 
 class FeatureExtractionWorker(BaseWorker):
     INSIGHTFACE_CLEANUP_TIMEOUT = 6000  # seconds
@@ -133,6 +138,20 @@ class FeatureExtractionWorker(BaseWorker):
             FeatureExtractionWorker._global_insightface_app = app
             self._insightface_app = app
 
+    def _predict_hands(self, hand_model, image, file_path):
+        try:
+            results = hand_model.predict(
+                image,
+                imgsz=HAND_DETECT_IMGSZ,
+                conf=HAND_DETECT_CONF,
+                max_det=HAND_DETECT_MAX_DET,
+                verbose=False,
+            )
+            return list(results[0].boxes.xyxy.cpu().numpy())
+        except Exception as exc:
+            logger.warning("Hand detection failed for %s: %s", file_path, exc)
+            return []
+
     def close(self):
         """
         Clean up resources held by the worker.
@@ -217,20 +236,7 @@ class FeatureExtractionWorker(BaseWorker):
                             )
 
                     if need_hands and hand_model is not None:
-                        try:
-                            results = hand_model.predict(
-                                img,
-                                imgsz=320,
-                                conf=0.25,
-                                max_det=8,
-                                verbose=False,
-                            )
-                            boxes = list(results[0].boxes.xyxy.cpu().numpy())
-                        except Exception as exc:
-                            logger.warning(
-                                "Hand detection failed for %s: %s", file_path, exc
-                            )
-                            boxes = []
+                        boxes = self._predict_hands(hand_model, img, file_path)
                         for box in boxes:
                             x1, y1, x2, y2 = box
                             hand_objects.append(
@@ -250,6 +256,7 @@ class FeatureExtractionWorker(BaseWorker):
                 if need_faces or need_hands:
                     cap = cv2.VideoCapture(file_path)
                     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    hand_frames_used = 0
                     if frame_count < 1:
                         logger.warning("No frames found in video: %s", file_path)
                         cap.release()
@@ -291,37 +298,26 @@ class FeatureExtractionWorker(BaseWorker):
                                         )
                                     )
                             if need_hands and hand_model is not None:
-                                try:
-                                    results = hand_model.predict(
-                                        frame,
-                                        imgsz=320,
-                                        conf=0.25,
-                                        max_det=8,
-                                        verbose=False,
+                                if hand_frames_used < HAND_DETECT_VIDEO_FRAMES:
+                                    boxes = self._predict_hands(
+                                        hand_model, frame, file_path
                                     )
-                                    boxes = list(results[0].boxes.xyxy.cpu().numpy())
-                                except Exception as exc:
-                                    logger.warning(
-                                        "Hand detection failed for %s: %s",
-                                        file_path,
-                                        exc,
-                                    )
-                                    boxes = []
-                                for box in boxes:
-                                    x1, y1, x2, y2 = box
-                                    hand_objects.append(
-                                        Hand(
-                                            picture_id=pic.id,
-                                            hand_index=-1,
-                                            bbox=[
-                                                int(round(x1)),
-                                                int(round(y1)),
-                                                int(round(x2)),
-                                                int(round(y2)),
-                                            ],
-                                            frame_index=0,
+                                    hand_frames_used += 1
+                                    for box in boxes:
+                                        x1, y1, x2, y2 = box
+                                        hand_objects.append(
+                                            Hand(
+                                                picture_id=pic.id,
+                                                hand_index=-1,
+                                                bbox=[
+                                                    int(round(x1)),
+                                                    int(round(y1)),
+                                                    int(round(x2)),
+                                                    int(round(y2)),
+                                                ],
+                                                frame_index=0,
+                                            )
                                         )
-                                    )
 
                         step = max(1, frame_count // 3)
                         for frame_index in range(step, frame_count, step):
@@ -365,37 +361,26 @@ class FeatureExtractionWorker(BaseWorker):
                                         )
                                     )
                             if need_hands and hand_model is not None:
-                                try:
-                                    results = hand_model.predict(
-                                        frame,
-                                        imgsz=320,
-                                        conf=0.25,
-                                        max_det=8,
-                                        verbose=False,
+                                if hand_frames_used < HAND_DETECT_VIDEO_FRAMES:
+                                    boxes = self._predict_hands(
+                                        hand_model, frame, file_path
                                     )
-                                    boxes = list(results[0].boxes.xyxy.cpu().numpy())
-                                except Exception as exc:
-                                    logger.warning(
-                                        "Hand detection failed for %s: %s",
-                                        file_path,
-                                        exc,
-                                    )
-                                    boxes = []
-                                for box in boxes:
-                                    x1, y1, x2, y2 = box
-                                    hand_objects.append(
-                                        Hand(
-                                            picture_id=pic.id,
-                                            hand_index=-1,
-                                            bbox=[
-                                                int(round(x1)),
-                                                int(round(y1)),
-                                                int(round(x2)),
-                                                int(round(y2)),
-                                            ],
-                                            frame_index=frame_index,
+                                    hand_frames_used += 1
+                                    for box in boxes:
+                                        x1, y1, x2, y2 = box
+                                        hand_objects.append(
+                                            Hand(
+                                                picture_id=pic.id,
+                                                hand_index=-1,
+                                                bbox=[
+                                                    int(round(x1)),
+                                                    int(round(y1)),
+                                                    int(round(x2)),
+                                                    int(round(y2)),
+                                                ],
+                                                frame_index=frame_index,
+                                            )
                                         )
-                                    )
                     cap.release()
                     if need_faces and first_frame is not None and first_bboxes:
                         (

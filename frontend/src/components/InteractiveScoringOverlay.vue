@@ -811,12 +811,11 @@ function buildProvisionalMapWithQuantiles() {
 
   for (const item of orderedItems.value) {
     const score = getScoreForMapping(item);
-    let stars = 3;
+    let stars = 1;
     if (score >= q85) stars = 5;
     else if (score >= q65) stars = 4;
     else if (score >= q35) stars = 3;
     else if (score >= q15) stars = 2;
-    else stars = 1;
     map[item.id] = stars;
   }
   return map;
@@ -831,7 +830,6 @@ function buildProvisionalMapWithLocal(cutoff, L) {
     else if (score >= cutoff + L.hi4) stars = 4;
     else if (Math.abs(score - cutoff) < L.mid3) stars = 3;
     else if (score <= cutoff - L.lo1) stars = 1;
-    else stars = 2;
     map[item.id] = stars;
   }
   return map;
@@ -854,7 +852,6 @@ async function buildProvisionalMapWithLocalAsync(cutoff, L) {
     else if (score >= cutoff + L.hi4) stars = 4;
     else if (Math.abs(score - cutoff) < L.mid3) stars = 3;
     else if (score <= cutoff - L.lo1) stars = 1;
-    else stars = 2;
     map[item.id] = stars;
 
     if (i % 200 === 0) {
@@ -885,12 +882,11 @@ async function buildProvisionalMapWithQuantilesAsync() {
   for (let i = 0; i < total; i += 1) {
     const item = items[i];
     const score = getScoreForMapping(item);
-    let stars = 3;
+    let stars = 1;
     if (score >= q85) stars = 5;
     else if (score >= q65) stars = 4;
     else if (score >= q35) stars = 3;
     else if (score >= q15) stars = 2;
-    else stars = 1;
     map[item.id] = stars;
 
     if (i % 200 === 0) {
@@ -913,7 +909,6 @@ function buildProvisionalMap(cutoff) {
     else if (score >= cutoff + mapping.high4) stars = 4;
     else if (Math.abs(score - cutoff) < margin) stars = 3;
     else if (score <= cutoff - mapping.low1) stars = 1;
-    else stars = 2;
     map[item.id] = stars;
   }
   return map;
@@ -934,7 +929,6 @@ async function buildProvisionalMapAsync(cutoff) {
     else if (score >= cutoff + mapping.high4) stars = 4;
     else if (Math.abs(score - cutoff) < margin) stars = 3;
     else if (score <= cutoff - mapping.low1) stars = 1;
-    else stars = 2;
     map[item.id] = stars;
 
     if (i % 200 === 0) {
