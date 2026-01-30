@@ -179,6 +179,7 @@ function disconnectUpdatesSocket() {
 
 // --- Export Menu State ---
 const exportMenuOpen = ref(false);
+const exportType = ref("full");
 const exportCaptionMode = ref("description");
 const exportIncludeCharacterName = ref(true);
 const exportResolution = ref("original");
@@ -194,11 +195,29 @@ const exportCaptionOptions = [
   { title: "Description", value: "description" },
   { title: "Tags", value: "tags" },
 ];
+const exportTypeOptions = [
+  { title: "Full images", value: "full" },
+  { title: "Face crops", value: "face" },
+  { title: "Hand crops", value: "hand" },
+  { title: "Face & hand crops", value: "face_hand" },
+];
 const exportResolutionOptions = [
   { title: "Original", value: "original" },
   { title: "Half Size", value: "half" },
   { title: "Quarter Size", value: "quarter" },
 ];
+const exportTypeLocksCaptions = computed(() => exportType.value !== "full");
+
+watch(
+  exportType,
+  (value) => {
+    if (value !== "full") {
+      exportCaptionMode.value = "tags";
+      exportIncludeCharacterName.value = false;
+    }
+  },
+  { immediate: true },
+);
 
 // --- Config Dialog State ---
 const config = reactive({
@@ -510,6 +529,7 @@ function cancelExportZip() {
 function confirmExportZip() {
   console.log("Exporting current view to zip...");
   gridContainer.value?.exportCurrentViewToZip({
+    exportType: exportType.value,
     captionMode: exportCaptionMode.value,
     includeCharacterName: exportIncludeCharacterName.value,
     resolution: exportResolution.value,

@@ -47,10 +47,14 @@ from pydantic import BaseModel, Field
 from pixlvault.db_models import (
     Character,
     Face,
+    FaceTag,
+    Hand,
+    HandTag,
     Picture,
     PictureSet,
     PictureSetMember,
     Quality,
+    Tag,
     SortMechanism,
     User,
     UserToken,
@@ -2749,6 +2753,7 @@ class Server:
             caption_mode: str = Query("description"),
             include_character_name: bool = Query(False),
             resolution: str = Query("original"),
+            export_type: str = Query("full"),
         ):
             """
             Export pictures matching the filters as a zip file.
@@ -2765,6 +2770,14 @@ class Server:
 
             def generate_zip():
                 try:
+                    export_type_value = (
+                        request.query_params.get("export_type")
+                        or request.query_params.get("exportType")
+                        or export_type
+                    )
+                    export_type_normalized = Picture.ExportType.from_string(
+                        export_type_value
+                    )
                     caption_mode_normalized = (caption_mode or "description").lower()
                     if caption_mode_normalized not in {"none", "description", "tags"}:
                         caption_mode_normalized = "description"
@@ -2772,6 +2785,9 @@ class Server:
                         bool(include_character_name)
                         and caption_mode_normalized != "none"
                     )
+                    if export_type_normalized != Picture.ExportType.FULL:
+                        caption_mode_normalized = "tags"
+                        include_character_name_enabled = False
                     resolution_normalized = (resolution or "original").lower()
                     if resolution_normalized not in {"original", "half", "quarter"}:
                         resolution_normalized = "original"
@@ -2789,12 +2805,16 @@ class Server:
                     query_params.pop("threshold", None)
                     query_params.pop("caption_mode", None)
                     query_params.pop("include_character_name", None)
+                    query_params.pop("export_type", None)
                     character_id = query_params.pop("character_id", None)
 
                     select_fields = Picture.metadata_fields()
                     if (
-                        caption_mode_normalized == "tags"
-                        or include_character_name_enabled
+                        export_type_normalized == Picture.ExportType.FULL
+                        and (
+                            caption_mode_normalized == "tags"
+                            or include_character_name_enabled
+                        )
                     ):
                         select_fields = select_fields | {"tags", "characters"}
 
@@ -2881,9 +2901,6 @@ class Server:
                             **query_params,
                         )
 
-                    self.export_tasks[task_id]["total"] = len(pics)
-                    self.export_tasks[task_id]["processed"] = 0
-
                     logger.debug(
                         f"Export task {task_id}: {len(pics)} pictures to be added to the ZIP."
                     )
@@ -2913,6 +2930,132 @@ class Server:
                     zip_path = os.path.join(
                         self.TEMP_EXPORT_DIR, f"export_{task_id}.zip"
                     )
+                    feature_faces_by_pic = {}
+                    feature_hands_by_pic = {}
+                    face_tags_by_face = {}
+                    hand_tags_by_hand = {}
+
+                    def _clamp_bbox(bbox, width, height):
+                        if not bbox or len(bbox) != 4:
+                            return None
+                        x_min, y_min, x_max, y_max = [int(round(v)) for v in bbox]
+                        x_min = max(0, min(x_min, width - 1))
+                        y_min = max(0, min(y_min, height - 1))
+                        x_max = max(x_min + 1, min(x_max, width))
+                        y_max = max(y_min + 1, min(y_max, height))
+                        return [x_min, y_min, x_max, y_max]
+
+                    if export_type_normalized != Picture.ExportType.FULL:
+
+                        def fetch_features(session: Session, picture_ids):
+                            faces = session.exec(
+                                select(Face).where(Face.picture_id.in_(picture_ids))
+                            ).all()
+                            hands = session.exec(
+                                select(Hand).where(Hand.picture_id.in_(picture_ids))
+                            ).all()
+                            face_ids = [face.id for face in faces]
+                            hand_ids = [hand.id for hand in hands]
+
+                            face_tags = []
+                            hand_tags = []
+                            if face_ids:
+                                face_tags = session.exec(
+                                    select(FaceTag.face_id, Tag.tag)
+                                    .join(Tag, Tag.id == FaceTag.tag_id)
+                                    .where(FaceTag.face_id.in_(face_ids))
+                                ).all()
+                            if hand_ids:
+                                hand_tags = session.exec(
+                                    select(HandTag.hand_id, Tag.tag)
+                                    .join(Tag, Tag.id == HandTag.tag_id)
+                                    .where(HandTag.hand_id.in_(hand_ids))
+                                ).all()
+
+                            faces_by_pic = {}
+                            for face in faces:
+                                faces_by_pic.setdefault(face.picture_id, []).append(
+                                    face
+                                )
+
+                            hands_by_pic = {}
+                            for hand in hands:
+                                hands_by_pic.setdefault(hand.picture_id, []).append(
+                                    hand
+                                )
+
+                            face_tags_by_face = {}
+                            for face_id, tag in face_tags:
+                                face_tags_by_face.setdefault(face_id, []).append(tag)
+
+                            hand_tags_by_hand = {}
+                            for hand_id, tag in hand_tags:
+                                hand_tags_by_hand.setdefault(hand_id, []).append(tag)
+
+                            return (
+                                faces_by_pic,
+                                hands_by_pic,
+                                face_tags_by_face,
+                                hand_tags_by_hand,
+                            )
+
+                        (
+                            feature_faces_by_pic,
+                            feature_hands_by_pic,
+                            face_tags_by_face,
+                            hand_tags_by_hand,
+                        ) = self.vault.db.run_task(
+                            fetch_features,
+                            [pic.id for pic in pics],
+                        )
+
+                    if export_type_normalized == Picture.ExportType.FULL:
+                        total_items = len(pics)
+                    else:
+                        total_items = 0
+                        export_faces = export_type_normalized in {
+                            Picture.ExportType.FACE,
+                            Picture.ExportType.FACE_HAND,
+                        }
+                        export_hands = export_type_normalized in {
+                            Picture.ExportType.HAND,
+                            Picture.ExportType.FACE_HAND,
+                        }
+                        for pic in pics:
+                            if (
+                                not getattr(pic, "file_path", None)
+                                or not os.path.exists(
+                                    PictureUtils.resolve_picture_path(
+                                        self.vault.image_root, pic.file_path
+                                    )
+                                )
+                            ):
+                                continue
+                            full_path = PictureUtils.resolve_picture_path(
+                                self.vault.image_root, pic.file_path
+                            )
+                            if PictureUtils.is_video_file(full_path):
+                                continue
+                            if export_faces:
+                                faces = feature_faces_by_pic.get(pic.id, [])
+                                for face in faces:
+                                    if getattr(face, "face_index", 0) < 0:
+                                        continue
+                                    if not face.bbox:
+                                        continue
+                                    total_items += 1
+                            if export_hands:
+                                hands = feature_hands_by_pic.get(pic.id, [])
+                                for hand in hands:
+                                    if getattr(hand, "hand_index", 0) < 0:
+                                        continue
+                                    if not hand.bbox:
+                                        continue
+                                    total_items += 1
+
+                    self.export_tasks[task_id]["total"] = total_items
+                    self.export_tasks[task_id]["processed"] = 0
+
                     with zipfile.ZipFile(
                         zip_path, "w", zipfile.ZIP_DEFLATED
                     ) as zip_file:
@@ -2930,92 +3073,235 @@ class Server:
                                     self.vault.image_root, pic.file_path
                                 )
                                 ext = os.path.splitext(full_path)[1]
-                                arcname = f"image_{idx:05d}{ext}"
-                                if (
-                                    scale_factor < 1.0
-                                    and not PictureUtils.is_video_file(full_path)
-                                ):
+                                if export_type_normalized == Picture.ExportType.FULL:
+                                    arcname = f"image_{idx:05d}{ext}"
+                                    if (
+                                        scale_factor < 1.0
+                                        and not PictureUtils.is_video_file(full_path)
+                                    ):
+                                        try:
+                                            from PIL import Image
+                                            from io import BytesIO
+
+                                            with Image.open(full_path) as img:
+                                                new_width = max(
+                                                    1, int(img.width * scale_factor)
+                                                )
+                                                new_height = max(
+                                                    1, int(img.height * scale_factor)
+                                                )
+                                                resized = img.resize(
+                                                    (new_width, new_height),
+                                                    resample=Image.LANCZOS,
+                                                )
+                                                buffer = BytesIO()
+                                                save_format = (
+                                                    img.format
+                                                    or ext.lstrip(".").upper()
+                                                )
+                                                if save_format.upper() in {
+                                                    "JPG",
+                                                    "JPEG",
+                                                }:
+                                                    resized = resized.convert("RGB")
+                                                resized.save(buffer, format=save_format)
+                                                zip_file.writestr(
+                                                    arcname, buffer.getvalue()
+                                                )
+                                        except Exception as exc:
+                                            logger.warning(
+                                                "Failed to resize %s (%s); falling back to original.",
+                                                full_path,
+                                                exc,
+                                            )
+                                            zip_file.write(full_path, arcname=arcname)
+                                    else:
+                                        zip_file.write(full_path, arcname=arcname)
+                                    caption_text = None
+                                    if caption_mode_normalized == "description":
+                                        caption_text = pic.description or ""
+                                    elif caption_mode_normalized == "tags":
+                                        tags = []
+                                        for tag in getattr(pic, "tags", []) or []:
+                                            tag_value = getattr(tag, "tag", None)
+                                            if tag_value:
+                                                tags.append(tag_value)
+                                        caption_text = ", ".join(tags)
+
+                                    if include_character_name_enabled:
+                                        character_names = []
+                                        for character in (
+                                            getattr(pic, "characters", []) or []
+                                        ):
+                                            name_value = getattr(character, "name", None)
+                                            if name_value:
+                                                character_names.append(name_value)
+                                        if character_names:
+                                            if caption_mode_normalized == "tags":
+                                                prefix = ", ".join(character_names)
+                                                if caption_text:
+                                                    caption_text = (
+                                                        f"{prefix}, {caption_text}"
+                                                    )
+                                                else:
+                                                    caption_text = prefix
+                                            elif (
+                                                caption_mode_normalized
+                                                == "description"
+                                            ):
+                                                prefix = "A picture of " + ", ".join(
+                                                    character_names
+                                                )
+                                                if caption_text:
+                                                    caption_text = (
+                                                        f"{prefix}. {caption_text}"
+                                                    )
+                                                else:
+                                                    caption_text = prefix
+
+                                    if (
+                                        caption_mode_normalized != "none"
+                                        and caption_text is not None
+                                    ):
+                                        zip_file.writestr(
+                                            f"image_{idx:05d}.txt", caption_text
+                                        )
+                                    self.export_tasks[task_id]["processed"] += 1
+                                else:
+                                    if PictureUtils.is_video_file(full_path):
+                                        continue
                                     try:
                                         from PIL import Image
                                         from io import BytesIO
 
                                         with Image.open(full_path) as img:
-                                            new_width = max(
-                                                1, int(img.width * scale_factor)
+                                            base_name = f"image_{idx:05d}"
+                                            export_faces = (
+                                                export_type_normalized
+                                                in {
+                                                    Picture.ExportType.FACE,
+                                                    Picture.ExportType.FACE_HAND,
+                                                }
                                             )
-                                            new_height = max(
-                                                1, int(img.height * scale_factor)
+                                            export_hands = (
+                                                export_type_normalized
+                                                in {
+                                                    Picture.ExportType.HAND,
+                                                    Picture.ExportType.FACE_HAND,
+                                                }
                                             )
-                                            resized = img.resize(
-                                                (new_width, new_height),
-                                                resample=Image.LANCZOS,
-                                            )
-                                            buffer = BytesIO()
-                                            save_format = (
-                                                img.format or ext.lstrip(".").upper()
-                                            )
-                                            if save_format.upper() in {"JPG", "JPEG"}:
-                                                resized = resized.convert("RGB")
-                                            resized.save(buffer, format=save_format)
-                                            zip_file.writestr(
-                                                arcname, buffer.getvalue()
-                                            )
+
+                                            if export_faces:
+                                                faces = feature_faces_by_pic.get(
+                                                    pic.id, []
+                                                )
+                                                face_count = 0
+                                                for face in faces:
+                                                    if getattr(face, "face_index", 0) < 0:
+                                                        continue
+                                                    bbox = _clamp_bbox(
+                                                        face.bbox, img.width, img.height
+                                                    )
+                                                    if not bbox:
+                                                        continue
+                                                    face_count += 1
+                                                    if face_count == 1:
+                                                        suffix = "_face"
+                                                    else:
+                                                        suffix = f"_face{face_count}"
+                                                    arcname = (
+                                                        f"{base_name}{suffix}{ext}"
+                                                    )
+                                                    crop = img.crop(
+                                                        (bbox[0], bbox[1], bbox[2], bbox[3])
+                                                    )
+                                                    buffer = BytesIO()
+                                                    save_format = (
+                                                        img.format
+                                                        or ext.lstrip(".").upper()
+                                                    )
+                                                    if save_format.upper() in {
+                                                        "JPG",
+                                                        "JPEG",
+                                                    }:
+                                                        crop = crop.convert("RGB")
+                                                    crop.save(buffer, format=save_format)
+                                                    zip_file.writestr(
+                                                        arcname, buffer.getvalue()
+                                                    )
+                                                    tags = (
+                                                        face_tags_by_face.get(face.id, [])
+                                                    )
+                                                    caption_text = ", ".join(
+                                                        dict.fromkeys(tags)
+                                                    )
+                                                    zip_file.writestr(
+                                                        f"{base_name}{suffix}.txt",
+                                                        caption_text,
+                                                    )
+                                                    self.export_tasks[task_id][
+                                                        "processed"
+                                                    ] += 1
+
+                                            if export_hands:
+                                                hands = feature_hands_by_pic.get(
+                                                    pic.id, []
+                                                )
+                                                fallback_index = 0
+                                                for hand in hands:
+                                                    if getattr(hand, "hand_index", 0) < 0:
+                                                        continue
+                                                    bbox = _clamp_bbox(
+                                                        hand.bbox, img.width, img.height
+                                                    )
+                                                    if not bbox:
+                                                        continue
+                                                    hand_index = getattr(hand, "hand_index", None)
+                                                    if hand_index is None:
+                                                        fallback_index += 1
+                                                        hand_number = fallback_index
+                                                    else:
+                                                        hand_number = hand_index + 1
+                                                    suffix = f"_hand{hand_number}"
+                                                    arcname = (
+                                                        f"{base_name}{suffix}{ext}"
+                                                    )
+                                                    crop = img.crop(
+                                                        (bbox[0], bbox[1], bbox[2], bbox[3])
+                                                    )
+                                                    buffer = BytesIO()
+                                                    save_format = (
+                                                        img.format
+                                                        or ext.lstrip(".").upper()
+                                                    )
+                                                    if save_format.upper() in {
+                                                        "JPG",
+                                                        "JPEG",
+                                                    }:
+                                                        crop = crop.convert("RGB")
+                                                    crop.save(buffer, format=save_format)
+                                                    zip_file.writestr(
+                                                        arcname, buffer.getvalue()
+                                                    )
+                                                    tags = (
+                                                        hand_tags_by_hand.get(hand.id, [])
+                                                    )
+                                                    caption_text = ", ".join(
+                                                        dict.fromkeys(tags)
+                                                    )
+                                                    zip_file.writestr(
+                                                        f"{base_name}{suffix}.txt",
+                                                        caption_text,
+                                                    )
+                                                    self.export_tasks[task_id][
+                                                        "processed"
+                                                    ] += 1
                                     except Exception as exc:
                                         logger.warning(
-                                            "Failed to resize %s (%s); falling back to original.",
+                                            "Failed to export crops for %s (%s)",
                                             full_path,
                                             exc,
                                         )
-                                        zip_file.write(full_path, arcname=arcname)
-                                else:
-                                    zip_file.write(full_path, arcname=arcname)
-                                caption_text = None
-                                if caption_mode_normalized == "description":
-                                    caption_text = pic.description or ""
-                                elif caption_mode_normalized == "tags":
-                                    tags = []
-                                    for tag in getattr(pic, "tags", []) or []:
-                                        tag_value = getattr(tag, "tag", None)
-                                        if tag_value:
-                                            tags.append(tag_value)
-                                    caption_text = ", ".join(tags)
-
-                                if include_character_name_enabled:
-                                    character_names = []
-                                    for character in (
-                                        getattr(pic, "characters", []) or []
-                                    ):
-                                        name_value = getattr(character, "name", None)
-                                        if name_value:
-                                            character_names.append(name_value)
-                                    if character_names:
-                                        if caption_mode_normalized == "tags":
-                                            prefix = ", ".join(character_names)
-                                            if caption_text:
-                                                caption_text = (
-                                                    f"{prefix}, {caption_text}"
-                                                )
-                                            else:
-                                                caption_text = prefix
-                                        elif caption_mode_normalized == "description":
-                                            prefix = "A picture of " + ", ".join(
-                                                character_names
-                                            )
-                                            if caption_text:
-                                                caption_text = (
-                                                    f"{prefix}. {caption_text}"
-                                                )
-                                            else:
-                                                caption_text = prefix
-
-                                if (
-                                    caption_mode_normalized != "none"
-                                    and caption_text is not None
-                                ):
-                                    zip_file.writestr(
-                                        f"image_{idx:05d}.txt", caption_text
-                                    )
-                                self.export_tasks[task_id]["processed"] += 1
 
                     zip_size = os.path.getsize(zip_path)
                     logger.debug(
@@ -3470,6 +3756,142 @@ class Server:
             except Exception as e:
                 logger.error(f"Failed to remove tag: {e}")
                 raise HTTPException(status_code=500, detail="Failed to remove tag")
+
+        @self.api.get("/faces/{face_id}/tags")
+        async def list_face_tags(face_id: int):
+            def fetch_tags(session: Session, face_id: int):
+                face = session.get(Face, face_id)
+                if face is None:
+                    raise HTTPException(status_code=404, detail="Face not found")
+                rows = session.exec(
+                    select(Tag.tag)
+                    .join(FaceTag, Tag.id == FaceTag.tag_id)
+                    .where(FaceTag.face_id == face_id)
+                ).all()
+                return [row for row in rows if row]
+
+            tags = self.vault.db.run_task(fetch_tags, face_id)
+            return {"tags": tags}
+
+        @self.api.post("/faces/{face_id}/tags")
+        async def add_tag_to_face(face_id: int, payload: dict = Body(...)):
+            tag_value = (payload or {}).get("tag")
+            if not tag_value:
+                raise HTTPException(status_code=400, detail="Tag is required")
+
+            def update_face(session: Session, face_id: int, tag_value: str):
+                face = session.get(Face, face_id)
+                if face is None:
+                    raise HTTPException(status_code=404, detail="Face not found")
+                picture_id = face.picture_id
+                tag = session.exec(
+                    select(Tag).where(
+                        Tag.picture_id == picture_id,
+                        Tag.tag == tag_value,
+                    )
+                ).first()
+                if tag is None:
+                    tag = Tag(tag=tag_value, picture_id=picture_id)
+                    session.add(tag)
+                    session.flush()
+                if tag not in face.tags:
+                    face.tags.append(tag)
+                session.add(face)
+                session.commit()
+                session.refresh(face)
+                return [t.tag for t in (face.tags or []) if t.tag]
+
+            tags = self.vault.db.run_task(update_face, face_id, tag_value)
+            self.vault.notify(EventType.CHANGED_TAGS)
+            return {"status": "success", "tags": tags}
+
+        @self.api.delete("/faces/{face_id}/tags/{tag}")
+        async def remove_tag_from_face(face_id: int, tag: str):
+            def update_face(session: Session, face_id: int, tag_value: str):
+                face = session.get(Face, face_id)
+                if face is None:
+                    raise HTTPException(status_code=404, detail="Face not found")
+                target = next(
+                    (t for t in (face.tags or []) if t.tag == tag_value), None
+                )
+                if target is not None:
+                    face.tags.remove(target)
+                session.add(face)
+                session.commit()
+                session.refresh(face)
+                return [t.tag for t in (face.tags or []) if t.tag]
+
+            tags = self.vault.db.run_task(update_face, face_id, tag)
+            self.vault.notify(EventType.CHANGED_TAGS)
+            return {"status": "success", "tags": tags}
+
+        @self.api.get("/hands/{hand_id}/tags")
+        async def list_hand_tags(hand_id: int):
+            def fetch_tags(session: Session, hand_id: int):
+                hand = session.get(Hand, hand_id)
+                if hand is None:
+                    raise HTTPException(status_code=404, detail="Hand not found")
+                rows = session.exec(
+                    select(Tag.tag)
+                    .join(HandTag, Tag.id == HandTag.tag_id)
+                    .where(HandTag.hand_id == hand_id)
+                ).all()
+                return [row for row in rows if row]
+
+            tags = self.vault.db.run_task(fetch_tags, hand_id)
+            return {"tags": tags}
+
+        @self.api.post("/hands/{hand_id}/tags")
+        async def add_tag_to_hand(hand_id: int, payload: dict = Body(...)):
+            tag_value = (payload or {}).get("tag")
+            if not tag_value:
+                raise HTTPException(status_code=400, detail="Tag is required")
+
+            def update_hand(session: Session, hand_id: int, tag_value: str):
+                hand = session.get(Hand, hand_id)
+                if hand is None:
+                    raise HTTPException(status_code=404, detail="Hand not found")
+                picture_id = hand.picture_id
+                tag = session.exec(
+                    select(Tag).where(
+                        Tag.picture_id == picture_id,
+                        Tag.tag == tag_value,
+                    )
+                ).first()
+                if tag is None:
+                    tag = Tag(tag=tag_value, picture_id=picture_id)
+                    session.add(tag)
+                    session.flush()
+                if tag not in hand.tags:
+                    hand.tags.append(tag)
+                session.add(hand)
+                session.commit()
+                session.refresh(hand)
+                return [t.tag for t in (hand.tags or []) if t.tag]
+
+            tags = self.vault.db.run_task(update_hand, hand_id, tag_value)
+            self.vault.notify(EventType.CHANGED_TAGS)
+            return {"status": "success", "tags": tags}
+
+        @self.api.delete("/hands/{hand_id}/tags/{tag}")
+        async def remove_tag_from_hand(hand_id: int, tag: str):
+            def update_hand(session: Session, hand_id: int, tag_value: str):
+                hand = session.get(Hand, hand_id)
+                if hand is None:
+                    raise HTTPException(status_code=404, detail="Hand not found")
+                target = next(
+                    (t for t in (hand.tags or []) if t.tag == tag_value), None
+                )
+                if target is not None:
+                    hand.tags.remove(target)
+                session.add(hand)
+                session.commit()
+                session.refresh(hand)
+                return [t.tag for t in (hand.tags or []) if t.tag]
+
+            tags = self.vault.db.run_task(update_hand, hand_id, tag)
+            self.vault.notify(EventType.CHANGED_TAGS)
+            return {"status": "success", "tags": tags}
 
         @self.api.post("/pictures/clear_tags")
         async def clear_tags_for_pictures(payload: dict = Body(...)):

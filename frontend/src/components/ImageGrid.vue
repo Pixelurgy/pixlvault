@@ -66,6 +66,18 @@
       <div class="export-progress-meta">
         {{ exportProgress.processed }} / {{ exportProgress.total }}
       </div>
+      <button
+        v-if="
+          exportProgress.status !== 'completed' &&
+          exportProgress.status !== 'failed' &&
+          exportProgress.status !== 'cancelled'
+        "
+        class="export-progress-abort"
+        type="button"
+        @click="abortExportZip"
+      >
+        Abort
+      </button>
     </div>
 
     <div
@@ -690,6 +702,7 @@ const exportProgress = reactive({
   processed: 0,
   total: 0,
   message: "",
+  cancelRequested: false,
 });
 
 const exportProgressPercent = computed(() => {
@@ -3881,12 +3894,16 @@ function sleep(ms) {
 }
 
 async function exportCurrentViewToZip(options = {}) {
+  const exportType = options.exportType || "full";
   const captionMode = options.captionMode || "description";
   const includeCharacterName = options.includeCharacterName !== false;
   const resolution = options.resolution || "original";
   let url = `${props.backendUrl}/pictures/export`;
   const params = buildPictureIdsQueryParams();
   const extraParams = new URLSearchParams();
+  if (exportType) {
+    extraParams.append("export_type", exportType);
+  }
   if (captionMode) {
     extraParams.append("caption_mode", captionMode);
   }
@@ -3912,6 +3929,7 @@ async function exportCurrentViewToZip(options = {}) {
     exportProgress.processed = 0;
     exportProgress.total = 0;
     exportProgress.message = "Preparing export...";
+    exportProgress.cancelRequested = false;
 
     const startRes = await apiClient.get(url);
     const taskId = startRes?.data?.task_id;
@@ -3922,6 +3940,12 @@ async function exportCurrentViewToZip(options = {}) {
     let downloadUrl = null;
     const maxAttempts = 600;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      if (exportProgress.cancelRequested) {
+        exportProgress.status = "cancelled";
+        exportProgress.message = "Export cancelled.";
+        exportProgress.visible = false;
+        return;
+      }
       const statusRes = await apiClient.get(
         `${props.backendUrl}/pictures/export/status`,
         { params: { task_id: taskId } },
@@ -3942,6 +3966,13 @@ async function exportCurrentViewToZip(options = {}) {
         throw new Error("Export failed on server.");
       }
       await sleep(1000);
+    }
+
+    if (exportProgress.cancelRequested) {
+      exportProgress.status = "cancelled";
+      exportProgress.message = "Export cancelled.";
+      exportProgress.visible = false;
+      return;
     }
 
     if (!downloadUrl) {
@@ -3981,6 +4012,11 @@ async function exportCurrentViewToZip(options = {}) {
       exportProgress.message = "";
     }, 4000);
   }
+}
+
+function abortExportZip() {
+  if (!exportProgress.visible) return;
+  exportProgress.cancelRequested = true;
 }
 
 // Search functionality
@@ -4233,6 +4269,24 @@ function handleScoringClose() {
   margin-top: 6px;
   font-size: 0.8em;
   opacity: 0.85;
+}
+
+.export-progress-abort {
+  margin-top: 10px;
+  width: 100%;
+  background: #c62828;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.export-progress-abort:hover {
+  background: #b71c1c;
 }
 .face-bbox-select {
   position: absolute;

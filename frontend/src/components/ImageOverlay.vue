@@ -55,8 +55,8 @@
           <button
             class="overlay-icon-btn"
             type="button"
-            title="Toggle face bounding boxes"
-            aria-label="Toggle face bounding boxes"
+            title="Toggle face/hand bounding boxes"
+            aria-label="Toggle face/hand bounding boxes"
             @click.stop="toggleFaceBbox"
             :class="{ hidden: chromeHidden }"
           >
@@ -135,39 +135,47 @@
                   @load="updateOverlayDims"
                 />
               </template>
-              <template v-if="showFaceBbox">
-                <div v-if="faceBboxes.length === 0" class="face-bbox-empty">
-                  No face bboxes found
+              <template v-if="showFaceBbox && overlayReady">
+                <div
+                  v-if="faceBboxes.length === 0 && handBboxes.length === 0"
+                  class="face-bbox-empty"
+                >
+                  No bboxes found
                 </div>
                 <div
                   v-for="(face, idx) in faceBboxes"
-                  :key="idx"
-                  class="face-bbox-overlay"
-                  :style="{
-                    border: `1px solid ${faceBoxColor(idx)}`,
-                    background: `${faceBoxColor(idx)}22`,
-                    left: `${
-                      (overlayDims.offsetX || 0) +
-                        (face.bbox[0] * overlayDims.width) /
-                          overlayDims.naturalWidth || 0
-                    }px`,
-                    top: `${
-                      (overlayDims.offsetY || 0) +
-                        (face.bbox[1] * overlayDims.height) /
-                          overlayDims.naturalHeight || 0
-                    }px`,
-                    width: `${
-                      ((face.bbox[2] - face.bbox[0]) * overlayDims.width) /
-                        overlayDims.naturalWidth || 0
-                    }px`,
-                    height: `${
-                      ((face.bbox[3] - face.bbox[1]) * overlayDims.height) /
-                        overlayDims.naturalHeight || 0
-                    }px`,
-                  }"
+                  :key="`face-${idx}`"
+                  :class="[
+                    'face-bbox-overlay',
+                    'bbox-drop-target',
+                    { 'bbox-drop-active': isDragOver('face', face.id) },
+                  ]"
+                  :style="getOverlayBoxStyle(face.bbox, faceBoxColor(idx))"
+                  @dragover.prevent="handleDragOver('face', face.id)"
+                  @dragenter.prevent="handleDragOver('face', face.id)"
+                  @dragleave="handleDragLeave('face', face.id)"
+                  @drop.prevent="handleDropToFace(face)"
                 >
                   <span class="face-bbox-label">
                     {{ face.character_name || `Face ${idx + 1}` }}
+                  </span>
+                </div>
+                <div
+                  v-for="(hand, idx) in handBboxes"
+                  :key="`hand-${idx}`"
+                  :class="[
+                    'hand-bbox-overlay',
+                    'bbox-drop-target',
+                    { 'bbox-drop-active': isDragOver('hand', hand.id) },
+                  ]"
+                  :style="getOverlayBoxStyle(hand.bbox, handBoxColor(idx))"
+                  @dragover.prevent="handleDragOver('hand', hand.id)"
+                  @dragenter.prevent="handleDragOver('hand', hand.id)"
+                  @dragleave="handleDragLeave('hand', hand.id)"
+                  @drop.prevent="handleDropToHand(hand)"
+                >
+                  <span class="hand-bbox-label">
+                    {{ handLabel(hand, idx) }}
                   </span>
                 </div>
               </template>
@@ -325,7 +333,12 @@
                     ></div>
                   </div>
                   <div class="face-assign-meta">
-                    <div class="face-assign-label">{{ face.label }}</div>
+                    <div
+                      class="face-assign-label"
+                      :style="{ color: faceBoxColor(face.faceIdx) }"
+                    >
+                      {{ face.label }}
+                    </div>
                     <select
                       class="face-assign-select"
                       :disabled="!face.id"
@@ -363,7 +376,7 @@
             <div v-else class="face-assign-empty">No faces detected</div>
           </div>
 
-          <div class="sidebar-section">
+          <div class="sidebar-section sidebar-section--tags">
             <div class="section-header">
               <span>Tags</span>
               <span class="section-meta-group">
@@ -396,33 +409,148 @@
                   color="primary"
                 />
               </div>
-              <span
-                v-for="tag in image?.tags || []"
-                :key="tag"
-                :class="[
-                  'overlay-tag',
-                  { 'overlay-tag--penalized': isPenalizedTag(tag) },
-                ]"
-              >
-                {{ tag }}
-                <button
-                  class="tag-delete-btn"
-                  @click.stop="removeTag(tag)"
-                  title="Remove tag"
+              <div class="tag-section">
+                <div class="tag-section-title">All Image Tags</div>
+                <div
+                  class="tag-drop-zone"
+                  :class="{
+                    'tag-drop-zone--active': isDragOver('unassigned', null),
+                  }"
+                  @dragover.prevent="handleDragOver('unassigned', null)"
+                  @dragenter.prevent="handleDragOver('unassigned', null)"
+                  @dragleave="handleDragLeave('unassigned', null)"
+                  @drop.prevent="handleDropToUnassigned"
                 >
-                  <v-icon size="12">mdi-close</v-icon>
-                </button>
-              </span>
-              <input
-                v-if="addingTag"
-                ref="tagInputRef"
-                v-model="newTag"
-                @keydown.enter.prevent="confirmAddTag"
-                @keydown="handleTagBackspace"
-                @blur="cancelAddTag"
-                class="tag-add-input"
-                placeholder="New tag"
-              />
+                  <span
+                    v-for="tag in unassignedTags"
+                    :key="`unassigned-${tag}`"
+                    :class="[
+                      'overlay-tag',
+                      { 'overlay-tag--penalized': isPenalizedTag(tag) },
+                    ]"
+                    draggable="true"
+                    @dragstart="startTagDrag(tag, 'unassigned', null, $event)"
+                    @dragend="clearTagDrag"
+                  >
+                    {{ tag }}
+                    <button
+                      class="tag-delete-btn"
+                      @click.stop="removeTag(tag)"
+                      title="Remove tag"
+                    >
+                      <v-icon size="12">mdi-close</v-icon>
+                    </button>
+                  </span>
+                  <div
+                    v-if="!unassignedTags.length"
+                    class="tag-drop-placeholder"
+                  >
+                    Drop tags here
+                  </div>
+                  <input
+                    v-if="addingTag"
+                    ref="tagInputRef"
+                    v-model="newTag"
+                    @keydown.enter.prevent="confirmAddTag"
+                    @keydown="handleTagBackspace"
+                    @blur="cancelAddTag"
+                    class="tag-add-input"
+                    placeholder="New tag"
+                  />
+                </div>
+              </div>
+
+              <div
+                v-for="group in faceTagGroups"
+                :key="group.faceKey"
+                class="tag-section"
+              >
+                <div class="tag-section-title" :style="{ color: group.color }">
+                  {{ group.label }}
+                </div>
+                <div
+                  class="tag-drop-zone"
+                  :class="{
+                    'tag-drop-zone--active': isDragOver('face', group.face.id),
+                  }"
+                  @dragover.prevent="handleDragOver('face', group.face.id)"
+                  @dragenter.prevent="handleDragOver('face', group.face.id)"
+                  @dragleave="handleDragLeave('face', group.face.id)"
+                  @drop.prevent="handleDropToFace(group.face)"
+                >
+                  <span
+                    v-for="tag in group.tags"
+                    :key="`face-${group.faceKey}-${tag}`"
+                    :class="[
+                      'overlay-tag',
+                      { 'overlay-tag--penalized': isPenalizedTag(tag) },
+                    ]"
+                    draggable="true"
+                    @dragstart="
+                      startTagDrag(tag, 'face', group.face.id, $event)
+                    "
+                    @dragend="clearTagDrag"
+                  >
+                    {{ tag }}
+                    <button
+                      class="tag-delete-btn"
+                      @click.stop="removeTagFromFace(group.face, tag)"
+                      title="Remove tag"
+                    >
+                      <v-icon size="12">mdi-close</v-icon>
+                    </button>
+                  </span>
+                  <div v-if="!group.tags.length" class="tag-drop-placeholder">
+                    Drop tags here
+                  </div>
+                </div>
+              </div>
+
+              <div
+                v-for="group in handTagGroups"
+                :key="group.handKey"
+                class="tag-section"
+              >
+                <div class="tag-section-title" :style="{ color: group.color }">
+                  {{ group.label }}
+                </div>
+                <div
+                  class="tag-drop-zone"
+                  :class="{
+                    'tag-drop-zone--active': isDragOver('hand', group.hand.id),
+                  }"
+                  @dragover.prevent="handleDragOver('hand', group.hand.id)"
+                  @dragenter.prevent="handleDragOver('hand', group.hand.id)"
+                  @dragleave="handleDragLeave('hand', group.hand.id)"
+                  @drop.prevent="handleDropToHand(group.hand)"
+                >
+                  <span
+                    v-for="tag in group.tags"
+                    :key="`hand-${group.handKey}-${tag}`"
+                    :class="[
+                      'overlay-tag',
+                      { 'overlay-tag--penalized': isPenalizedTag(tag) },
+                    ]"
+                    draggable="true"
+                    @dragstart="
+                      startTagDrag(tag, 'hand', group.hand.id, $event)
+                    "
+                    @dragend="clearTagDrag"
+                  >
+                    {{ tag }}
+                    <button
+                      class="tag-delete-btn"
+                      @click.stop="removeTagFromHand(group.hand, tag)"
+                      title="Remove tag"
+                    >
+                      <v-icon size="12">mdi-close</v-icon>
+                    </button>
+                  </span>
+                  <div v-if="!group.tags.length" class="tag-drop-placeholder">
+                    Drop tags here
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1078,6 +1206,8 @@ function toggleFaceBbox() {
     showFaceBbox.value,
     "faceBboxes:",
     faceBboxes.value,
+    "handBboxes:",
+    handBboxes.value,
   );
   image.value = image.value ? { ...image.value } : null;
 }
@@ -1093,6 +1223,19 @@ const overlayDims = ref({
   naturalHeight: 1,
   offsetX: 0,
   offsetY: 0,
+});
+const overlayReady = computed(() => {
+  const dims = overlayDims.value;
+  return (
+    Number.isFinite(dims.width) &&
+    Number.isFinite(dims.height) &&
+    Number.isFinite(dims.naturalWidth) &&
+    Number.isFinite(dims.naturalHeight) &&
+    dims.width > 1 &&
+    dims.height > 1 &&
+    dims.naturalWidth > 1 &&
+    dims.naturalHeight > 1
+  );
 });
 let overlayResizeObserver = null;
 let mediaResizeObserver = null;
@@ -1234,6 +1377,15 @@ function onTouchEnd() {
 
 // Store multiple face bounding boxes (now full face objects)
 const faceBboxes = ref([]);
+const handBboxes = ref([]);
+const faceTagMap = ref({});
+const handTagMap = ref({});
+const dragState = reactive({
+  tag: null,
+  sourceType: null,
+  sourceId: null,
+});
+const dragOverTarget = ref({ type: null, id: null });
 const overlayThumbnail = ref(null);
 const overlayThumbnailDims = ref({ width: 256, height: 256 });
 const overlayThumbnailFaceMap = ref({});
@@ -1325,10 +1477,153 @@ async function fetchFaceBboxes(imageId) {
       }),
     );
     faceBboxes.value = firstFrameFaces;
+    await fetchFaceTagsForFaces(firstFrameFaces);
   } catch (e) {
     console.error("Error in fetchFaceBboxes:", e);
     faceBboxes.value = [];
   }
+}
+
+async function fetchHandBboxes(imageId) {
+  if (!imageId || !backendUrl.value) {
+    handBboxes.value = [];
+    return;
+  }
+  try {
+    const res = await apiClient.get(
+      `${backendUrl.value}/pictures/${imageId}/hands`,
+    );
+    const hands = await res.data;
+    const handArray = Array.isArray(hands) ? hands : hands.hands;
+    const firstFrameHands = (handArray || []).filter(
+      (h) =>
+        h.frame_index === 0 && Array.isArray(h.bbox) && h.bbox.length === 4,
+    );
+    handBboxes.value = firstFrameHands;
+    await fetchHandTagsForHands(firstFrameHands);
+  } catch (e) {
+    console.error("Error in fetchHandBboxes:", e);
+    handBboxes.value = [];
+  }
+}
+
+async function fetchFaceTagsForFaces(faces) {
+  if (!backendUrl.value || !Array.isArray(faces) || !faces.length) {
+    faceTagMap.value = {};
+    return;
+  }
+  const entries = await Promise.all(
+    faces.map(async (face) => {
+      try {
+        const res = await apiClient.get(
+          `${backendUrl.value}/faces/${face.id}/tags`,
+        );
+        const payload = await res.data;
+        const tags = Array.isArray(payload) ? payload : payload?.tags;
+        return [face.id, Array.isArray(tags) ? tags : []];
+      } catch (e) {
+        return [face.id, []];
+      }
+    }),
+  );
+  const nextMap = {};
+  for (const [faceId, tags] of entries) {
+    nextMap[faceId] = Array.from(new Set(tags)).sort();
+  }
+  faceTagMap.value = nextMap;
+}
+
+async function fetchHandTagsForHands(hands) {
+  if (!backendUrl.value || !Array.isArray(hands) || !hands.length) {
+    handTagMap.value = {};
+    return;
+  }
+  const entries = await Promise.all(
+    hands.map(async (hand) => {
+      try {
+        const res = await apiClient.get(
+          `${backendUrl.value}/hands/${hand.id}/tags`,
+        );
+        const payload = await res.data;
+        const tags = Array.isArray(payload) ? payload : payload?.tags;
+        return [hand.id, Array.isArray(tags) ? tags : []];
+      } catch (e) {
+        return [hand.id, []];
+      }
+    }),
+  );
+  const nextMap = {};
+  for (const [handId, tags] of entries) {
+    nextMap[handId] = Array.from(new Set(tags)).sort();
+  }
+  handTagMap.value = nextMap;
+}
+
+function ensureTagInImage(tag) {
+  if (!image.value) return;
+  const tags = Array.isArray(image.value.tags) ? image.value.tags : [];
+  if (!tags.includes(tag)) {
+    tags.push(tag);
+    tags.sort();
+    image.value = { ...image.value, tags };
+    emit("add-tag", image.value.id, tag);
+  }
+}
+
+async function assignTagToFace(face, tag) {
+  if (!face?.id || !tag || !backendUrl.value) return;
+  ensureTagInImage(tag);
+  const res = await apiClient.post(
+    `${backendUrl.value}/faces/${face.id}/tags`,
+    { tag },
+  );
+  const payload = await res.data;
+  const tags = Array.isArray(payload) ? payload : payload?.tags;
+  faceTagMap.value = {
+    ...faceTagMap.value,
+    [face.id]: Array.isArray(tags) ? tags : [],
+  };
+}
+
+async function removeTagFromFace(face, tag) {
+  if (!face?.id || !tag || !backendUrl.value) return;
+  const res = await apiClient.delete(
+    `${backendUrl.value}/faces/${face.id}/tags/${encodeURIComponent(tag)}`,
+  );
+  const payload = await res.data;
+  const tags = Array.isArray(payload) ? payload : payload?.tags;
+  faceTagMap.value = {
+    ...faceTagMap.value,
+    [face.id]: Array.isArray(tags) ? tags : [],
+  };
+}
+
+async function assignTagToHand(hand, tag) {
+  if (!hand?.id || !tag || !backendUrl.value) return;
+  ensureTagInImage(tag);
+  const res = await apiClient.post(
+    `${backendUrl.value}/hands/${hand.id}/tags`,
+    { tag },
+  );
+  const payload = await res.data;
+  const tags = Array.isArray(payload) ? payload : payload?.tags;
+  handTagMap.value = {
+    ...handTagMap.value,
+    [hand.id]: Array.isArray(tags) ? tags : [],
+  };
+}
+
+async function removeTagFromHand(hand, tag) {
+  if (!hand?.id || !tag || !backendUrl.value) return;
+  const res = await apiClient.delete(
+    `${backendUrl.value}/hands/${hand.id}/tags/${encodeURIComponent(tag)}`,
+  );
+  const payload = await res.data;
+  const tags = Array.isArray(payload) ? payload : payload?.tags;
+  handTagMap.value = {
+    ...handTagMap.value,
+    [hand.id]: Array.isArray(tags) ? tags : [],
+  };
 }
 
 async function fetchOverlayThumbnail(imageId) {
@@ -1599,10 +1894,14 @@ watch(
   (newId) => {
     if (newId) {
       fetchFaceBboxes(newId);
+      fetchHandBboxes(newId);
       fetchOverlayMetadata(newId);
       fetchOverlayThumbnail(newId);
     } else {
       faceBboxes.value = [];
+      handBboxes.value = [];
+      faceTagMap.value = {};
+      handTagMap.value = {};
       overlayThumbnail.value = null;
       overlayThumbnailFaceMap.value = {};
       overlayThumbnailDims.value = { width: 256, height: 256 };
@@ -1635,6 +1934,117 @@ const faceAssignItems = computed(() => {
     label: `Face ${idx + 1}`,
   }));
 });
+
+const faceTagGroups = computed(() => {
+  const faces = Array.isArray(faceBboxes.value) ? faceBboxes.value : [];
+  return faces.map((face, idx) => ({
+    face,
+    faceKey: face?.id ?? `face-${idx}`,
+    label: face?.character_name || `Face ${idx + 1}`,
+    tags: faceTagMap.value?.[face.id] || [],
+    color: faceBoxColor(idx),
+  }));
+});
+
+const handTagGroups = computed(() => {
+  const hands = Array.isArray(handBboxes.value) ? handBboxes.value : [];
+  return hands.map((hand, idx) => ({
+    hand,
+    handKey: hand?.id ?? `hand-${idx}`,
+    label: handLabel(hand, idx),
+    tags: handTagMap.value?.[hand.id] || [],
+    color: handBoxColor(idx),
+  }));
+});
+
+const unassignedTags = computed(() => {
+  const tags = Array.isArray(image.value?.tags) ? image.value.tags : [];
+  return [...tags].sort();
+});
+
+function startTagDrag(tag, sourceType, sourceId, event) {
+  dragState.tag = tag;
+  dragState.sourceType = sourceType;
+  dragState.sourceId = sourceId;
+  if (event?.dataTransfer) {
+    event.dataTransfer.setData("text/plain", tag);
+    event.dataTransfer.effectAllowed = "move";
+  }
+}
+
+function clearTagDrag() {
+  dragState.tag = null;
+  dragState.sourceType = null;
+  dragState.sourceId = null;
+  dragOverTarget.value = { type: null, id: null };
+}
+
+function handleDragOver(type, id) {
+  dragOverTarget.value = { type, id };
+}
+
+function handleDragLeave(type, id) {
+  if (dragOverTarget.value?.type === type && dragOverTarget.value?.id === id) {
+    dragOverTarget.value = { type: null, id: null };
+  }
+}
+
+function isDragOver(type, id) {
+  return dragOverTarget.value?.type === type && dragOverTarget.value?.id === id;
+}
+
+async function handleTagDrop(targetType, targetId) {
+  const tag = dragState.tag;
+  const sourceType = dragState.sourceType;
+  const sourceId = dragState.sourceId;
+  if (!tag) return;
+  if (targetType === sourceType && targetId === sourceId) {
+    clearTagDrag();
+    return;
+  }
+
+  if (targetType === "unassigned") {
+    if (sourceType === "face" && sourceId != null) {
+      const face = faceBboxes.value.find((f) => f.id === sourceId);
+      if (face) await removeTagFromFace(face, tag);
+    }
+    if (sourceType === "hand" && sourceId != null) {
+      const hand = handBboxes.value.find((h) => h.id === sourceId);
+      if (hand) await removeTagFromHand(hand, tag);
+    }
+    clearTagDrag();
+    return;
+  }
+
+  if (targetType === "face") {
+    const face = faceBboxes.value.find((f) => f.id === targetId);
+    if (!face) return;
+    await assignTagToFace(face, tag);
+    clearTagDrag();
+    return;
+  }
+
+  if (targetType === "hand") {
+    const hand = handBboxes.value.find((h) => h.id === targetId);
+    if (!hand) return;
+    await assignTagToHand(hand, tag);
+    clearTagDrag();
+  }
+}
+
+async function handleDropToUnassigned() {
+  await handleTagDrop("unassigned", null);
+}
+
+async function handleDropToFace(face) {
+  if (!face?.id) return;
+  await handleTagDrop("face", face.id);
+}
+
+async function handleDropToHand(hand) {
+  if (!hand?.id) return;
+  await handleTagDrop("hand", hand.id);
+}
 
 const sortedCharacters = computed(() => {
   const list = Array.isArray(characters.value) ? characters.value : [];
@@ -1976,6 +2386,55 @@ function faceBoxColor(idx) {
     "#7c4dff", // indigo
   ];
   return palette[idx % palette.length];
+}
+
+function handBoxColor(idx) {
+  const palette = [
+    "#00e5ff", // cyan
+    "#ff6d00", // orange
+    "#00e676", // green
+    "#f50057", // pink
+    "#651fff", // purple
+    "#c0ca33", // lime
+    "#ff1744", // red
+    "#18ffff", // teal
+  ];
+  return palette[idx % palette.length];
+}
+
+function handLabel(hand, idx) {
+  const handIndex = hand?.hand_index;
+  if (typeof handIndex === "number" && Number.isFinite(handIndex)) {
+    return `Hand ${handIndex + 1}`;
+  }
+  return `Hand ${idx + 1}`;
+}
+
+function isValidOverlayBBox(bbox) {
+  return Array.isArray(bbox) && bbox.length === 4;
+}
+
+function getOverlayBoxStyle(bbox, color) {
+  if (!overlayReady.value || !isValidOverlayBBox(bbox)) {
+    return { display: "none" };
+  }
+  const dims = overlayDims.value;
+  const x1 = bbox[0];
+  const y1 = bbox[1];
+  const x2 = bbox[2];
+  const y2 = bbox[3];
+  const left = (dims.offsetX || 0) + (x1 * dims.width) / dims.naturalWidth;
+  const top = (dims.offsetY || 0) + (y1 * dims.height) / dims.naturalHeight;
+  const width = ((x2 - x1) * dims.width) / dims.naturalWidth;
+  const height = ((y2 - y1) * dims.height) / dims.naturalHeight;
+  return {
+    border: `1px solid ${color}`,
+    background: `${color}22`,
+    left: `${left || 0}px`,
+    top: `${top || 0}px`,
+    width: `${width || 0}px`,
+    height: `${height || 0}px`,
+  };
 }
 
 function updateDescriptionScrollState() {
@@ -2513,8 +2972,10 @@ function downloadComfyWorkflow(workflow) {
 .overlay-sidebar.open {
   width: 320px;
   padding: 16px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .overlay-sidebar.hidden {
@@ -2524,6 +2985,13 @@ function downloadComfyWorkflow(workflow) {
 
 .sidebar-section {
   margin-bottom: 20px;
+}
+
+.sidebar-section--tags {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .section-header {
@@ -2571,25 +3039,29 @@ function downloadComfyWorkflow(workflow) {
 
 .description-editor textarea {
   width: 100%;
-  min-height: 200px;
+  min-height: 160px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: rgba(0, 0, 0, 0.35);
   color: #fff;
-  padding: 8px;
+  padding: 6px;
   resize: vertical;
 }
 
 .description-actions {
-  margin-top: 8px;
+  margin-top: 6px;
   display: flex;
   gap: 8px;
 }
 
 .tag-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 2px 4px;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .tag-refresh-indicator {
@@ -2602,11 +3074,11 @@ function downloadComfyWorkflow(workflow) {
 .overlay-tag {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
-  border-radius: 8px;
-  padding: 2px 2px 2px 8px;
-  font-size: 0.8rem;
+  border-radius: 6px;
+  padding: 1px 2px 1px 6px;
+  font-size: 0.72rem;
   line-height: 1.2;
-  margin-bottom: 4px;
+  margin-bottom: 0px;
   margin-right: 0px;
   margin-left: 0px;
   justify-content: center;
@@ -2621,7 +3093,7 @@ function downloadComfyWorkflow(workflow) {
 
 .tag-delete-btn {
   margin: 0px;
-  padding: 4px;
+  padding: 2px;
   background: transparent;
   border: none;
   color: rgb(var(--v-theme-primary));
@@ -2640,35 +3112,35 @@ function downloadComfyWorkflow(workflow) {
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: #fff;
   border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 0.74rem;
+  padding: 1px 6px;
+  font-size: 0.7rem;
 }
 
 .face-assign-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 8px;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .face-assign-card {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 6px;
-  padding: 6px;
+  padding: 4px;
 }
 
 .face-assign-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .face-assign-thumb {
   border-radius: 2px;
   flex: 0 0 auto;
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2933,6 +3405,76 @@ function downloadComfyWorkflow(workflow) {
   position: absolute;
   pointer-events: none;
   z-index: 1000 !important;
+}
+
+.hand-bbox-overlay {
+  box-sizing: border-box;
+  position: absolute;
+  pointer-events: none;
+  z-index: 1000 !important;
+}
+
+.bbox-drop-target {
+  pointer-events: auto;
+}
+
+.bbox-drop-target:hover {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.4);
+}
+
+.bbox-drop-active {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.75);
+}
+
+.tag-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.tag-section-title {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.tag-drop-zone {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  min-height: 26px;
+  max-height: 154px;
+  overflow-y: auto;
+}
+
+.tag-list > .tag-section:first-of-type .tag-drop-zone {
+  max-height: 242px;
+}
+
+.tag-drop-zone--active {
+  border-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tag-drop-placeholder {
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.hand-bbox-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 0.75rem;
+  padding: 1px 4px;
+  border-bottom-right-radius: 6px;
 }
 
 @media (max-width: 720px) {

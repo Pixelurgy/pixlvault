@@ -283,6 +283,16 @@
                   "s" }}
                 </div>
                 <v-select
+                  v-model="exportType"
+                  :background-color="'surface'"
+                  :color="'onSurface'"
+                  :items="exportTypeOptions"
+                  item-title="title"
+                  item-value="value"
+                  label="Export type"
+                  density="comfortable"
+                />
+                <v-select
                   v-model="exportCaptionMode"
                   :background-color="'surface'"
                   :color="'onSurface'"
@@ -291,6 +301,7 @@
                   item-value="value"
                   label="Captions"
                   density="comfortable"
+                  :disabled="exportTypeLocksCaptions"
                 />
                 <v-select
                   v-model="exportResolution"
@@ -307,7 +318,7 @@
                   label="Include character name"
                   color="primary"
                   density="comfortable"
-                  :disabled="exportCaptionMode === 'none'"
+                  :disabled="exportCaptionMode === 'none' || exportTypeLocksCaptions"
                 />
                 <v-btn color="primary" @click="confirmExportZip">
                   Export

@@ -10,7 +10,7 @@ from sqlalchemy import desc, func
 from sqlalchemy.orm import load_only, selectinload
 from sqlalchemy.types import LargeBinary
 from sqlmodel import Column, DateTime, SQLModel, Field, Relationship, select, Session
-from typing import Optional, List, TYPE_CHECKING
+from typing import ClassVar, Optional, List, TYPE_CHECKING
 
 
 from .face import Face
@@ -92,7 +92,23 @@ class SortMechanism:
         raise ValueError(f"{key_string!r} is not a valid SortMechanism")
 
 
+class ExportType(Enum):
+    FULL = "full"
+    FACE = "face"
+    HAND = "hand"
+    FACE_HAND = "face_hand"
+
+    @classmethod
+    def from_string(cls, value: str) -> "ExportType":
+        normalized = (value or "").lower()
+        for member in cls:
+            if member.value == normalized:
+                return member
+        return cls.FULL
+
+
 class Picture(SQLModel, table=True):
+    ExportType: ClassVar[type[ExportType]] = ExportType
     id: int = Field(default=None, primary_key=True)
     file_path: Optional[str] = None
     description: Optional[str] = None
