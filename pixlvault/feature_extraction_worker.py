@@ -64,7 +64,14 @@ class FeatureExtractionWorker(BaseWorker):
                 updates = self._extract_features(pics_needing_face_bboxes)
                 if updates:
                     self._notify_ids_processed(updates)
-                    self._notify_others(EventType.CHANGED_FACES)
+                    picture_ids = sorted(
+                        {
+                            pic_id
+                            for _, pic_id, _, payload in updates
+                            if pic_id is not None
+                        }
+                    )
+                    self._notify_others(EventType.CHANGED_FACES, picture_ids)
                     logger.debug(
                         "FeatureExtractionWorker: Done with iteration having processed %d pictures.",
                         len(updates),

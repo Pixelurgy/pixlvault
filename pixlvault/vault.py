@@ -44,6 +44,7 @@ class Vault:
         EventType.CHANGED_FACES: [
             WorkerType.FACE_QUALITY,
             WorkerType.FACE_CHARACTER_LIKENESS,
+            WorkerType.TAGGER,
         ],
         EventType.CHANGED_CHARACTERS: [
             WorkerType.DESCRIPTION,

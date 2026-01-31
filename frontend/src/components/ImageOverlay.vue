@@ -42,6 +42,7 @@
             :backend-url="backendUrl"
             :picture-ids="[image.id]"
             :class="{ hidden: chromeHidden }"
+            @added="handleOverlayAddToSet"
           />
           <div
             class="star-overlay"
@@ -700,6 +701,7 @@ const emit = defineEmits([
   "refresh-image",
   "image-change",
   "tag-refresh-start",
+  "added-to-set",
 ]);
 
 const descriptionRef = ref(null);
@@ -907,6 +909,10 @@ function confirmAddTag() {
     image.value.tags = next;
   }
   resetTagInput();
+}
+
+function handleOverlayAddToSet(payload) {
+  emit("added-to-set", payload);
 }
 
 async function clearTagsForImage() {
@@ -2817,7 +2823,6 @@ function downloadComfyWorkflow(workflow) {
   align-items: center;
   gap: 8px;
 }
-
 
 .overlay-top-actions .star-overlay {
   position: static;

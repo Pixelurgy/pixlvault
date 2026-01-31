@@ -2837,11 +2837,11 @@ class Server:
                     character_id = query_params.pop("character_id", None)
 
                     select_fields = Picture.metadata_fields()
-                    if export_type_normalized == Picture.ExportType.FULL and (
-                        caption_mode_normalized == "tags"
-                        or include_character_name_enabled
-                    ):
-                        select_fields = select_fields | {"tags", "characters"}
+                    if export_type_normalized == Picture.ExportType.FULL:
+                        if caption_mode_normalized != "none":
+                            select_fields = select_fields | {"tags"}
+                        if include_character_name_enabled:
+                            select_fields = select_fields | {"characters"}
 
                     pics = []
 
@@ -3141,16 +3141,23 @@ class Server:
                                             zip_file.write(full_path, arcname=arcname)
                                     else:
                                         zip_file.write(full_path, arcname=arcname)
+
+                                    def build_tag_caption(picture):
+                                        tags = []
+                                        for tag in getattr(picture, "tags", []) or []:
+                                            tag_value = getattr(tag, "tag", None)
+                                            if tag_value in (None, TAG_EMPTY_SENTINEL):
+                                                continue
+                                            tags.append(tag_value)
+                                        return ", ".join(tags)
+
                                     caption_text = None
                                     if caption_mode_normalized == "description":
                                         caption_text = pic.description or ""
+                                        if not caption_text:
+                                            caption_text = build_tag_caption(pic)
                                     elif caption_mode_normalized == "tags":
-                                        tags = []
-                                        for tag in getattr(pic, "tags", []) or []:
-                                            tag_value = getattr(tag, "tag", None)
-                                            if tag_value:
-                                                tags.append(tag_value)
-                                        caption_text = ", ".join(tags)
+                                        caption_text = build_tag_caption(pic)
 
                                     if include_character_name_enabled:
                                         character_names = []
@@ -3189,7 +3196,8 @@ class Server:
                                         and caption_text is not None
                                     ):
                                         zip_file.writestr(
-                                            f"image_{idx:05d}.txt", caption_text
+                                            f"image_{idx:05d}.txt",
+                                            f"{caption_text}\n",
                                         )
                                     self.export_tasks[task_id]["processed"] += 1
                                 else:
@@ -3266,7 +3274,7 @@ class Server:
                                                     )
                                                     zip_file.writestr(
                                                         f"{base_name}{suffix}.txt",
-                                                        caption_text,
+                                                        f"{caption_text}\n",
                                                     )
                                                     self.export_tasks[task_id][
                                                         "processed"
@@ -3332,7 +3340,7 @@ class Server:
                                                     )
                                                     zip_file.writestr(
                                                         f"{base_name}{suffix}.txt",
-                                                        caption_text,
+                                                        f"{caption_text}\n",
                                                     )
                                                     self.export_tasks[task_id][
                                                         "processed"

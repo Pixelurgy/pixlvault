@@ -14,6 +14,7 @@
     @refresh-image="refreshImageFromOverlay"
     @image-change="handleOverlayImageChange"
     @tag-refresh-start="handleTagRefreshStart"
+    @added-to-set="handleOverlayAddedToSet"
   />
   <InteractiveScoringOverlay
     :open="interactiveScoringOpen"
@@ -1663,6 +1664,20 @@ function handleAddToCharacter(payload) {
   }
   clearSelection();
   lastSelectedIndex = null;
+  emit("refresh-sidebar");
+}
+
+function handleOverlayAddedToSet(payload) {
+  const pictureIds = Array.isArray(payload?.pictureIds)
+    ? payload.pictureIds
+    : [];
+  if (!pictureIds.length) return;
+  if (
+    props.selectedCharacter === props.unassignedPicturesId &&
+    !props.selectedSet
+  ) {
+    removeImagesById(pictureIds);
+  }
   emit("refresh-sidebar");
 }
 
