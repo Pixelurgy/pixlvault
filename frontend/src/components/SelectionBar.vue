@@ -13,6 +13,17 @@
         </span>
       </div>
       <div class="selection-bar-actions">
+        <AddToSetControl
+          v-if="selectedCount > 0"
+          :backend-url="backendUrl"
+          :picture-ids="selectedImageIds"
+        />
+        <AddToCharacterControl
+          v-if="selectedCount > 0"
+          :backend-url="backendUrl"
+          :picture-ids="selectedImageIds"
+          @added="$emit('add-to-character', $event)"
+        />
         <button
           v-if="
             selectedCharacter &&
@@ -37,7 +48,8 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import AddToSetControl from "./AddToSetControl.vue";
+import AddToCharacterControl from "./AddToCharacterControl.vue";
 const props = defineProps({
   selectedCount: Number,
   selectedFaceCount: { type: Number, default: 0 },
@@ -47,6 +59,8 @@ const props = defineProps({
   visible: Boolean,
   allPicturesId: { type: String, required: true },
   unassignedPicturesId: { type: String, required: true },
+  backendUrl: { type: String, required: true },
+  selectedImageIds: { type: Array, default: () => [] },
 });
 </script>
 

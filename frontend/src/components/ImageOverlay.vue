@@ -37,6 +37,12 @@
           </span>
         </div>
         <div class="overlay-top-actions">
+          <AddToSetControl
+            v-if="image"
+            :backend-url="backendUrl"
+            :picture-ids="[image.id]"
+            :class="{ hidden: chromeHidden }"
+          />
           <div
             class="star-overlay"
             v-if="image"
@@ -422,7 +428,7 @@
                   @drop.prevent="handleDropToUnassigned"
                 >
                   <span
-                    v-for="tag in unassignedTags"
+                    v-for="tag in allImageTags"
                     :key="`unassigned-${tag.id ?? tag.tag}`"
                     :class="[
                       'overlay-tag',
@@ -436,6 +442,7 @@
                   >
                     {{ tagLabel(tag) }}
                     <button
+                      v-if="isPictureTag(tag)"
                       class="tag-delete-btn"
                       @click.stop="removeTag(tag)"
                       title="Remove tag"
@@ -443,10 +450,7 @@
                       <v-icon size="12">mdi-close</v-icon>
                     </button>
                   </span>
-                  <div
-                    v-if="!unassignedTags.length"
-                    class="tag-drop-placeholder"
-                  >
+                  <div v-if="!allImageTags.length" class="tag-drop-placeholder">
                     Drop tags here
                   </div>
                   <input
@@ -647,6 +651,7 @@ import {
 import { isSupportedVideoFile, getOverlayFormat } from "../utils/media.js";
 import { apiClient } from "../utils/apiClient";
 import unknownPerson from "../assets/unknown-person.png";
+import AddToSetControl from "./AddToSetControl.vue";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -654,9 +659,10 @@ const props = defineProps({
   allImages: { type: Array, default: () => [] },
   backendUrl: { type: String, required: true },
   tagsRefreshing: { type: Boolean, default: false },
+  tagUpdate: { type: Object, default: () => ({}) },
 });
 
-const { open, initialImage, allImages, backendUrl, tagsRefreshing } =
+const { open, initialImage, allImages, backendUrl, tagsRefreshing, tagUpdate } =
   toRefs(props);
 
 const image = ref(null);
@@ -725,6 +731,7 @@ const newTag = ref("");
 const tagInputRef = ref(null);
 const penalizedTags = ref(new Set());
 const penalizedTagsLoading = ref(false);
+const lastTagUpdateKey = ref(0);
 
 const hasTags = computed(() => {
   return !!(
@@ -1976,6 +1983,28 @@ watch(
   },
 );
 
+watch(
+  () => tagUpdate.value,
+  (payload) => {
+    if (!payload || typeof payload !== "object") return;
+    const nextKey = payload.key || 0;
+    if (!nextKey || nextKey === lastTagUpdateKey.value) return;
+    lastTagUpdateKey.value = nextKey;
+    if (!open.value || !image.value?.id) return;
+    const pictureIds = Array.isArray(payload.pictureIds)
+      ? payload.pictureIds.map((id) => String(id))
+      : [];
+    const currentId = String(image.value.id);
+    if (pictureIds.length && !pictureIds.includes(currentId)) return;
+    if (faceBboxes.value.length) {
+      fetchFaceTagsForFaces(faceBboxes.value);
+    }
+    if (handBboxes.value.length) {
+      fetchHandTagsForHands(handBboxes.value);
+    }
+  },
+);
+
 function handleTagBackspace(event) {
   if (event.key !== "Backspace") return;
   if (newTag.value.trim()) return;
@@ -2026,9 +2055,33 @@ const handTagGroups = computed(() => {
   }));
 });
 
-const unassignedTags = computed(() => {
+const imageTags = computed(() => {
   return dedupeTagList(normalizeTagList(image.value?.tags));
 });
+
+const faceTags = computed(() => {
+  const values = Object.values(faceTagMap.value || {});
+  const tags = values.flatMap((list) => normalizeTagList(list));
+  return dedupeTagList(tags);
+});
+
+const handTags = computed(() => {
+  const values = Object.values(handTagMap.value || {});
+  const tags = values.flatMap((list) => normalizeTagList(list));
+  return dedupeTagList(tags);
+});
+
+const allImageTags = computed(() => {
+  return dedupeTagList([
+    ...imageTags.value,
+    ...faceTags.value,
+    ...handTags.value,
+  ]);
+});
+
+function isPictureTag(tag) {
+  return imageTags.value.some((entry) => tagMatches(entry, tag));
+}
 
 function startTagDrag(tag, sourceType, sourceId, event) {
   dragState.tag = tag;
@@ -2711,15 +2764,14 @@ function downloadComfyWorkflow(workflow) {
   border: none;
   background: rgba(var(--v-theme-primary), 0.7);
   color: #fff;
-  height: 32px;
-  padding: 0 10px;
+  padding: 6px 14px;
   border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   cursor: pointer;
-  font-size: 0.78rem;
+  font-size: 1em;
   font-weight: 600;
 }
 .overlay-close:hover {
@@ -2766,12 +2818,13 @@ function downloadComfyWorkflow(workflow) {
   gap: 8px;
 }
 
+
 .overlay-top-actions .star-overlay {
   position: static;
   top: auto;
   right: auto;
   z-index: auto;
-  padding: 4px 4px 4px 4px;
+  padding: 6px 14px;
   height: 32px;
   background: none;
   border-radius: 4px;
@@ -2785,15 +2838,15 @@ function downloadComfyWorkflow(workflow) {
   border: none;
   background: none;
   color: rgb(var(--v-theme-on-dark-surface));
-  width: 36px;
   height: 32px;
-  padding-left: 4px;
-  padding-right: 4px;
+  padding: 6px 14px;
+  min-width: 32px;
   border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  font-size: 1em;
 }
 .overlay-icon-btn:hover {
   background: rgba(var(--v-theme-primary), 0.6);
@@ -2802,7 +2855,7 @@ function downloadComfyWorkflow(workflow) {
 .zoom-btn {
   width: auto;
   min-width: 84px;
-  padding: 4px 10px;
+  padding: 6px 14px;
   gap: 6px;
   justify-content: flex-start;
 }

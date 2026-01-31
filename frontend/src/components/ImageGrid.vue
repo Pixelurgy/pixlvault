@@ -5,6 +5,7 @@
     :allImages="allGridImages"
     :backendUrl="props.backendUrl"
     :tagsRefreshing="overlayTagsRefreshing"
+    :tagUpdate="props.wsTagUpdate"
     @close="closeOverlay"
     @apply-score="applyScore"
     @add-tag="addTagToImage"
@@ -43,10 +44,13 @@
       :selectedGroupName="selectedGroupName"
       :allPicturesId="String(props.allPicturesId)"
       :unassignedPicturesId="String(props.unassignedPicturesId)"
+      :backend-url="props.backendUrl"
+      :selected-image-ids="selectedImageIds"
       :visible="selectedImageIds.length > 0 || selectedFaceIds.length > 0"
       @clear-selection="clearSelection"
       @remove-from-group="removeFromGroup"
       @delete-selected="deleteSelected"
+      @add-to-character="handleAddToCharacter"
       style="position: absolute; top: 0; left: 0; width: 100%; z-index: 100"
     />
     <div
@@ -1644,6 +1648,22 @@ function removeFromGroup() {
     });
     return;
   }
+}
+
+function handleAddToCharacter(payload) {
+  const pictureIds = Array.isArray(payload?.pictureIds)
+    ? payload.pictureIds
+    : [];
+  if (!pictureIds.length) return;
+  if (
+    props.selectedCharacter === props.unassignedPicturesId &&
+    !props.selectedSet
+  ) {
+    removeImagesById(pictureIds);
+  }
+  clearSelection();
+  lastSelectedIndex = null;
+  emit("refresh-sidebar");
 }
 
 function deleteSelected() {
