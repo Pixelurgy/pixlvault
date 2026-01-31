@@ -1752,6 +1752,7 @@ class Server:
         async def delete_character(id: int):
             # Delete the character
             try:
+                from pixlvault.db_models import PictureSet, PictureSetMember
 
                 def clear_character_and_nullify_faces(
                     session: Session, character_id: int
@@ -1759,6 +1760,7 @@ class Server:
                     character = session.get(Character, character_id)
                     if character is None:
                         raise KeyError("Character not found")
+                    reference_set_id = character.reference_picture_set_id
                     # Nullify character_id on all faces linked to this character
                     faces = session.exec(
                         select(Face).where(Face.character_id == character_id)
@@ -1768,6 +1770,22 @@ class Server:
                         session.add(face)
                     session.commit()
                     session.delete(character)
+                    session.commit()
+
+                    if reference_set_id is None:
+                        return
+
+                    members = session.exec(
+                        select(PictureSetMember).where(
+                            PictureSetMember.set_id == reference_set_id
+                        )
+                    ).all()
+                    for member in members:
+                        session.delete(member)
+
+                    reference_set = session.get(PictureSet, reference_set_id)
+                    if reference_set is not None:
+                        session.delete(reference_set)
                     session.commit()
 
                 self.vault.db.run_task(
