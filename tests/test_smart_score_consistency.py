@@ -1,7 +1,6 @@
 import gc
 import tempfile
 import os
-import json
 import pickle
 import numpy as np
 from fastapi.testclient import TestClient
@@ -17,18 +16,10 @@ def setup_server():
     temp_dir = tempfile.TemporaryDirectory()
     image_root = os.path.join(temp_dir.name, "images")
     os.makedirs(image_root, exist_ok=True)
-    config_path = os.path.join(temp_dir.name, "config.json")
-    config = Server.create_config(
-        default_device="cpu",
-        image_roots=[image_root],
-        selected_image_root=image_root,
-    )
-    with open(config_path, "w") as f:
-        f.write(json.dumps(config, indent=2))
     server_config_path = os.path.join(temp_dir.name, "server-config.json")
     with open(server_config_path, "w") as f:
         f.write(json.dumps({"port": 0}))
-    server = Server(config_path, server_config_path)
+    server = Server(server_config_path)
     client = TestClient(server.api)
 
     # Login

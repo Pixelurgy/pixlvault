@@ -21,7 +21,6 @@ def test_picture_stacking():
     """Test: Add all images from pictures folder, wait for tagging, perform semantic search, print results, assert count."""
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        config_path = os.path.join(temp_dir, "config.json")
         server_config_path = os.path.join(temp_dir, "server_config.json")
 
         src_dir = os.path.join(os.path.dirname(__file__), "../pictures")
@@ -31,10 +30,7 @@ def test_picture_stacking():
             if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
         ]
 
-        with Server(
-            config_path=config_path,
-            server_config_path=server_config_path,
-        ) as server:
+        with Server(server_config_path=server_config_path) as server:
             # server.vault.import_default_data()
             client = TestClient(server.api)
             resp = client.post(
@@ -149,7 +145,6 @@ def test_character_likeness():
     """
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        config_path = os.path.join(temp_dir, "config.json")
         server_config_path = os.path.join(temp_dir, "server_config.json")
 
         src_dir = os.path.join(os.path.dirname(__file__), "../pictures")
@@ -159,10 +154,7 @@ def test_character_likeness():
             if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
         ]
 
-        with Server(
-            config_path=config_path,
-            server_config_path=server_config_path,
-        ) as server:
+        with Server(server_config_path=server_config_path) as server:
             # server.vault.import_default_data()
             client = TestClient(server.api)
 

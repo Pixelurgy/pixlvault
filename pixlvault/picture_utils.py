@@ -314,61 +314,6 @@ class PictureUtils:
             clipped = np.clip(clipped, 0.0, 1.0)
         final_scores = 1.0 + (clipped * 4.0)
 
-        # Logging Breakdown for all candidates
-        # Sort indices by final score descending
-        sorted_indices = np.argsort(-final_scores)
-
-        logger.debug(f"[SMART SCORE] Analyzed {len(candidates)} candidates. Breakdown:")
-        for rank, i in enumerate(sorted_indices):
-            logger.debug(
-                f"[#{rank + 1}] ID={candidates[i]['id']} Score={final_scores[i]:.2f} "
-                f"Char={char_component[i]:.3f} (raw={char_raw[i]:.2f},assigned={bool(char_mask[i])}) "
-                f"Good={good_component[i]:.3f} (maxSim={raw_good_sim[i]:.3f}) "
-                f"Bad={bad_component[i]:.3f} (maxSim={raw_bad_sim[i]:.3f}) "
-                f"Aest={aest_component[i]:.3f} (raw={raw_aest[i]:.2f}) "
-                f"Res={res_component[i]:.3f} (mpx={mpx[i]:.2f}) "
-                f"Noise={noise_component[i]:.3f} (raw={noise_vals[i]:.2f}) "
-                f"Edge={edge_component[i]:.3f} (raw={edge_vals[i]:.2f}) "
-                f"PenTags={penalized_component[i]:.3f} (count={int(penalized_counts[i])}) "
-                f"MaskBad={mask_bad[i]} PreClip={scores[i]:.3f} "
-            )
-
-        low_score_mask = (final_scores <= 1.01) & (penalized_counts <= 0)
-        low_score_indices = np.where(low_score_mask)[0]
-        if low_score_indices.size:
-            logger.warning(
-                "[SMART SCORE] %s candidates scored ~1.0 with no penalized tags.",
-                int(low_score_indices.size),
-            )
-            for i in low_score_indices[:25]:
-                logger.warning(
-                    "[SMART SCORE LOW] ID=%s Score=%.2f PreClip=%.3f Char=%.3f(raw=%.2f,assigned=%s) "
-                    "Good=%.3f(maxSim=%.3f) Bad=%.3f(maxSim=%.3f,mask=%s) "
-                    "Aest=%.3f(raw=%.2f) Res=%.3f(mpx=%.2f) Noise=%.3f(raw=%.2f) "
-                    "Edge=%.3f(raw=%.2f) PenTags=%.3f(count=%d)",
-                    candidates[i]["id"],
-                    final_scores[i],
-                    scores[i],
-                    char_component[i],
-                    char_raw[i],
-                    bool(char_mask[i]),
-                    good_component[i],
-                    raw_good_sim[i],
-                    bad_component[i],
-                    raw_bad_sim[i],
-                    bool(mask_bad[i]),
-                    aest_component[i],
-                    raw_aest[i],
-                    res_component[i],
-                    mpx[i],
-                    noise_component[i],
-                    noise_vals[i],
-                    edge_component[i],
-                    edge_vals[i],
-                    penalized_component[i],
-                    int(penalized_counts[i]),
-                )
-
         return final_scores
 
     @staticmethod

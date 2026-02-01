@@ -15,8 +15,6 @@ import zipfile
 import asyncio
 import threading
 from email.utils import formatdate
-from datetime import datetime
-import secrets
 
 from collections import defaultdict, deque
 from sqlalchemy.orm import load_only, selectinload
@@ -41,7 +39,6 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from pillow_heif import register_heif_opener
 from typing import List, Optional
-from passlib.hash import bcrypt
 from pydantic import BaseModel, Field
 
 from pixlvault.db_models import (
@@ -59,7 +56,6 @@ from pixlvault.db_models import (
     Tag,
     SortMechanism,
     User,
-    UserToken,
     DEFAULT_SMART_SCORE_PENALIZED_TAGS,
     DEFAULT_SMART_SCORE_PENALIZED_TAG_WEIGHT,
     TAG_EMPTY_SENTINEL,
@@ -70,17 +66,16 @@ from pixlvault.event_types import EventType
 from pixlvault.utils import (
     safe_model_dict,
     serialize_tag_objects,
-    normalize_thumbnail_size,
+    serialize_user_config,
+    apply_user_config_patch,
     normalize_smart_score_penalized_tags,
 )
-from pixlvault.auth import AuthService
+from pixlvault.auth import AuthService, LoginRequest
 from pixlvault.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger, uvicorn_log_config
 from pixlvault.vault import Vault
 from pixlvault.worker_registry import WorkerType
 from pixlvault.watch_folder_worker import WatchFolderWorker
-
-DEFAULT_DESCRIPTION = "PixlVault default configuration"
 
 
 # Logging will be set up after config is loaded
@@ -92,20 +87,17 @@ class Server:
     Main server class for the PixlVault FastAPI application.
 
     Attributes:
-        config_path(str): Remote accessible configuration file.
         server_config_path(str): Server-side-only configuration file.
     """
 
     def __init__(
         self,
-        config_path,
         server_config_path,
     ):
         """
         Initialize the Server instance.
 
         Args:
-            config_path (str): Path to the image roots config file.
             server_config_path (str): Path to the server-only config file.
         """
 
@@ -113,12 +105,7 @@ class Server:
         # This is mainly to ensure repeated runs within the testing framework do not accumulate memory usage
         gc.collect()
 
-        self._config_path = config_path
         self._server_config_path = server_config_path
-
-        self._config = self._init_config(config_path)
-        with open(config_path, "w") as f:
-            json.dump(self._config, f, indent=2)
 
         self._server_config = self._init_server_config(server_config_path)
         with open(server_config_path, "w") as f:
@@ -137,7 +124,7 @@ class Server:
 
         self.vault = Vault(
             image_root=self._server_config["image_root"],
-            description=self._config.get("description"),
+            description=User().description,
         )
 
         WatchFolderWorker.configure(self._server_config_path)
@@ -153,7 +140,7 @@ class Server:
             self._server_config_path,
             logger,
         )
-        self._user = self.auth.ensure_user(self._config)
+        self._user = self.auth.ensure_user()
         if self._user and self._user.description is not None:
             self.vault.set_description(self._user.description)
 
@@ -171,11 +158,6 @@ class Server:
         )
         self._add_cors_exception_handler()
         self._setup_routes()
-
-        # Keep cached credentials for compatibility
-        self.PASSWORD_HASH = self.auth.password_hash if self._user else None
-        self.USERNAME = self.auth.username if self._user else None
-        self.active_session_ids = self.auth.active_session_ids
 
         # Temporary storage for export tasks
         self.export_tasks = {}
@@ -251,26 +233,6 @@ class Server:
                     if client in self._ws_clients:
                         self._ws_clients.remove(client)
 
-    def set_password_hash(self, hashed_password):
-        user = self.auth.set_password_hash(hashed_password)
-        self.PASSWORD_HASH = self.auth.password_hash
-        self._user = user
-        print("Password hash stored in user database.")
-
-    def set_username(self, username):
-        user = self.auth.set_username(username)
-        self.USERNAME = self.auth.username
-        self._user = user
-        print("Username stored in user database.")
-
-    def remove_password_hash(self):
-        """Remove the PASSWORD_HASH and username by deleting them from the user table."""
-        user = self.auth.remove_password_hash()
-        self._user = user
-        self.PASSWORD_HASH = None
-        self.USERNAME = None
-        self.active_session_ids = self.auth.active_session_ids
-
     def run(self):
         self._shutdown_on_lifespan = True
         uvicorn_kwargs = dict(
@@ -295,53 +257,6 @@ class Server:
         self._ws_loop = None
         if self._shutdown_on_lifespan and hasattr(self, "vault"):
             self.vault.close()
-
-    @staticmethod
-    def create_config(**kwargs):
-        """
-        Create a config dict from provided keys in kwargs, using defaults for missing keys.
-        """
-        defaults = {
-            "description": DEFAULT_DESCRIPTION,
-            "sort": SortMechanism.Keys.DATE.name,
-            "descending": True,
-            "thumbnail_size": "default",
-            "show_stars": True,
-            "show_face_bboxes": False,
-            "show_hand_bboxes": False,
-            "show_format": True,
-            "show_resolution": True,
-            "show_problem_icon": True,
-            "similarity_character": None,
-            "smart_score_penalized_tags": DEFAULT_SMART_SCORE_PENALIZED_TAGS,
-        }
-        config = defaults.copy()
-        config.update({k: v for k, v in kwargs.items() if v is not None})
-        return config
-
-    @staticmethod
-    def _init_config(config_path):
-        """
-        Initialize and load the server configuration from file, creating defaults if necessary.
-        Returns:
-            dict: Configuration dictionary.
-        """
-        config_dir = os.path.dirname(config_path)
-        os.makedirs(config_dir, exist_ok=True)
-        if not os.path.exists(config_path):
-            config = Server.create_config(config_dir=config_dir)
-        else:
-            with open(config_path, "r") as f:
-                config = json.load(f)
-            # Fill in missing keys with defaults
-            defaults = Server.create_config(config_dir=config_dir)
-            for k, v in defaults.items():
-                if k not in config:
-                    config[k] = v
-        # Remove server-only fields from public config
-        for key in ("image_root", "default_device"):
-            config.pop(key, None)
-        return config
 
     @staticmethod
     def _init_server_config(server_config_path):
@@ -420,58 +335,6 @@ class Server:
             default_weight=DEFAULT_SMART_SCORE_PENALIZED_TAG_WEIGHT,
         )
 
-    def _ensure_user(self):
-        defaults = self._config if isinstance(self._config, dict) else {}
-        return self.auth.ensure_user(defaults)
-
-    def _get_user(self):
-        return self.auth.get_user()
-
-    def _user_to_config(self, user: User):
-        defaults = Server.create_config()
-        if not user:
-            return defaults
-
-        sort_value = user.sort or defaults.get("sort")
-        return {
-            "description": user.description or defaults.get("description"),
-            "sort": sort_value,
-            "sort_order": sort_value,
-            "descending": bool(user.descending),
-            "columns": int(user.columns),
-            "show_stars": bool(user.show_stars),
-            "show_face_bboxes": bool(
-                user.show_face_bboxes
-                if user.show_face_bboxes is not None
-                else defaults.get("show_face_bboxes", False)
-            ),
-            "show_hand_bboxes": bool(
-                user.show_hand_bboxes
-                if user.show_hand_bboxes is not None
-                else defaults.get("show_hand_bboxes", False)
-            ),
-            "show_format": bool(
-                user.show_format
-                if user.show_format is not None
-                else defaults.get("show_format", True)
-            ),
-            "show_resolution": bool(
-                user.show_resolution
-                if user.show_resolution is not None
-                else defaults.get("show_resolution", True)
-            ),
-            "show_problem_icon": bool(
-                user.show_problem_icon
-                if user.show_problem_icon is not None
-                else defaults.get("show_problem_icon", True)
-            ),
-            "similarity_character": user.similarity_character,
-            "smart_score_penalized_tags": normalize_smart_score_penalized_tags(
-                user.smart_score_penalized_tags,
-                DEFAULT_SMART_SCORE_PENALIZED_TAGS,
-                default_weight=DEFAULT_SMART_SCORE_PENALIZED_TAG_WEIGHT,
-            ),
-        }
 
     def _ensure_ssl_certificates(self):
         import subprocess
@@ -1201,7 +1064,7 @@ class Server:
         async def get_me_config(request: Request):
             _ensure_secure_when_required(request)
             user = self.auth.get_user_for_request(request)
-            return self._user_to_config(user)
+            return serialize_user_config(user)
 
         @self.api.patch("/users/me/config")
         async def patch_me_config(request: Request):
@@ -1213,77 +1076,16 @@ class Server:
             start_time = time.time()
             logger.debug(f"[TIMING] PATCH /users/me/config called at {start_time:.3f}")
             patch_data = await request.json()
-            allowed_keys = {
-                "description",
-                "sort",
-                "descending",
-                "columns",
-                "show_stars",
-                "show_face_bboxes",
-                "show_hand_bboxes",
-                "show_format",
-                "show_resolution",
-                "show_problem_icon",
-                "similarity_character",
-                "smart_score_penalized_tags",
-            }
 
             def update_user(session: Session, user_id: int):
                 user = session.get(User, user_id)
                 if user is None:
                     raise HTTPException(status_code=404, detail="User not found")
 
-                updated = False
-                for key, value in patch_data.items():
-                    logger.debug(f"Updating config key '{key}' with value: {value}")
-                    if key not in allowed_keys:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Key '{key}' does not exist in config.",
-                        )
-                    if key == "similarity_character":
-                        if value in ("", None, "null"):
-                            new_value = None
-                        elif isinstance(value, str) and value.isdigit():
-                            new_value = int(value)
-                        else:
-                            new_value = value
-                        if user.similarity_character != new_value:
-                            user.similarity_character = new_value
-                            updated = True
-                        continue
-                    if key == "smart_score_penalized_tags":
-                        if value in ("", None):
-                            new_value = None
-                        else:
-                            normalized = normalize_smart_score_penalized_tags(
-                                value,
-                                None,
-                                allow_empty=True,
-                                default_weight=DEFAULT_SMART_SCORE_PENALIZED_TAG_WEIGHT,
-                            )
-                            if normalized is None:
-                                raise HTTPException(
-                                    status_code=400,
-                                    detail=(
-                                        "smart_score_penalized_tags must be a JSON list"
-                                        " or object"
-                                    ),
-                                )
-                            new_value = json.dumps(normalized)
-                        if user.smart_score_penalized_tags != new_value:
-                            user.smart_score_penalized_tags = new_value
-                            updated = True
-                        continue
-                    if key == "columns":
-                        user.columns = int(value)
-                        updated = True
-                        logger.debug(f"Set user.columns to {user.columns}")
-                        continue
-                    current_value = getattr(user, key, None)
-                    if current_value != value:
-                        setattr(user, key, value)
-                        updated = True
+                try:
+                    updated = apply_user_config_patch(user, patch_data)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
 
                 if updated:
                     session.add(user)
@@ -1301,16 +1103,13 @@ class Server:
             return {
                 "status": "success",
                 "updated": updated,
-                "config": self._user_to_config(user),
+                "config": serialize_user_config(user),
             }
 
         @self.api.post("/users/me/auth")
         async def change_me_password(payload: ChangePasswordRequest, request: Request):
             result = self.auth.change_password(request, payload)
             self._user = self.auth.user
-            self.PASSWORD_HASH = self.auth.password_hash
-            self.USERNAME = self.auth.username
-            self.active_session_ids = self.auth.active_session_ids
             return result
 
         @self.api.get("/users/me/auth")
@@ -4267,22 +4066,6 @@ class Server:
                 self.allow_origin_regex,
             )
 
-        class LoginRequest(BaseModel):
-            username: Optional[str] = Field(
-                default=None,
-                min_length=1,
-                description="Username is required",
-            )
-            password: Optional[str] = Field(
-                default=None,
-                min_length=8,
-                description="Password must be at least 8 characters long",
-            )
-            token: Optional[str] = Field(
-                default=None,
-                description="API token for authentication",
-            )
-
         @self.api.get("/check-session")
         async def check_session(request: Request):
             return self.auth.check_session(request)
@@ -4291,9 +4074,6 @@ class Server:
         def login(request: LoginRequest):
             response = self.auth.login(request)
             self._user = self.auth.user
-            self.USERNAME = self.auth.username
-            self.PASSWORD_HASH = self.auth.password_hash
-            self.active_session_ids = self.auth.active_session_ids
             return response
 
         @self.api.get("/login")
@@ -4302,9 +4082,7 @@ class Server:
 
         @self.api.post("/logout")
         def logout(response: Response, request: Request):
-            result = self.auth.logout(response, request)
-            self.active_session_ids = self.auth.active_session_ids
-            return result
+            return self.auth.logout(response, request)
 
         @self.api.get("/protected")
         async def protected():

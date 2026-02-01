@@ -8,12 +8,28 @@ from typing import Optional
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from passlib.hash import bcrypt
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from pixlvault.database import DBPriority, VaultDatabase
-from pixlvault.db_models import SortMechanism, User, UserToken
-from pixlvault import utils
-from pixlvault.db_models import tag as tag_model
+from pixlvault.db_models import User, UserToken
+
+
+class LoginRequest(BaseModel):
+    username: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Username is required",
+    )
+    password: Optional[str] = Field(
+        default=None,
+        min_length=8,
+        description="Password must be at least 8 characters long",
+    )
+    token: Optional[str] = Field(
+        default=None,
+        description="API token for authentication",
+    )
 
 
 class AuthService:
@@ -41,35 +57,16 @@ class AuthService:
             priority=DBPriority.IMMEDIATE,
         )
 
-    def ensure_user(self, defaults: dict) -> User:
+    def ensure_user(self) -> User:
         def ensure_user(session: Session):
             user = session.exec(select(User)).first()
             if user:
                 self._logger.info("Found user in the database: %s", user.username)
                 return user
 
-            thumbnail_value = defaults.get("thumbnail_size", defaults.get("thumbnail"))
             user = User(
                 username=self._server_config.get("USERNAME"),
                 password_hash=self._server_config.get("PASSWORD_HASH"),
-                description=defaults.get("description", "PixlVault default configuration"),
-                sort=defaults.get("sort", SortMechanism.Keys.DATE.name),
-                descending=bool(defaults.get("descending", True)),
-                thumbnail_size=utils.normalize_thumbnail_size(thumbnail_value),
-                show_stars=bool(defaults.get("show_stars", True)),
-                show_face_bboxes=defaults.get("show_face_bboxes", False),
-                show_hand_bboxes=defaults.get("show_hand_bboxes", False),
-                show_format=defaults.get("show_format", True),
-                show_resolution=defaults.get("show_resolution", True),
-                show_problem_icon=defaults.get("show_problem_icon", True),
-                similarity_character=defaults.get("similarity_character"),
-                smart_score_penalized_tags=json.dumps(
-                    utils.normalize_smart_score_penalized_tags(
-                        defaults.get("smart_score_penalized_tags"),
-                        tag_model.DEFAULT_SMART_SCORE_PENALIZED_TAGS,
-                        default_weight=tag_model.DEFAULT_SMART_SCORE_PENALIZED_TAG_WEIGHT,
-                    )
-                ),
             )
             session.add(user)
             session.commit()
@@ -333,7 +330,7 @@ class AuthService:
                     detail="Username and password are required",
                 )
 
-            user = self.get_user() or self.ensure_user({})
+            user = self.get_user() or self.ensure_user()
             if not user.username or not user.password_hash:
                 hashed_password = bcrypt.hash(request.password)
 
