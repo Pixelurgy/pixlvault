@@ -29,7 +29,6 @@ from pixlvault.database import DBPriority
 from pixlvault.db_models import (
     Character,
     Face,
-    FaceCharacterLikeness,
     FaceTag,
     Hand,
     HandTag,
@@ -44,11 +43,13 @@ from pixlvault.db_models import (
 from pixlvault.event_types import EventType
 from pixlvault.pixl_logging import get_logger
 from pixlvault.picture_scoring import (
+    compute_character_likeness_for_faces,
     fetch_smart_score_data,
     find_pictures_by_character_likeness,
     find_pictures_by_smart_score,
     get_smart_score_penalized_tags_from_request,
     prepare_smart_score_inputs,
+    select_reference_faces_for_character,
 )
 from pixlvault.picture_utils import PictureUtils
 from pixlvault.utils import safe_model_dict, serialize_tag_objects
@@ -1259,21 +1260,26 @@ def create_router(server) -> APIRouter:
                 "eligible": True,
             }
 
-        def fetch_character_likeness(session, ref_id, face_ids):
-            rows = session.exec(
-                select(
-                    FaceCharacterLikeness.face_id,
-                    FaceCharacterLikeness.likeness,
-                ).where(
-                    FaceCharacterLikeness.character_id == ref_id,
-                    FaceCharacterLikeness.face_id.in_(face_ids),
-                )
-            ).all()
-            return {row.face_id: row.likeness for row in rows}
+        def fetch_faces(session, ids):
+            return session.exec(select(Face).where(Face.id.in_(ids))).all()
 
-        likeness_map = server.vault.db.run_task(
-            fetch_character_likeness, int(reference_character_id), face_ids
+        candidate_faces = server.vault.db.run_task(fetch_faces, face_ids)
+        reference_faces = server.vault.db.run_task(
+            select_reference_faces_for_character,
+            int(reference_character_id),
+            10,
+            priority=DBPriority.IMMEDIATE,
         )
+        likeness_map = compute_character_likeness_for_faces(
+            reference_faces,
+            candidate_faces,
+        )
+        if not likeness_map:
+            return {
+                "picture_id": pic_id,
+                "character_likeness": 0.0,
+                "eligible": False,
+            }
         score = 0.0
         for face_id in face_ids:
             score = max(score, float(likeness_map.get(face_id, 0.0)))
@@ -1619,6 +1625,11 @@ def create_router(server) -> APIRouter:
             logger.debug("Format param: " + str(format))
             query_params = dict(request.query_params)
             query_params.pop("format", None)
+            picture_ids = request.query_params.getlist("id")
+            if picture_ids:
+                query_params["id"] = picture_ids
+            else:
+                query_params.pop("id", None)
             sort = query_params.pop("sort", sort)
             desc_val = query_params.pop("descending", descending)
             if isinstance(desc_val, str):
@@ -1660,7 +1671,6 @@ def create_router(server) -> APIRouter:
             )
             return find_pictures_by_smart_score(
                 server,
-                character_id,
                 format,
                 offset,
                 limit,

@@ -7,7 +7,6 @@ from time import time
 
 from fastapi.testclient import TestClient
 
-from pixlvault.db_models.face_character_likeness import FaceCharacterLikeness
 from pixlvault.db_models.picture_likeness import PictureLikeness
 from pixlvault.pixl_logging import get_logger
 from pixlvault.worker_registry import WorkerType
@@ -258,49 +257,6 @@ def test_character_likeness():
                 logger.info(
                     f"Assigned {len(ref_face_ids)} faces from reference pictures to character {char_id}"
                 )
-
-            face_character_likeness_futures = []
-            for face_id in all_face_ids:
-                face_character_likeness_futures.append(
-                    (
-                        char_id,
-                        face_id,
-                        server.vault.get_worker_future(
-                            WorkerType.FACE_CHARACTER_LIKENESS,
-                            FaceCharacterLikeness,
-                            (char_id, face_id),
-                            "pair",
-                        ),
-                    )
-                )
-
-            # Start the FaceCharacterLikenessWorker
-            server.vault.start_workers({WorkerType.FACE_CHARACTER_LIKENESS})
-
-            logger.info("Waiting for facial likeness to be processed...")
-            face_character_likeness_pairs = []
-            # Debug logging for worker futures
-            logger.debug("FaceCharacterLikeness futures:")
-            for char_id, face_id, future in face_character_likeness_futures:
-                logger.debug(
-                    f"Future for pair (char_id={char_id}, face_id={face_id}): {future}"
-                )
-
-            # Debug logging before waiting for futures
-            logger.debug(
-                "Waiting for FaceCharacterLikenessWorker futures to complete..."
-            )
-            for char_id, face_id, future in face_character_likeness_futures:
-                logger.info(
-                    "Waiting for facial likeness pair: (%s, %s)", char_id, face_id
-                )
-                result = future.result(timeout=240)
-                assert result is not None, "FaceCharacterLikenessWorker timed out"
-                face_character_likeness_pairs.append(result)
-
-            assert len(face_character_likeness_pairs) == len(all_face_ids), (
-                "Not all face character likeness pairs were computed."
-            )
 
             server.vault.stop_workers()
 

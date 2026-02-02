@@ -116,6 +116,11 @@ def create_router(server) -> APIRouter:
             id,
             priority=DBPriority.IMMEDIATE,
         )
+        logger.info(
+            "[reference_pictures] character_id=%s picture_ids=%s",
+            id,
+            picture_ids,
+        )
         return {"reference_picture_ids": picture_ids}
 
     @router.patch("/characters/{id}")

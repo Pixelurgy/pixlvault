@@ -2,12 +2,11 @@ import sys
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from sqlalchemy.orm import selectinload
-from sqlmodel import delete, select
+from sqlmodel import select
 
 from pixlvault.database import DBPriority
 from pixlvault.db_models import (
     Character,
-    FaceCharacterLikeness,
     Picture,
     PictureSet,
     PictureSetMember,
@@ -130,7 +129,6 @@ def create_router(server) -> APIRouter:
             )
             pictures = find_pictures_by_smart_score(
                 server,
-                None,
                 format,
                 0,
                 sys.maxsize,
@@ -262,18 +260,6 @@ def create_router(server) -> APIRouter:
             member = PictureSetMember(set_id=id, picture_id=picture_id)
             session.add(member)
             session.add(picture_set)
-            if reference_character_id is not None:
-                session.exec(
-                    delete(FaceCharacterLikeness).where(
-                        FaceCharacterLikeness.character_id == reference_character_id
-                    )
-                )
-                logger.debug(
-                    "Deleted FaceCharacterLikeness entries for character {}".format(
-                        reference_character_id
-                    )
-                )
-
             session.commit()
             return True
 
@@ -308,19 +294,6 @@ def create_router(server) -> APIRouter:
             if not member:
                 return False
             session.delete(member)
-
-            if reference_character_id is not None:
-                session.exec(
-                    delete(FaceCharacterLikeness).where(
-                        FaceCharacterLikeness.character_id == reference_character_id
-                    )
-                )
-                logger.debug(
-                    "Deleted FaceCharacterLikeness entries for character {}".format(
-                        reference_character_id
-                    )
-                )
-
             session.commit()
             return True
 

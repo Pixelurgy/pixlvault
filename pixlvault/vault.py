@@ -20,7 +20,6 @@ from .worker_registry import WorkerRegistry, WorkerType
 from pixlvault.event_types import EventType
 from pixlvault.tag_worker import TagWorker, DescriptionWorker, EmbeddingWorker  # noqa: F401
 from pixlvault.feature_extraction_worker import FeatureExtractionWorker  # noqa: F401
-from pixlvault.face_character_likeness_worker import FaceCharacterLikenessWorker  # noqa: F401
 from pixlvault.likeness_worker import LikenessWorker  # noqa: F401
 from pixlvault.image_embedding_worker import ImageEmbeddingWorker  # noqa: F401
 from pixlvault.quality_worker import FaceQualityWorker, QualityWorker  # noqa: F401
@@ -43,12 +42,10 @@ class Vault:
         EventType.CHANGED_TAGS: [],
         EventType.CHANGED_FACES: [
             WorkerType.FACE_QUALITY,
-            WorkerType.FACE_CHARACTER_LIKENESS,
             WorkerType.TAGGER,
         ],
         EventType.CHANGED_CHARACTERS: [
             WorkerType.DESCRIPTION,
-            WorkerType.FACE_CHARACTER_LIKENESS,
         ],
         EventType.CHANGED_DESCRIPTIONS: [WorkerType.TEXT_EMBEDDING],
         EventType.QUALITY_UPDATED: [WorkerType.LIKENESS],

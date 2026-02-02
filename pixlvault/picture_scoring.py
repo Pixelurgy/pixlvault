@@ -12,7 +12,6 @@ from pixlvault.db_models import (
     DEFAULT_SMART_SCORE_PENALIZED_TAGS,
     DEFAULT_SMART_SCORE_PENALIZED_TAG_WEIGHT,
     Face,
-    FaceCharacterLikeness,
     Picture,
     PictureSetMember,
     Quality,
@@ -31,7 +30,7 @@ def select_reference_faces_for_character(
     character_id: int,
     max_refs: int = 10,
 ) -> list[Face]:
-    """Select stable reference faces for a character using clustering.
+    """Select reference faces for a character using simple, deterministic rules.
 
     Args:
         session: Database session to query faces and pictures.
@@ -42,121 +41,109 @@ def select_reference_faces_for_character(
         A list of Face objects to use as reference faces.
     """
 
-    rows = session.exec(
+    target_count = min(5, max_refs)
+
+    base_query = (
         select(Face, Picture)
         .join(Picture, Face.picture_id == Picture.id)
         .where(
             Face.character_id == character_id,
+            Face.face_index == 0,
             Face.features.is_not(None),
-            Face.face_index != -1,
         )
+    )
+
+    rows = session.exec(
+        base_query.where(Picture.score >= 4)
+        .order_by(Picture.created_at.asc(), Picture.id.asc())
+        .limit(target_count)
     ).all()
 
-    if not rows:
-        return []
-
-    items = []
-    for face, picture in rows:
-        if face.features is None:
-            continue
-        vec = np.frombuffer(face.features, dtype=np.float32)
-        if vec.size == 0:
-            continue
-        score = picture.score or 0
-        items.append(
-            {
-                "face": face,
-                "vector": vec,
-                "score": score,
-                "created_at": picture.created_at,
-                "picture_id": picture.id,
-            }
-        )
-
-    if not items:
-        return []
-
-    eligible = [item for item in items if item["score"] >= 4]
-    if not eligible:
-        eligible = items
-
-    eligible.sort(
-        key=lambda item: (
-            -(item["score"] or 0),
-            item["created_at"] or datetime.max,
-            item["face"].id or 0,
-        )
+    logger.info(
+        "[reference_faces] character_id=%s target_count=%s scored_rows=%s",
+        character_id,
+        target_count,
+        len(rows),
     )
 
-    if len(eligible) <= max_refs:
-        eligible.sort(
-            key=lambda item: (
-                item["created_at"] or datetime.max,
-                item["picture_id"],
-                item["face"].id or 0,
-            )
-        )
-        return [item["face"] for item in eligible]
+    representatives = [face for face, _ in rows]
+    if len(representatives) >= target_count:
+        return representatives
 
-    k = min(max_refs, len(eligible))
-    vectors = np.stack([item["vector"] for item in eligible])
-    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    norms[norms == 0] = 1.0
-    vectors = vectors / norms
+    selected_face_ids = {face.id for face in representatives if face is not None}
+    selected_picture_ids = {
+        face.picture_id for face in representatives if face is not None
+    }
 
-    weights = np.array(
-        [2.0 if item["score"] >= 5 else 1.0 for item in eligible], dtype=np.float32
+    remaining_rows = session.exec(
+        base_query.where(~Picture.id.in_(selected_picture_ids))
+    ).all()
+    logger.info(
+        "[reference_faces] character_id=%s remaining_rows=%s selected_pictures=%s",
+        character_id,
+        len(remaining_rows),
+        len(selected_picture_ids),
     )
-    centroids = vectors[:k].copy()
+    if remaining_rows:
+        penalized_tags = normalize_smart_score_penalized_tags(
+            None,
+            DEFAULT_SMART_SCORE_PENALIZED_TAGS,
+            default_weight=DEFAULT_SMART_SCORE_PENALIZED_TAG_WEIGHT,
+        )
+        penalized_tag_set = {
+            str(tag).strip().lower() for tag in penalized_tags.keys() if tag
+        }
+        remaining_picture_ids = [picture.id for _, picture in remaining_rows]
+        tag_weights = defaultdict(float)
+        if penalized_tag_set and remaining_picture_ids:
+            tag_rows = session.exec(
+                select(Tag.picture_id, Tag.tag)
+                .where(Tag.picture_id.in_(remaining_picture_ids))
+                .where(Tag.tag.is_not(None))
+                .where(func.lower(Tag.tag).in_(penalized_tag_set))
+            ).all()
+            for pic_id, tag in tag_rows or []:
+                if not tag:
+                    continue
+                tag_weights[pic_id] += penalized_tags.get(tag.strip().lower(), 0.0)
 
-    assignments = np.zeros(len(eligible), dtype=np.int64)
-    for _ in range(10):
-        sims = vectors @ centroids.T
-        assignments = np.argmax(sims, axis=1)
-        new_centroids = centroids.copy()
-        for idx in range(k):
-            member_idx = np.where(assignments == idx)[0]
-            if member_idx.size == 0:
-                continue
-            member_weights = weights[member_idx][:, None]
-            weighted = (vectors[member_idx] * member_weights).sum(axis=0)
-            norm = np.linalg.norm(weighted)
-            if norm > 0:
-                new_centroids[idx] = weighted / norm
-        if np.allclose(new_centroids, centroids, atol=1e-4):
-            centroids = new_centroids
-            break
-        centroids = new_centroids
-
-    representatives = []
-    for idx in range(k):
-        member_idx = np.where(assignments == idx)[0]
-        if member_idx.size == 0:
-            continue
-        members = [eligible[i] for i in member_idx]
-        members.sort(
-            key=lambda item: (
-                item["created_at"] or datetime.max,
-                item["picture_id"],
-                item["face"].id or 0,
+        remaining_rows.sort(
+            key=lambda row: (
+                tag_weights.get(row[1].id, 0.0),
+                row[1].created_at or datetime.max,
+                row[1].id,
+                row[0].id or 0,
             )
         )
-        representatives.append(members[0]["face"])
-
-    if len(representatives) < k:
-        rep_ids = {face.id for face in representatives if face is not None and face.id}
-        remaining = [item for item in eligible if item["face"].id not in rep_ids]
-        remaining.sort(
-            key=lambda item: (
-                item["created_at"] or datetime.max,
-                item["picture_id"],
-                item["face"].id or 0,
-            )
+        logger.info(
+            "[reference_faces] character_id=%s penalized_tags=%s",
+            character_id,
+            len(tag_weights),
         )
-        for item in remaining:
-            if len(representatives) >= k:
+        for face, picture in remaining_rows:
+            if len(representatives) >= target_count:
                 break
-            representatives.append(item["face"])
+            if face.id in selected_face_ids:
+                continue
+            selected_face_ids.add(face.id)
+            representatives.append(face)
+
+    if len(representatives) >= target_count:
+        return representatives
+
+    fallback_row = session.exec(
+        base_query.order_by(desc(Picture.score), Picture.created_at.asc(), Picture.id)
+    ).first()
+    if fallback_row:
+        fallback_face = fallback_row[0]
+        if fallback_face and fallback_face.id not in selected_face_ids:
+            representatives.append(fallback_face)
+
+    logger.info(
+        "[reference_faces] character_id=%s final_faces=%s",
+        character_id,
+        len(representatives),
+    )
 
     return representatives
 
@@ -174,6 +161,67 @@ def get_smart_score_penalized_tags_from_request(server, request):
         DEFAULT_SMART_SCORE_PENALIZED_TAGS,
         default_weight=DEFAULT_SMART_SCORE_PENALIZED_TAG_WEIGHT,
     )
+
+
+def compute_character_likeness_for_faces(
+    reference_faces: list[Face],
+    candidate_faces: list[Face],
+) -> dict[int, float]:
+    """Compute likeness scores for candidate faces against reference faces.
+
+    Args:
+        reference_faces: Reference faces to compare against.
+        candidate_faces: Candidate faces to score.
+
+    Returns:
+        A mapping of face_id to likeness score.
+    """
+
+    if not reference_faces or not candidate_faces:
+        return {}
+
+    ref_arrs = []
+    for ref_face in reference_faces:
+        if ref_face.features is None:
+            continue
+        ref_arr = np.frombuffer(ref_face.features, dtype=np.float32)
+        if ref_arr.size == 0:
+            continue
+        ref_arrs.append(ref_arr)
+
+    if not ref_arrs:
+        return {}
+
+    face_vectors = []
+    face_ids = []
+    for face in candidate_faces:
+        if face.features is None:
+            continue
+        arr_face = np.frombuffer(face.features, dtype=np.float32)
+        if arr_face.size == 0:
+            continue
+        face_vectors.append(arr_face)
+        face_ids.append(face.id)
+
+    if not face_vectors:
+        return {}
+
+    cand = np.stack(face_vectors)
+    ref = np.stack(ref_arrs)
+    cand_norm = cand / np.maximum(np.linalg.norm(cand, axis=1, keepdims=True), 1e-8)
+    ref_norm = ref / np.maximum(np.linalg.norm(ref, axis=1, keepdims=True), 1e-8)
+    sims = cand_norm @ ref_norm.T
+    alpha = 5.0
+    sims = np.clip(sims, -1.0, 1.0)
+    weights = np.exp(alpha * sims)
+    denom = np.sum(weights, axis=1, keepdims=True)
+    denom = np.where(denom == 0, 1.0, denom)
+    softmax_avg = np.sum(weights * sims, axis=1) / denom.squeeze(1)
+
+    return {
+        face_id: float(likeness)
+        for face_id, likeness in zip(face_ids, softmax_avg, strict=False)
+    }
 
 
 def find_pictures_by_character_likeness(
@@ -212,21 +260,6 @@ def find_pictures_by_character_likeness(
         logger.warning("No reference faces found for character id=%s", character_id)
         return []
 
-    ref_arrs = []
-    for ref_face in reference_faces:
-        if ref_face.features is None:
-            continue
-        ref_arr = np.frombuffer(ref_face.features, dtype=np.float32)
-        if ref_arr.size == 0:
-            continue
-        ref_arrs.append(ref_arr)
-
-    if not ref_arrs:
-        logger.warning(
-            "No reference face features found for character id=%s", character_id
-        )
-        return []
-
     def get_all_faces(session, character_id, candidate_ids=None):
         query = select(Face)
         if character_id == "ALL" or character_id is None:
@@ -250,32 +283,15 @@ def find_pictures_by_character_likeness(
         logger.warning("No unassigned faces found")
         return []
 
-    character_likeness_map = {}
-    face_vectors = []
-    face_ids = []
-    for face in candidate_faces:
-        if face.features is None:
-            continue
-        arr_face = np.frombuffer(face.features, dtype=np.float32)
-        if arr_face.size == 0:
-            continue
-        face_vectors.append(arr_face)
-        face_ids.append(face.id)
-
-    if face_vectors:
-        cand = np.stack(face_vectors)
-        ref = np.stack(ref_arrs)
-        cand_norm = cand / np.maximum(np.linalg.norm(cand, axis=1, keepdims=True), 1e-8)
-        ref_norm = ref / np.maximum(np.linalg.norm(ref, axis=1, keepdims=True), 1e-8)
-        sims = cand_norm @ ref_norm.T
-        alpha = 5.0
-        sims = np.clip(sims, -1.0, 1.0)
-        weights = np.exp(alpha * sims)
-        denom = np.sum(weights, axis=1, keepdims=True)
-        denom = np.where(denom == 0, 1.0, denom)
-        softmax_avg = np.sum(weights * sims, axis=1) / denom.squeeze(1)
-        for face_id, likeness in zip(face_ids, softmax_avg, strict=False):
-            character_likeness_map[face_id] = float(likeness)
+    character_likeness_map = compute_character_likeness_for_faces(
+        reference_faces,
+        candidate_faces,
+    )
+    if not character_likeness_map:
+        logger.warning(
+            "No reference face features found for character id=%s", character_id
+        )
+        return []
     timing_after_likeness = time.perf_counter()
 
     picture_likeness_map = {}
@@ -283,89 +299,78 @@ def find_pictures_by_character_likeness(
         pic_id = face.picture_id
         likeness = character_likeness_map.get(face.id, 0.0)
         if pic_id not in picture_likeness_map:
-            picture_likeness_map = {}
-            for face in candidate_faces:
-                pic_id = face.picture_id
-                likeness = character_likeness_map.get(face.id, 0.0)
-                if pic_id not in picture_likeness_map:
-                    picture_likeness_map[pic_id] = likeness
-                else:
-                    picture_likeness_map[pic_id] = max(
-                        picture_likeness_map[pic_id], likeness
-                    )
+            picture_likeness_map[pic_id] = likeness
+        else:
+            picture_likeness_map[pic_id] = max(picture_likeness_map[pic_id], likeness)
 
-            sorted_ids = sorted(
-                picture_likeness_map.items(),
-                key=lambda item: item[1],
-                reverse=descending,
-            )
-            sorted_ids = [pid for pid, _ in sorted_ids]
+    sorted_ids = sorted(
+        picture_likeness_map.items(),
+        key=lambda item: item[1],
+        reverse=descending,
+    )
+    sorted_ids = [pid for pid, _ in sorted_ids]
 
-            if character_id == "UNASSIGNED" and sorted_ids:
+    if character_id == "UNASSIGNED" and sorted_ids:
 
-                def filter_unassigned_ids(session: Session, picture_ids: list[int]):
-                    if not picture_ids:
-                        return []
-                    assigned_faces = exists(
-                        select(Face.id).where(
-                            Face.picture_id == Picture.id,
-                            Face.character_id.is_not(None),
-                        )
-                    )
-                    in_set = exists(
-                        select(PictureSetMember.picture_id).where(
-                            PictureSetMember.picture_id == Picture.id
-                        )
-                    )
-                    rows = session.exec(
-                        select(Picture.id)
-                        .where(Picture.id.in_(picture_ids))
-                        .where(~assigned_faces)
-                        .where(~in_set)
-                    ).all()
-                    return [row for row in rows]
-
-                eligible_ids = set(
-                    server.vault.db.run_task(filter_unassigned_ids, sorted_ids)
-                )
-                sorted_ids = [pid for pid in sorted_ids if pid in eligible_ids]
-
-            selected_ids = sorted_ids[offset : offset + limit]
-            if not selected_ids:
+        def filter_unassigned_ids(session: Session, picture_ids: list[int]):
+            if not picture_ids:
                 return []
-
-            candidate_pics = server.vault.db.run_task(
-                Picture.find,
-                id=selected_ids,
-                select_fields=Picture.metadata_fields(),
+            assigned_faces = exists(
+                select(Face.id).where(
+                    Face.picture_id == Picture.id,
+                    Face.character_id.is_not(None),
+                )
             )
-            timing_after_fetch = time.perf_counter()
-
-            logger.info(
-                "[LIKELINESS TIMING] refs=%.3fms candidates=%.3fms likeness=%.3fms fetch=%.3fms total=%.3fms",
-                (timing_after_refs - timing_start) * 1000.0,
-                (timing_after_candidates - timing_after_refs) * 1000.0,
-                (timing_after_likeness - timing_after_candidates) * 1000.0,
-                (timing_after_fetch - timing_after_likeness) * 1000.0,
-                (timing_after_fetch - timing_start) * 1000.0,
+            in_set = exists(
+                select(PictureSetMember.picture_id).where(
+                    PictureSetMember.picture_id == Picture.id
+                )
             )
+            rows = session.exec(
+                select(Picture.id)
+                .where(Picture.id.in_(picture_ids))
+                .where(~assigned_faces)
+                .where(~in_set)
+            ).all()
+            return [row for row in rows]
 
-            pic_map = {pic.id: pic for pic in candidate_pics}
-            results = []
-            for pic_id in selected_ids:
-                pic = pic_map.get(pic_id)
-                if not pic:
-                    continue
-                pic_dict = safe_model_dict(pic)
-                pic_dict["character_likeness"] = picture_likeness_map.get(pic_id, 0.0)
-                results.append(pic_dict)
+        eligible_ids = set(server.vault.db.run_task(filter_unassigned_ids, sorted_ids))
+        sorted_ids = [pid for pid in sorted_ids if pid in eligible_ids]
 
-            return results
+    selected_ids = sorted_ids[offset : offset + limit]
+    if not selected_ids:
+        return []
+
+    candidate_pics = server.vault.db.run_task(
+        Picture.find,
+        id=selected_ids,
+        select_fields=Picture.metadata_fields(),
+    )
+    timing_after_fetch = time.perf_counter()
+
+    logger.info(
+        "[LIKELINESS TIMING] refs=%.3fms candidates=%.3fms likeness=%.3fms fetch=%.3fms total=%.3fms",
+        (timing_after_refs - timing_start) * 1000.0,
+        (timing_after_candidates - timing_after_refs) * 1000.0,
+        (timing_after_likeness - timing_after_candidates) * 1000.0,
+        (timing_after_fetch - timing_after_likeness) * 1000.0,
+        (timing_after_fetch - timing_start) * 1000.0,
+    )
+
+    pic_map = {pic.id: pic for pic in candidate_pics}
+    results = []
+    for pic_id in selected_ids:
+        pic = pic_map.get(pic_id)
+        if not pic:
+            continue
+        pic_dict = safe_model_dict(pic)
+        pic_dict["character_likeness"] = picture_likeness_map.get(pic_id, 0.0)
+        results.append(pic_dict)
+
+    return results
 
 
-def fetch_smart_score_data(
-    server, character_id, format, candidate_ids=None, penalized_tags=None
-):
+def fetch_smart_score_data(server, format, candidate_ids=None, penalized_tags=None):
     """Fetch anchors, character references, and candidates for smart score calculation."""
 
     def fetch_data(session: Session):
@@ -396,33 +401,6 @@ def fetch_smart_score_data(
             if not candidate_ids:
                 return good, bad, [], {}
             query = query.where(Picture.id.in_(candidate_ids))
-
-        # Apply Filter Logic Matches list_pictures
-        if character_id == "UNASSIGNED":
-            query = query.where(
-                ~exists(
-                    select(Face.id).where(
-                        Face.picture_id == Picture.id,
-                        Face.character_id.is_not(None),
-                    )
-                ),
-                ~exists(
-                    select(PictureSetMember.picture_id).where(
-                        PictureSetMember.picture_id == Picture.id
-                    )
-                ),
-            )
-        elif character_id and character_id != "ALL":
-            try:
-                cid = int(character_id)
-                character_picture_ids = session.exec(
-                    select(Face.picture_id).where(Face.character_id == cid)
-                ).all()
-                if not character_picture_ids:
-                    return good, bad, [], {}
-                query = query.where(Picture.id.in_(character_picture_ids))
-            except ValueError:
-                pass
 
         if format:
             query = query.where(Picture.format.in_(format))
@@ -487,40 +465,12 @@ def fetch_smart_score_data(
                         candidate["id"], 0
                     )
 
-        # Pre-fetch Max Face-Character Likeness Map for Candidates
-        pic_likeness_map = {}
-        char_id = None
-        if character_id is not None:
-            try:
-                char_id = int(character_id)
-            except (TypeError, ValueError):
-                char_id = None
-        if candidate_id_list and char_id is not None:
-            try:
-                stmt = (
-                    select(Face.picture_id, func.max(FaceCharacterLikeness.likeness))
-                    .join(
-                        FaceCharacterLikeness,
-                        Face.id == FaceCharacterLikeness.face_id,
-                    )
-                    .where(Face.picture_id.in_(candidate_id_list))
-                    .where(Face.character_id == char_id)
-                    .where(FaceCharacterLikeness.character_id == char_id)
-                    .group_by(Face.picture_id)
-                )
-                rows = session.exec(stmt).all()
-                pic_likeness_map = {r[0]: r[1] for r in rows}
-            except Exception as e:
-                logger.warning("Failed to fetch likeness map: %s", e)
-
-        return good, bad, candidates, pic_likeness_map
+        return good, bad, candidates
 
     return server.vault.db.run_task(fetch_data, priority=DBPriority.IMMEDIATE)
 
 
-def fetch_smart_score_unscored_ids(
-    server, character_id, format, candidate_ids=None, descending=True
-):
+def fetch_smart_score_unscored_ids(server, format, candidate_ids=None, descending=True):
     def fetch_ids(session: Session):
         query = select(Picture.id)
 
@@ -528,32 +478,6 @@ def fetch_smart_score_unscored_ids(
             if not candidate_ids:
                 return []
             query = query.where(Picture.id.in_(candidate_ids))
-
-        if character_id == "UNASSIGNED":
-            query = query.where(
-                ~exists(
-                    select(Face.id).where(
-                        Face.picture_id == Picture.id,
-                        Face.character_id.is_not(None),
-                    )
-                ),
-                ~exists(
-                    select(PictureSetMember.picture_id).where(
-                        PictureSetMember.picture_id == Picture.id
-                    )
-                ),
-            )
-        elif character_id and character_id != "ALL":
-            try:
-                cid = int(character_id)
-                character_picture_ids = session.exec(
-                    select(Face.picture_id).where(Face.character_id == cid)
-                ).all()
-                if not character_picture_ids:
-                    return []
-                query = query.where(Picture.id.in_(character_picture_ids))
-            except ValueError:
-                pass
 
         if format:
             query = query.where(Picture.format.in_(format))
@@ -570,7 +494,7 @@ def fetch_smart_score_unscored_ids(
     return server.vault.db.run_task(fetch_ids, priority=DBPriority.IMMEDIATE)
 
 
-def prepare_smart_score_inputs(good_anchors, bad_anchors, candidates, pic_likeness_map):
+def prepare_smart_score_inputs(good_anchors, bad_anchors, candidates):
     """Unpickle embeddings and prepare lists of dictionaries for calculation."""
 
     def get_attr(item, key):
@@ -611,7 +535,6 @@ def prepare_smart_score_inputs(good_anchors, bad_anchors, candidates, pic_likene
                     "id": pid,
                     "embedding": v,
                     "aesthetic_score": get_attr(p, "aesthetic_score"),
-                    "character_likeness": pic_likeness_map.get(pid),
                     "penalized_tag_count": get_attr(p, "penalized_tag_count") or 0,
                     "width": get_attr(p, "width"),
                     "height": get_attr(p, "height"),
@@ -625,7 +548,6 @@ def prepare_smart_score_inputs(good_anchors, bad_anchors, candidates, pic_likene
 
 def find_pictures_by_smart_score(
     server,
-    character_id,
     format,
     offset,
     limit,
@@ -634,9 +556,8 @@ def find_pictures_by_smart_score(
     penalized_tags=None,
 ):
     # 1. Fetch data
-    good_anchors, bad_anchors, candidates, pic_likeness_map = fetch_smart_score_data(
+    good_anchors, bad_anchors, candidates = fetch_smart_score_data(
         server,
-        character_id,
         format,
         candidate_ids=candidate_ids,
         penalized_tags=penalized_tags,
@@ -644,7 +565,6 @@ def find_pictures_by_smart_score(
 
     unscored_ids = fetch_smart_score_unscored_ids(
         server,
-        character_id,
         format,
         candidate_ids=candidate_ids,
         descending=descending,
@@ -656,7 +576,7 @@ def find_pictures_by_smart_score(
     if candidates:
         # 2. Prepare inputs (unpickling)
         good_list, bad_list, cand_list, cand_ids = prepare_smart_score_inputs(
-            good_anchors, bad_anchors, candidates, pic_likeness_map
+            good_anchors, bad_anchors, candidates
         )
 
         if cand_list:
