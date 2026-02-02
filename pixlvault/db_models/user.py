@@ -38,4 +38,3 @@ class User(SQLModel, table=True):
             "passive_deletes": True,
         },
     )
-

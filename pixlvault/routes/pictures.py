@@ -1,6 +1,6 @@
 import ast
+import concurrent.futures
 import base64
-import json
 import os
 import re
 import sys
@@ -21,9 +21,9 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy import desc, exists, func
+from sqlalchemy import exists, func
 from sqlalchemy.orm import load_only, selectinload
-from sqlmodel import Session, select, delete
+from sqlmodel import Session, select
 
 from pixlvault.database import DBPriority
 from pixlvault.db_models import (
@@ -37,7 +37,6 @@ from pixlvault.db_models import (
     PictureLikeness,
     PictureSetMember,
     PictureSet,
-    Quality,
     SortMechanism,
     Tag,
     TAG_EMPTY_SENTINEL,
@@ -51,8 +50,64 @@ from pixlvault.worker_registry import WorkerType
 logger = get_logger(__name__)
 
 
+def _create_picture_imports(server, uploaded_files, dest_folder):
+    """
+    Given a list of (img_bytes, ext), create Picture objects for new images,
+    skipping duplicates based on pixel_sha hash.
+    Returns (shas, existing_map, new_pictures)
+    """
+
+    def create_sha(img_bytes):
+        return PictureUtils.calculate_hash_from_bytes(img_bytes)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        shas = list(
+            executor.map(create_sha, (img_bytes for img_bytes, _ in uploaded_files))
+        )
+
+    existing_pictures = server.vault.db.run_immediate_read_task(
+        lambda session: Picture.find(session, pixel_shas=shas)
+    )
+
+    existing_map = {pic.pixel_sha: pic for pic in existing_pictures}
+
+    importable = [
+        (entry, sha)
+        for (entry, sha) in zip(uploaded_files, shas)
+        if sha not in existing_map
+    ]
+
+    if importable:
+
+        def create_one_picture(args):
+            file_entry, sha = args
+            img_bytes, ext = file_entry
+            pic_uuid = str(uuid.uuid4()) + ext
+            logger.debug(f"Importing picture from uploaded bytes as id={pic_uuid}")
+            return PictureUtils.create_picture_from_bytes(
+                image_root_path=dest_folder,
+                image_bytes=img_bytes,
+                picture_uuid=pic_uuid,
+                pixel_sha=sha,
+            )
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            new_pictures = list(executor.map(create_one_picture, importable))
+    else:
+        new_pictures = []
+
+    return shas, existing_map, new_pictures
+
+
 def create_router(server) -> APIRouter:
     router = APIRouter()
+
+    @router.get("/sort_mechanisms")
+    async def get_pictures_sort_mechanisms():
+        """Return available sorting mechanisms for pictures."""
+        result = SortMechanism.all()
+        logger.debug("Returning sort mechanisms: {}".format(result))
+        return result
 
     @router.get("/pictures/stacks")
     async def get_picture_stacks(
@@ -65,6 +120,7 @@ def create_router(server) -> APIRouter:
         candidate_ids = None
 
         if set_id is not None:
+
             def fetch_set_ids(session, set_id):
                 members = session.exec(
                     select(PictureSetMember).where(PictureSetMember.set_id == set_id)
@@ -76,6 +132,7 @@ def create_router(server) -> APIRouter:
             )
         elif character_id is not None:
             if character_id == "UNASSIGNED":
+
                 def fetch_unassigned_ids(session):
                     query = select(Picture.id)
                     unassigned_condition = ~exists(
@@ -98,6 +155,7 @@ def create_router(server) -> APIRouter:
             elif character_id == "ALL" or character_id == "":
                 candidate_ids = None
             elif character_id.isdigit():
+
                 def fetch_character_ids(session, character_id):
                     faces = session.exec(
                         select(Face).where(Face.character_id == character_id)
@@ -111,8 +169,11 @@ def create_router(server) -> APIRouter:
                 )
 
         if format:
+
             def fetch_format_ids(session, format):
-                rows = session.exec(select(Picture.id).where(Picture.format.in_(format))).all()
+                rows = session.exec(
+                    select(Picture.id).where(Picture.format.in_(format))
+                ).all()
                 return list(rows)
 
             format_ids = set(
@@ -183,7 +244,9 @@ def create_router(server) -> APIRouter:
                 select_fields=Picture.metadata_fields(),
             )
 
-        ordered_pics = server.vault.db.run_immediate_read_task(fetch_pictures, ordered_ids)
+        ordered_pics = server.vault.db.run_immediate_read_task(
+            fetch_pictures, ordered_ids
+        )
         pics_by_id = {pic.id: pic for pic in ordered_pics}
         ordered_pics = [pics_by_id.get(pid) for pid in ordered_ids]
         ordered_pics = [pic for pic in ordered_pics if pic is not None]
@@ -215,6 +278,7 @@ def create_router(server) -> APIRouter:
 
         penalized_tag_map = defaultdict(list)
         if ids_int and penalized_tag_set:
+
             def fetch_penalized_tags(session: Session):
                 rows = session.exec(
                     select(Tag.picture_id, Tag.tag).where(
@@ -225,7 +289,9 @@ def create_router(server) -> APIRouter:
                 ).all()
                 return rows
 
-            rows = server.vault.db.run_task(fetch_penalized_tags, priority=DBPriority.IMMEDIATE)
+            rows = server.vault.db.run_task(
+                fetch_penalized_tags, priority=DBPriority.IMMEDIATE
+            )
             for pic_id, tag in rows or []:
                 if tag:
                     penalized_tag_map[pic_id].append(tag)
@@ -401,8 +467,7 @@ def create_router(server) -> APIRouter:
                 if caption_mode_normalized not in {"none", "description", "tags"}:
                     caption_mode_normalized = "description"
                 include_character_name_enabled = (
-                    bool(include_character_name)
-                    and caption_mode_normalized != "none"
+                    bool(include_character_name) and caption_mode_normalized != "none"
                 )
                 if export_type_normalized != Picture.ExportType.FULL:
                     caption_mode_normalized = "tags"
@@ -525,6 +590,7 @@ def create_router(server) -> APIRouter:
 
                 filename_parts = []
                 if set_id is not None:
+
                     def get_set(session, set_id):
                         return session.get(PictureSet, set_id)
 
@@ -555,6 +621,7 @@ def create_router(server) -> APIRouter:
                     return [x_min, y_min, x_max, y_max]
 
                 if export_type_normalized != Picture.ExportType.FULL:
+
                     def fetch_features(session: Session, picture_ids):
                         faces = session.exec(
                             select(Face).where(Face.picture_id.in_(picture_ids))
@@ -674,7 +741,10 @@ def create_router(server) -> APIRouter:
                             ext = os.path.splitext(full_path)[1]
                             if export_type_normalized == Picture.ExportType.FULL:
                                 arcname = f"image_{idx:05d}{ext}"
-                                if scale_factor < 1.0 and not PictureUtils.is_video_file(full_path):
+                                if (
+                                    scale_factor < 1.0
+                                    and not PictureUtils.is_video_file(full_path)
+                                ):
                                     try:
                                         from PIL import Image
                                         from io import BytesIO
@@ -691,9 +761,13 @@ def create_router(server) -> APIRouter:
                                                 resample=Image.LANCZOS,
                                             )
                                             buffer = BytesIO()
-                                            save_format = img.format or ext.lstrip(".").upper()
+                                            save_format = (
+                                                img.format or ext.lstrip(".").upper()
+                                            )
                                             if save_format.upper() in {"JPG", "JPEG"}:
-                                                resized.save(buffer, format="JPEG", quality=95)
+                                                resized.save(
+                                                    buffer, format="JPEG", quality=95
+                                                )
                                             else:
                                                 resized.save(buffer, format=save_format)
 
@@ -736,11 +810,20 @@ def create_router(server) -> APIRouter:
 
                                     if character_names:
                                         if caption_mode_normalized == "tags":
-                                            caption_text = ", ".join(character_names + [caption_text])
+                                            caption_text = ", ".join(
+                                                character_names + [caption_text]
+                                            )
                                         elif caption_mode_normalized == "description":
-                                            caption_text = ", ".join(character_names) + ": " + caption_text
+                                            caption_text = (
+                                                ", ".join(character_names)
+                                                + ": "
+                                                + caption_text
+                                            )
 
-                                if caption_mode_normalized != "none" and caption_text is not None:
+                                if (
+                                    caption_mode_normalized != "none"
+                                    and caption_text is not None
+                                ):
                                     zip_file.writestr(
                                         f"image_{idx:05d}.txt",
                                         f"{caption_text}\n",
@@ -771,18 +854,28 @@ def create_router(server) -> APIRouter:
                                                     continue
                                                 if not face.bbox:
                                                     continue
-                                                bbox = _clamp_bbox(face.bbox, img.width, img.height)
+                                                bbox = _clamp_bbox(
+                                                    face.bbox, img.width, img.height
+                                                )
                                                 if not bbox:
                                                     continue
                                                 crop = img.crop(bbox)
                                                 buffer = BytesIO()
                                                 crop.save(buffer, format="PNG")
-                                                face_index = getattr(face, "face_index", 0)
+                                                face_index = getattr(
+                                                    face, "face_index", 0
+                                                )
                                                 arcname = f"{base_name}_face_{face_index:03d}.png"
-                                                zip_file.writestr(arcname, buffer.getvalue())
-                                                server.export_tasks[task_id]["processed"] += 1
+                                                zip_file.writestr(
+                                                    arcname, buffer.getvalue()
+                                                )
+                                                server.export_tasks[task_id][
+                                                    "processed"
+                                                ] += 1
 
-                                                tags = face_tags_by_face.get(face.id, [])
+                                                tags = face_tags_by_face.get(
+                                                    face.id, []
+                                                )
                                                 if tags:
                                                     zip_file.writestr(
                                                         f"{base_name}_face_{face_index:03d}.txt",
@@ -796,18 +889,28 @@ def create_router(server) -> APIRouter:
                                                     continue
                                                 if not hand.bbox:
                                                     continue
-                                                bbox = _clamp_bbox(hand.bbox, img.width, img.height)
+                                                bbox = _clamp_bbox(
+                                                    hand.bbox, img.width, img.height
+                                                )
                                                 if not bbox:
                                                     continue
                                                 crop = img.crop(bbox)
                                                 buffer = BytesIO()
                                                 crop.save(buffer, format="PNG")
-                                                hand_index = getattr(hand, "hand_index", 0)
+                                                hand_index = getattr(
+                                                    hand, "hand_index", 0
+                                                )
                                                 arcname = f"{base_name}_hand_{hand_index:03d}.png"
-                                                zip_file.writestr(arcname, buffer.getvalue())
-                                                server.export_tasks[task_id]["processed"] += 1
+                                                zip_file.writestr(
+                                                    arcname, buffer.getvalue()
+                                                )
+                                                server.export_tasks[task_id][
+                                                    "processed"
+                                                ] += 1
 
-                                                tags = hand_tags_by_hand.get(hand.id, [])
+                                                tags = hand_tags_by_hand.get(
+                                                    hand.id, []
+                                                )
                                                 if tags:
                                                     zip_file.writestr(
                                                         f"{base_name}_hand_{hand_index:03d}.txt",
@@ -1112,9 +1215,7 @@ def create_router(server) -> APIRouter:
 
         def is_in_picture_set(session):
             member = session.exec(
-                select(PictureSetMember.id).where(
-                    PictureSetMember.picture_id == pic_id
-                )
+                select(PictureSetMember.id).where(PictureSetMember.picture_id == pic_id)
             ).first()
             return member is not None
 
@@ -1291,9 +1392,25 @@ def create_router(server) -> APIRouter:
                 if not contents:
                     continue
                 ext = os.path.splitext(upload.filename)[1].lower()
-                if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff", ".tif", ".mp4", ".webm", ".mov", ".avi", ".mkv"}:
+                if ext not in {
+                    ".jpg",
+                    ".jpeg",
+                    ".png",
+                    ".webp",
+                    ".gif",
+                    ".bmp",
+                    ".tiff",
+                    ".tif",
+                    ".mp4",
+                    ".webm",
+                    ".mov",
+                    ".avi",
+                    ".mkv",
+                }:
                     logger.error("Invalid file extension: %s", ext)
-                    raise HTTPException(status_code=400, detail="Invalid file extension")
+                    raise HTTPException(
+                        status_code=400, detail="Invalid file extension"
+                    )
                 uploaded_files.append((contents, ext))
         else:
             logger.error("No files provided for import")
@@ -1310,7 +1427,7 @@ def create_router(server) -> APIRouter:
 
         def run_import_task():
             try:
-                shas, existing_map, new_pictures = server._create_picture_imports(
+                shas, existing_map, new_pictures = _create_picture_imports(
                     uploaded_files, dest_folder
                 )
 
@@ -1319,6 +1436,7 @@ def create_router(server) -> APIRouter:
                 )
 
                 if new_pictures:
+
                     def import_task(session):
                         session.add_all(new_pictures)
                         session.commit()
@@ -1486,9 +1604,7 @@ def create_router(server) -> APIRouter:
 
         try:
             sort_mech = (
-                SortMechanism.from_string(sort, descending=descending)
-                if sort
-                else None
+                SortMechanism.from_string(sort, descending=descending) if sort else None
             )
         except ValueError as ve:
             logger.error(f"Invalid sort mechanism: {sort} - {ve}")
@@ -1505,7 +1621,9 @@ def create_router(server) -> APIRouter:
             )
 
         if sort_mech and sort_mech.key == SortMechanism.Keys.SMART_SCORE:
-            penalized_tags = server._get_smart_score_penalized_tags_from_request(request)
+            penalized_tags = server._get_smart_score_penalized_tags_from_request(
+                request
+            )
             return server._find_pictures_by_smart_score(
                 character_id,
                 format,
@@ -1516,6 +1634,7 @@ def create_router(server) -> APIRouter:
             )
 
         if character_id == "UNASSIGNED":
+
             def find_unassigned(session: Session):
                 query = select(Picture)
                 unassigned_condition = ~exists(
@@ -1584,14 +1703,11 @@ def create_router(server) -> APIRouter:
         if character_id == "ALL":
             character_id = None
 
-        if (
-            character_id is not None
-            and character_id != ""
-            and character_id.isdigit()
-        ):
+        if character_id is not None and character_id != "" and character_id.isdigit():
             character_id = int(character_id)
 
         if character_id is not None and character_id != "":
+
             def get_picture_ids_for_character(session, character_id):
                 faces = session.exec(
                     select(Face).where(Face.character_id == character_id)

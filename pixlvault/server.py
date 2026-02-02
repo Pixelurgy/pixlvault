@@ -1,4 +1,3 @@
-import base64
 import gc
 import pickle
 import numpy as np
@@ -6,75 +5,50 @@ import uvicorn
 import os
 import json
 import re
-import uuid
-import mimetypes
-import concurrent.futures
-import sys
-import time
-import zipfile
 import asyncio
 import threading
-from email.utils import formatdate
 
-from collections import defaultdict, deque
-from sqlalchemy.orm import load_only, selectinload
+from collections import defaultdict
 from sqlalchemy import exists, desc, func
-from sqlmodel import Session, delete, select
+from sqlmodel import Session, select
 
 from contextlib import asynccontextmanager
 from fastapi import (
-    Body,
     FastAPI,
-    File,
     Request,
-    UploadFile,
-    Query,
     HTTPException,
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi import BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from pillow_heif import register_heif_opener
-from typing import List, Optional
-from pydantic import BaseModel, Field
 
 from pixlvault.db_models import (
     Character,
     Face,
     FaceCharacterLikeness,
-    FaceTag,
-    Hand,
-    HandTag,
     Picture,
-    PictureLikeness,
     PictureSet,
     PictureSetMember,
     Quality,
     Tag,
-    SortMechanism,
     User,
     DEFAULT_SMART_SCORE_PENALIZED_TAGS,
     DEFAULT_SMART_SCORE_PENALIZED_TAG_WEIGHT,
-    TAG_EMPTY_SENTINEL,
 )
 
 from pixlvault.database import DBPriority
 from pixlvault.event_types import EventType
 from pixlvault.utils import (
     safe_model_dict,
-    serialize_tag_objects,
-    serialize_user_config,
-    apply_user_config_patch,
     normalize_smart_score_penalized_tags,
 )
 from pixlvault.auth import AuthService, LoginRequest
 from pixlvault.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger, uvicorn_log_config
 from pixlvault.vault import Vault
-from pixlvault.worker_registry import WorkerType
 from pixlvault.watch_folder_worker import WatchFolderWorker
 from pixlvault.routes.config import create_router as create_config_router
 from pixlvault.routes.characters import create_router as create_characters_router
@@ -340,7 +314,6 @@ class Server:
             default_weight=DEFAULT_SMART_SCORE_PENALIZED_TAG_WEIGHT,
         )
 
-
     def _ensure_ssl_certificates(self):
         import subprocess
 
@@ -451,54 +424,6 @@ class Server:
                 headers=headers,
             )
 
-    def _create_picture_imports(self, uploaded_files, dest_folder):
-        """
-        Given a list of (img_bytes, ext), create Picture objects for new images,
-        skipping duplicates based on pixel_sha hash.
-        Returns (shas, existing_map, new_pictures)
-        """
-
-        def create_sha(img_bytes):
-            return PictureUtils.calculate_hash_from_bytes(img_bytes)
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            shas = list(
-                executor.map(create_sha, (img_bytes for img_bytes, _ in uploaded_files))
-            )
-
-        existing_pictures = self.vault.db.run_immediate_read_task(
-            lambda session: Picture.find(session, pixel_shas=shas)
-        )
-
-        existing_map = {pic.pixel_sha: pic for pic in existing_pictures}
-
-        importable = [
-            (entry, sha)
-            for (entry, sha) in zip(uploaded_files, shas)
-            if sha not in existing_map
-        ]
-
-        if importable:
-
-            def create_one_picture(args):
-                file_entry, sha = args
-                img_bytes, ext = file_entry
-                pic_uuid = str(uuid.uuid4()) + ext
-                logger.debug(f"Importing picture from uploaded bytes as id={pic_uuid}")
-                return PictureUtils.create_picture_from_bytes(
-                    image_root_path=dest_folder,
-                    image_bytes=img_bytes,
-                    picture_uuid=pic_uuid,
-                    pixel_sha=sha,
-                )
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                new_pictures = list(executor.map(create_one_picture, importable))
-        else:
-            new_pictures = []
-
-        return shas, existing_map, new_pictures
-
     def _get_version(self):
         try:
             import tomllib
@@ -510,26 +435,6 @@ class Server:
         with open(pyproject_path, "rb") as f:
             data = tomllib.load(f)
         return data.get("project", {}).get("version", "unknown")
-
-    def _find_reference_character_id_for_set(self, picture_set_id):
-        # Find reference_character_id if this is a reference set
-        reference_character_id = None
-
-        def find_reference_character(session, picture_set_id):
-            character = Character.find(
-                session,
-                select_fields=["reference_picture_set_id"],
-                reference_picture_set_id=picture_set_id,
-            )
-            logger.debug(
-                f"Found reference character for set {picture_set_id}: {character}"
-            )
-            return character[0].id if character else None
-
-        reference_character_id = self.vault.db.run_immediate_read_task(
-            find_reference_character, picture_set_id
-        )
-        return reference_character_id
 
     def _find_pictures_by_character_likeness(
         self, character_id, reference_character_id, offset, limit, descending

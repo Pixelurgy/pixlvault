@@ -6,7 +6,6 @@ from pixlvault.database import DBPriority
 from pixlvault.db_models import (
     Character,
     Face,
-    FaceCharacterLikeness,
     Picture,
     PictureSet,
     PictureSetMember,
@@ -40,12 +39,13 @@ def create_router(server) -> APIRouter:
             logger.debug("ALL pics count: {}".format(image_count))
             char_id = None
         elif id == "UNASSIGNED":
+
             def find_unassigned(session: Session):
-                pics = Picture.find(session, select_fields=["characters", "picture_sets"])
+                pics = Picture.find(
+                    session, select_fields=["characters", "picture_sets"]
+                )
                 return [
-                    pic
-                    for pic in pics
-                    if not pic.characters and not pic.picture_sets
+                    pic for pic in pics if not pic.characters and not pic.picture_sets
                 ]
 
             pics = server.vault.db.run_immediate_read_task(find_unassigned)
@@ -53,6 +53,7 @@ def create_router(server) -> APIRouter:
             logger.debug("UNASSIGNED pics count: {}".format(image_count))
             char_id = None
         else:
+
             def find_assigned(session: Session, character_id: int):
                 faces = session.exec(
                     select(Face).filter(Face.character_id == character_id)
@@ -107,6 +108,7 @@ def create_router(server) -> APIRouter:
         description = data.get("description")
         char = None
         try:
+
             def alter_char(session: Session, id: int, name: str, description: str):
                 character = session.get(Character, id)
                 if character is None:
@@ -143,6 +145,7 @@ def create_router(server) -> APIRouter:
     @router.delete("/characters/{id}")
     async def delete_character(id: int):
         try:
+
             def clear_character_and_nullify_faces(session: Session, character_id: int):
                 character = session.get(Character, character_id)
                 if character is None:
@@ -312,6 +315,7 @@ def create_router(server) -> APIRouter:
     @router.post("/characters")
     async def create_character(payload: dict = Body(...)):
         try:
+
             def create_character_and_reference_set(session, payload):
                 character = Character(**payload)
                 session.add(character)
@@ -412,9 +416,7 @@ def create_router(server) -> APIRouter:
         }
 
     @router.delete("/characters/{character_id}/faces")
-    async def remove_character_from_faces(
-        character_id: int, payload: dict = Body(...)
-    ):
+    async def remove_character_from_faces(character_id: int, payload: dict = Body(...)):
         face_ids = payload.get("face_ids", None)
         picture_ids = payload.get("picture_ids", None)
         if not isinstance(face_ids, list) and not isinstance(picture_ids, list):

@@ -164,7 +164,6 @@ class PictureUtils:
 
         # 2. Good Anchors
         good_component = np.zeros(len(candidates))
-        raw_good_sim = np.zeros(len(candidates))
         if good_anchors:
             good_pairs = [
                 (a["embedding"], a.get("score", 0))
@@ -185,7 +184,6 @@ class PictureUtils:
 
             # Max raw sim for gating
             max_raw = np.max(sims, axis=1)
-            raw_good_sim = max_raw
             mask_good = max_raw >= cfg["minSim"]
 
             # Weighted average of top K
@@ -208,7 +206,6 @@ class PictureUtils:
 
         # 3. Bad Anchors
         bad_component = np.zeros(len(candidates))
-        raw_bad_sim = np.zeros(len(candidates))
         mask_bad = np.zeros(len(candidates), dtype=bool)
         if bad_anchors:
             bad_pairs = [
@@ -231,7 +228,6 @@ class PictureUtils:
 
             # Max raw sim for gating negative penalty
             max_raw_bad = np.max(sims, axis=1)
-            raw_bad_sim = max_raw_bad
             mask_bad = max_raw_bad >= cfg["minBadSim"]
 
             weighted = sims * bad_weights

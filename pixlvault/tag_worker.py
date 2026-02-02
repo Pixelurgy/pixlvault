@@ -29,7 +29,6 @@ logger = get_logger(__name__)
 HAND_CROP_MIN_AREA_RATIO = 0.01
 HAND_CROP_MAX_PER_PICTURE = 2
 CROP_DEBUG_ENABLED = False
-TAG_EMPTY_SENTINEL = ""
 
 
 class DescriptionWorker(BaseWorker):

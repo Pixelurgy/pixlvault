@@ -2,7 +2,15 @@ from fastapi import APIRouter, Body, HTTPException
 from sqlmodel import Session, delete, select
 
 from pixlvault.database import DBPriority
-from pixlvault.db_models import Face, FaceTag, Hand, HandTag, Picture, Tag, TAG_EMPTY_SENTINEL
+from pixlvault.db_models import (
+    Face,
+    FaceTag,
+    Hand,
+    HandTag,
+    Picture,
+    Tag,
+    TAG_EMPTY_SENTINEL,
+)
 from pixlvault.event_types import EventType
 from pixlvault.pixl_logging import get_logger
 from pixlvault.utils import serialize_tag_objects
@@ -29,6 +37,7 @@ def create_router(server) -> APIRouter:
 
             existing = next((t for t in pic.tags if t.tag == tag), None)
             if existing is None:
+
                 def update_picture(session, pic_id, tag):
                     pic = Picture.find(session, id=pic_id, select_fields=["tags"])[0]
                     sentinel = next(
@@ -88,9 +97,7 @@ def create_router(server) -> APIRouter:
                         )
                     ).first()
                     if sentinel is None:
-                        session.add(
-                            Tag(tag=TAG_EMPTY_SENTINEL, picture_id=pic_id)
-                        )
+                        session.add(Tag(tag=TAG_EMPTY_SENTINEL, picture_id=pic_id))
                 session.commit()
                 session.refresh(pic)
                 return pic

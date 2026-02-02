@@ -33,7 +33,9 @@ class LoginRequest(BaseModel):
 
 
 class AuthService:
-    def __init__(self, db: VaultDatabase, server_config: dict, server_config_path: str, logger):
+    def __init__(
+        self, db: VaultDatabase, server_config: dict, server_config_path: str, logger
+    ):
         self._db = db
         self._server_config = server_config
         self._server_config_path = server_config_path
@@ -160,7 +162,9 @@ class AuthService:
             return None
         return self.active_session_ids.get(session_id)
 
-    def require_user_id(self, request: Request, detail: str = "Not authenticated") -> int:
+    def require_user_id(
+        self, request: Request, detail: str = "Not authenticated"
+    ) -> int:
         session_id = request.cookies.get("session_id")
         if not session_id:
             raise HTTPException(status_code=401, detail=detail)
@@ -237,7 +241,9 @@ class AuthService:
         token_value = secrets.token_urlsafe(32)
         token_hash = bcrypt.hash(token_value)
 
-        def create_token(session: Session, user_id: int, token_hash: str, desc: Optional[str]):
+        def create_token(
+            session: Session, user_id: int, token_hash: str, desc: Optional[str]
+        ):
             user = session.get(User, user_id)
             if user is None:
                 raise HTTPException(status_code=404, detail="User not found")
@@ -253,7 +259,11 @@ class AuthService:
             return token
 
         token = self._db.run_task(
-            create_token, user_id, token_hash, description, priority=DBPriority.IMMEDIATE
+            create_token,
+            user_id,
+            token_hash,
+            description,
+            priority=DBPriority.IMMEDIATE,
         )
 
         return {
@@ -296,7 +306,9 @@ class AuthService:
             session.commit()
             return True
 
-        self._db.run_task(remove_token, user_id, token_id, priority=DBPriority.IMMEDIATE)
+        self._db.run_task(
+            remove_token, user_id, token_id, priority=DBPriority.IMMEDIATE
+        )
         return {"status": "success", "deleted_id": token_id}
 
     def check_session(self, request: Request) -> JSONResponse:
@@ -317,7 +329,9 @@ class AuthService:
                 ).all()
                 return tokens
 
-            tokens = self._db.run_task(fetch_tokens, user.id, priority=DBPriority.IMMEDIATE)
+            tokens = self._db.run_task(
+                fetch_tokens, user.id, priority=DBPriority.IMMEDIATE
+            )
             matched_token = None
             for token in tokens:
                 if bcrypt.verify(request.token, token.token_hash):
@@ -414,7 +428,9 @@ class AuthService:
         response.delete_cookie("session_id", path="/")
         return {"message": "Logged out successfully."}
 
-    async def auth_middleware(self, request: Request, call_next, allow_origins, allow_origin_regex):
+    async def auth_middleware(
+        self, request: Request, call_next, allow_origins, allow_origin_regex
+    ):
         excluded_paths = [
             "/login",
             "/docs",

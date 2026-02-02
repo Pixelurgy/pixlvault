@@ -2,10 +2,11 @@ import sys
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from sqlalchemy.orm import selectinload
-from sqlmodel import Session, delete, select
+from sqlmodel import delete, select
 
 from pixlvault.database import DBPriority
 from pixlvault.db_models import (
+    Character,
     FaceCharacterLikeness,
     Picture,
     PictureSet,
@@ -21,6 +22,23 @@ logger = get_logger(__name__)
 
 def create_router(server) -> APIRouter:
     router = APIRouter()
+
+    def _find_reference_character_id_for_set(picture_set_id):
+        # Find reference_character_id if this is a reference set
+        def find_reference_character(session, picture_set_id):
+            character = Character.find(
+                session,
+                select_fields=["reference_picture_set_id"],
+                reference_picture_set_id=picture_set_id,
+            )
+            logger.debug(
+                f"Found reference character for set {picture_set_id}: {character}"
+            )
+            return character[0].id if character else None
+
+        return server.vault.db.run_immediate_read_task(
+            find_reference_character, picture_set_id
+        )
 
     @router.get("/picture_sets")
     async def get_picture_sets():
@@ -89,7 +107,9 @@ def create_router(server) -> APIRouter:
             picture_ids = [m.picture_id for m in members]
             return picture_set, picture_ids
 
-        picture_set, picture_ids = server.vault.db.run_immediate_read_task(fetch_set, id)
+        picture_set, picture_ids = server.vault.db.run_immediate_read_task(
+            fetch_set, id
+        )
         if not picture_set:
             raise HTTPException(status_code=404, detail="Picture set not found")
         if info:
@@ -98,7 +118,9 @@ def create_router(server) -> APIRouter:
             return set_dict
 
         if sort_mech and sort_mech.key == SortMechanism.Keys.SMART_SCORE:
-            penalized_tags = server._get_smart_score_penalized_tags_from_request(request)
+            penalized_tags = server._get_smart_score_penalized_tags_from_request(
+                request
+            )
             pictures = server._find_pictures_by_smart_score(
                 None,
                 format,
@@ -172,7 +194,9 @@ def create_router(server) -> APIRouter:
             session.commit()
             return True
 
-        success = server.vault.db.run_task(delete_set, id, priority=DBPriority.IMMEDIATE)
+        success = server.vault.db.run_task(
+            delete_set, id, priority=DBPriority.IMMEDIATE
+        )
         if not success:
             raise HTTPException(status_code=404, detail="Picture set not found")
         return {"status": "success", "deleted_id": id}
@@ -195,7 +219,7 @@ def create_router(server) -> APIRouter:
 
     @router.post("/picture_sets/{id}/members/{picture_id}")
     async def add_picture_to_set(id: int, picture_id: str):
-        reference_character_id = server._find_reference_character_id_for_set(id)
+        reference_character_id = _find_reference_character_id_for_set(id)
 
         def add_member(session, id, picture_id, reference_character_id=None):
             picture_set = session.get(PictureSet, id)
@@ -247,7 +271,7 @@ def create_router(server) -> APIRouter:
 
     @router.delete("/picture_sets/{id}/members/{picture_id}")
     async def remove_picture_from_set(id: int, picture_id: str):
-        reference_character_id = server._find_reference_character_id_for_set(id)
+        reference_character_id = _find_reference_character_id_for_set(id)
 
         def remove_member(session, id, picture_id, reference_character_id=None):
             member = session.exec(
