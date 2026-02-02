@@ -2852,10 +2852,8 @@ defineExpose({ refreshSidebar });
 }
 
 .sidebar-inline-notice {
-  position: absolute;
-  top: 50%;
-  right: -12px;
-  transform: translate(100%, -50%);
+  position: fixed;
+  transform: translateY(-50%);
   background: rgba(var(--v-theme-secondary), 0.75);
   color: rgb(var(--v-theme-on-secondary));
   padding: 6px 14px;
