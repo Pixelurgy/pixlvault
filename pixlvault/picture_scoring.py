@@ -1,4 +1,5 @@
 import pickle
+from datetime import datetime
 from collections import defaultdict
 
 import numpy as np
@@ -24,6 +25,143 @@ from pixlvault.pixl_logging import get_logger
 from pixlvault.utils import normalize_smart_score_penalized_tags, safe_model_dict
 
 logger = get_logger(__name__)
+
+
+def select_reference_faces_for_character(
+    session: Session,
+    character_id: int,
+    max_refs: int = 10,
+) -> list[Face]:
+    """Select stable reference faces for a character using clustering.
+
+    Args:
+        session: Database session to query faces and pictures.
+        character_id: Character id to select reference faces for.
+        max_refs: Maximum number of reference faces to return.
+
+    Returns:
+        A list of Face objects to use as reference faces.
+    """
+
+    rows = session.exec(
+        select(Face, Picture)
+        .join(Picture, Face.picture_id == Picture.id)
+        .where(
+            Face.character_id == character_id,
+            Face.features.is_not(None),
+            Face.face_index != -1,
+        )
+    ).all()
+
+    if not rows:
+        return []
+
+    items = []
+    for face, picture in rows:
+        if face.features is None:
+            continue
+        vec = np.frombuffer(face.features, dtype=np.float32)
+        if vec.size == 0:
+            continue
+        score = picture.score or 0
+        items.append(
+            {
+                "face": face,
+                "vector": vec,
+                "score": score,
+                "created_at": picture.created_at,
+                "picture_id": picture.id,
+            }
+        )
+
+    if not items:
+        return []
+
+    eligible = [item for item in items if item["score"] >= 4]
+    if not eligible:
+        eligible = items
+
+    eligible.sort(
+        key=lambda item: (
+            -(item["score"] or 0),
+            item["created_at"] or datetime.max,
+            item["face"].id or 0,
+        )
+    )
+
+    if len(eligible) <= max_refs:
+        eligible.sort(
+            key=lambda item: (
+                item["created_at"] or datetime.max,
+                item["picture_id"],
+                item["face"].id or 0,
+            )
+        )
+        return [item["face"] for item in eligible]
+
+    k = min(max_refs, len(eligible))
+    vectors = np.stack([item["vector"] for item in eligible])
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    vectors = vectors / norms
+
+    weights = np.array(
+        [2.0 if item["score"] >= 5 else 1.0 for item in eligible], dtype=np.float32
+    )
+    centroids = vectors[:k].copy()
+
+    assignments = np.zeros(len(eligible), dtype=np.int64)
+    for _ in range(10):
+        sims = vectors @ centroids.T
+        assignments = np.argmax(sims, axis=1)
+        new_centroids = centroids.copy()
+        for idx in range(k):
+            member_idx = np.where(assignments == idx)[0]
+            if member_idx.size == 0:
+                continue
+            member_weights = weights[member_idx][:, None]
+            weighted = (vectors[member_idx] * member_weights).sum(axis=0)
+            norm = np.linalg.norm(weighted)
+            if norm > 0:
+                new_centroids[idx] = weighted / norm
+        if np.allclose(new_centroids, centroids, atol=1e-4):
+            centroids = new_centroids
+            break
+        centroids = new_centroids
+
+    representatives = []
+    for idx in range(k):
+        member_idx = np.where(assignments == idx)[0]
+        if member_idx.size == 0:
+            continue
+        members = [eligible[i] for i in member_idx]
+        members.sort(
+            key=lambda item: (
+                item["created_at"] or datetime.max,
+                item["picture_id"],
+                item["face"].id or 0,
+            )
+        )
+        representatives.append(members[0]["face"])
+
+    if len(representatives) < k:
+        rep_ids = {
+            face.id for face in representatives if face is not None and face.id
+        }
+        remaining = [item for item in eligible if item["face"].id not in rep_ids]
+        remaining.sort(
+            key=lambda item: (
+                item["created_at"] or datetime.max,
+                item["picture_id"],
+                item["face"].id or 0,
+            )
+        )
+        for item in remaining:
+            if len(representatives) >= k:
+                break
+            representatives.append(item["face"])
+
+    return representatives
 
 
 def get_smart_score_penalized_tags_from_request(server, request):
@@ -63,29 +201,10 @@ def find_pictures_by_character_likeness(
     """
     reference_character_id = int(reference_character_id)
 
-    def get_character_reference_faces(session, reference_character_id):
-        # Need to get pictures in the reference set for this character
-        character = Character.find(session, id=reference_character_id)
-        reference_set = session.get(PictureSet, character[0].reference_picture_set_id)
-        if not reference_set:
-            return []
-        members = session.exec(
-            select(PictureSetMember).where(PictureSetMember.set_id == reference_set.id)
-        ).all()
-        picture_ids = [m.picture_id for m in members]
-        if not picture_ids:
-            logger.debug(
-                "No pictures in reference set id=%s for character id=%s",
-                reference_set.id,
-                character_id,
-            )
-            return []
-        faces = Face.find(session, picture_id=picture_ids)
-        return faces
-
     reference_faces = server.vault.db.run_task(
-        get_character_reference_faces,
+        select_reference_faces_for_character,
         reference_character_id,
+        10,
         priority=DBPriority.IMMEDIATE,
     )
 

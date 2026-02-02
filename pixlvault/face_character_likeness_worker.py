@@ -3,13 +3,12 @@ import time
 from sqlmodel import select
 
 from pixlvault.database import DBPriority
-from pixlvault.db_models.character import Character
 from pixlvault.db_models.face_character_likeness import FaceCharacterLikeness
-from pixlvault.db_models.picture_set import PictureSet, PictureSetMember
 from pixlvault.pixl_logging import get_logger
 from pixlvault.worker_registry import BaseWorker, WorkerType
 from pixlvault.db_models.face import Face
 from pixlvault.picture_utils import PictureUtils
+from pixlvault.picture_scoring import select_reference_faces_for_character
 
 logger = get_logger(__name__)
 
@@ -42,26 +41,9 @@ class FaceCharacterLikenessWorker(BaseWorker):
                 return characters
 
             def get_character_reference_faces(session, character_id):
-                # Need to get pictures in the reference set for this character
-                character = Character.find(session, id=character_id)
-                reference_set = session.get(
-                    PictureSet, character[0].reference_picture_set_id
+                return select_reference_faces_for_character(
+                    session, character_id, max_refs=10
                 )
-                if not reference_set:
-                    return []
-                members = session.exec(
-                    select(PictureSetMember).where(
-                        PictureSetMember.set_id == reference_set.id
-                    )
-                ).all()
-                picture_ids = [m.picture_id for m in members]
-                if not picture_ids:
-                    logger.debug(
-                        f"No pictures in reference set id={reference_set.id} for character id={character_id}"
-                    )
-                    return []
-                faces = Face.find(session, picture_id=picture_ids)
-                return faces
 
             processed_notify_ids = []
 
