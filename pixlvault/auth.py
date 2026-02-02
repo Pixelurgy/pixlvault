@@ -51,6 +51,22 @@ class AuthService:
                     detail="HTTPS is required for this operation.",
                 )
 
+    def _validate_bcrypt_password_length(self, password: Optional[str]):
+        if password is None:
+            return
+        try:
+            byte_length = len(password.encode("utf-8"))
+        except Exception:
+            byte_length = len(password)
+        if byte_length > 72:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Password cannot be longer than 72 bytes. "
+                    "Truncate or shorten the password and try again."
+                ),
+            )
+
     def get_user(self) -> Optional[User]:
         return self._db.run_task(
             lambda session: session.exec(select(User)).first(),
@@ -166,6 +182,9 @@ class AuthService:
     def change_password(self, request: Request, payload) -> dict:
         self.ensure_secure_when_required(request)
         user = self.get_user_for_request(request)
+
+        self._validate_bcrypt_password_length(payload.current_password)
+        self._validate_bcrypt_password_length(payload.new_password)
 
         if user.password_hash:
             if not payload.current_password:
@@ -332,6 +351,7 @@ class AuthService:
 
             user = self.get_user() or self.ensure_user()
             if not user.username or not user.password_hash:
+                self._validate_bcrypt_password_length(request.password)
                 hashed_password = bcrypt.hash(request.password)
 
                 def set_credentials(session: Session):
@@ -355,6 +375,7 @@ class AuthService:
             else:
                 if request.username != user.username:
                     raise HTTPException(status_code=401, detail="Invalid username")
+                self._validate_bcrypt_password_length(request.password)
                 if not bcrypt.verify(request.password, user.password_hash):
                     raise HTTPException(status_code=401, detail="Invalid password")
                 response = JSONResponse(content={"message": "Login successful."})

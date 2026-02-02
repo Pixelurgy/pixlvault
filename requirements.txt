@@ -34,4 +34,5 @@ nltk
 python-jose[cryptography]
 dotenv
 passlib
+bcrypt<5.0.0
 ultralytics
