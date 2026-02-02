@@ -10,6 +10,7 @@ import { apiClient } from "../utils/apiClient";
 const props = defineProps({
   collapsed: { type: Boolean, default: false },
   selectedCharacter: { type: [String, Number, null], default: null },
+  selectedReferenceCharacter: { type: [String, Number, null], default: null },
   allPicturesId: { type: String, required: true },
   unassignedPicturesId: { type: String, required: true },
   selectedSet: { type: [Number, null], default: null },
@@ -23,6 +24,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   "select-character",
+  "select-reference-pictures",
   "update:selected-sort",
   "update:search-query",
   "select-set",
@@ -69,7 +71,6 @@ const nextCharacterNumber = ref(1);
 
 // --- Picture Sets State ---
 const pictureSets = ref([]);
-const referencePictureSetsByCharacter = ref({});
 
 // --- Character Editor State ---
 const characterEditorOpen = ref(false);
@@ -542,6 +543,12 @@ function selectCharacter(id) {
   emit("select-character", id);
 }
 
+function selectReferencePictures(characterId) {
+  clearCountNew(characterId);
+  emit("select-set", null);
+  emit("select-reference-pictures", characterId);
+}
+
 function searchImages(query) {
   emit("search-images", query);
 }
@@ -817,15 +824,6 @@ async function fetchPictureSets() {
     const sets = await res.data; // Axios responses use `data` for the payload
     pictureSets.value = Array.isArray(sets) ? [...sets] : [];
     console.log("Found picture sets:", pictureSets.value);
-    referencePictureSetsByCharacter.value = pictureSets.value.reduce(
-      (acc, set) => {
-        if (set.reference_character) {
-          acc[set.reference_character.id] = set;
-        }
-        return acc;
-      },
-      {},
-    );
   } catch (e) {
     console.error("Error fetching picture sets:", e);
     pictureSets.value = [...pictureSets.value]; // force reactivity on error
@@ -1745,66 +1743,21 @@ defineExpose({ refreshSidebar });
             class="sidebar-character-details"
           >
             <div class="sidebar-reference-pictures">
-              <template v-if="referencePictureSetsByCharacter[char.id]">
-                <div
-                  :class="[
-                    'sidebar-list-item',
-                    'sidebar-reference-set',
-                    {
-                      active:
-                        selectedSet ===
-                        referencePictureSetsByCharacter[char.id].id,
-                      droppable:
-                        dragOverSet ===
-                        referencePictureSetsByCharacter[char.id].id,
-                    },
-                  ]"
-                  @click="
-                    selectSet(referencePictureSetsByCharacter[char.id].id)
-                  "
-                  @dragover.prevent="
-                    dragOverSetItem(referencePictureSetsByCharacter[char.id].id)
-                  "
-                  @dragleave="dragLeaveSetItem"
-                  @drop.prevent="
-                    handleDropOnSet(
-                      referencePictureSetsByCharacter[char.id].id,
-                      $event,
-                    )
-                  "
+              <div
+                :class="[
+                  'sidebar-list-item',
+                  'sidebar-reference-set',
+                  {
+                    active: props.selectedReferenceCharacter === char.id,
+                  },
+                ]"
+                @click="selectReferencePictures(char.id)"
+              >
+                <v-icon size="22" class="sidebar-reference-icon"
+                  >mdi-layers</v-icon
                 >
-                  <v-icon size="22" class="sidebar-reference-icon"
-                    >mdi-layers</v-icon
-                  >
-                  <span class="sidebar-list-label">Reference Pictures</span>
-                  <span class="sidebar-list-count">
-                    {{
-                      referencePictureSetsByCharacter[char.id]?.picture_count ??
-                      ""
-                    }}
-                  </span>
-                  <span
-                    v-if="
-                      sidebarNotice &&
-                      sidebarNoticeSetId ===
-                        referencePictureSetsByCharacter[char.id].id
-                    "
-                    class="sidebar-inline-notice"
-                  >
-                    {{ sidebarNotice }}
-                  </span>
-                </div>
-              </template>
-              <template v-else>
-                <span
-                  style="
-                    color: rgb(var(--v-theme-on-accent));
-                    font-size: 0.9em;
-                    padding-left: 32px;
-                  "
-                  >No reference set found for this character</span
-                >
-              </template>
+                <span class="sidebar-list-label">Reference Pictures</span>
+              </div>
             </div>
           </div>
         </transition>

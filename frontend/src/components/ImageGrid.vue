@@ -655,6 +655,7 @@ const props = defineProps({
   sidebarVisible: Boolean,
   backendUrl: String,
   selectedCharacter: { type: [String, Number, null], default: null },
+  selectedReferenceCharacter: { type: [String, Number, null], default: null },
   selectedSet: { type: [Number, String, null], default: null },
   searchQuery: String,
   selectedSort: String,
@@ -1827,6 +1828,22 @@ const selectedGroupName = ref("");
 async function updateSelectedGroupName() {
   let name = "";
   if (
+    props.selectedReferenceCharacter &&
+    props.selectedReferenceCharacter !== `${props.allPicturesId}` &&
+    props.selectedReferenceCharacter !== `${props.unassignedPicturesId}`
+  ) {
+    try {
+      const res = await apiClient.get(
+        `${props.backendUrl}/characters/${props.selectedReferenceCharacter}`,
+      );
+      const char = await res.data;
+      name = char?.name
+        ? `${char.name} - Reference Pictures`
+        : "Reference Pictures";
+    } catch (e) {
+      console.error("Character fetch failed:", e);
+    }
+  } else if (
     props.selectedCharacter &&
     props.selectedCharacter !== `${props.allPicturesId}` &&
     props.selectedCharacter !== `${props.unassignedPicturesId}`
@@ -1855,7 +1872,11 @@ async function updateSelectedGroupName() {
 }
 
 watch(
-  [() => props.selectedCharacter, () => props.selectedSet],
+  [
+    () => props.selectedCharacter,
+    () => props.selectedReferenceCharacter,
+    () => props.selectedSet,
+  ],
   () => {
     updateSelectedGroupName();
   },
@@ -2863,7 +2884,61 @@ async function fetchAllGridImages() {
     let images = [];
     const requestId = Date.now();
     fetchAllGridImages.lastRequestId = requestId;
-    if (props.selectedSort === STACKS_SORT_KEY) {
+    if (
+      props.selectedReferenceCharacter &&
+      props.selectedReferenceCharacter !== props.allPicturesId &&
+      props.selectedReferenceCharacter !== props.unassignedPicturesId
+    ) {
+      const refRequestStart = performance.now();
+      const refRes = await apiClient.get(
+        `${props.backendUrl}/characters/${props.selectedReferenceCharacter}/reference_pictures`,
+      );
+      const refRequestEnd = performance.now();
+      const refData = await refRes.data;
+      const refParseEnd = performance.now();
+      if (fetchAllGridImages.lastRequestId !== requestId) return;
+      const referenceIds = Array.isArray(refData?.reference_picture_ids)
+        ? refData.reference_picture_ids
+        : [];
+      console.log("[ImageGrid.vue] /characters/reference_pictures timing", {
+        count: referenceIds.length,
+        requestMs: (refRequestEnd - refRequestStart).toFixed(1),
+        totalMs: (refParseEnd - refRequestStart).toFixed(1),
+      });
+
+      if (referenceIds.length) {
+        const params = new URLSearchParams();
+        referenceIds.forEach((id) => params.append("id", String(id)));
+        if (props.mediaTypeFilter === "images") {
+          for (const ext of PIL_IMAGE_EXTENSIONS) {
+            params.append("format", ext.toUpperCase());
+          }
+        } else if (props.mediaTypeFilter === "videos") {
+          for (const ext of VIDEO_EXTENSIONS) {
+            params.append("format", ext.toUpperCase());
+          }
+        }
+        const picsUrl = `${props.backendUrl}/pictures?${params.toString()}`;
+        const picsRequestStart = performance.now();
+        const picsRes = await apiClient.get(picsUrl);
+        const picsRequestEnd = performance.now();
+        const picsData = await picsRes.data;
+        const picsParseEnd = performance.now();
+        if (fetchAllGridImages.lastRequestId !== requestId) return;
+        const picList = Array.isArray(picsData) ? picsData : [];
+        const picsById = new Map(
+          picList.map((img) => [normalizePictureId(img?.id), img]),
+        );
+        images = referenceIds
+          .map((id) => picsById.get(normalizePictureId(id)))
+          .filter(Boolean);
+        console.log("[ImageGrid.vue] /pictures by reference ids timing", {
+          count: images.length,
+          requestMs: (picsRequestEnd - picsRequestStart).toFixed(1),
+          totalMs: (picsParseEnd - picsRequestStart).toFixed(1),
+        });
+      }
+    } else if (props.selectedSort === STACKS_SORT_KEY) {
       const threshold = normalizeStackThreshold(props.stackThreshold);
       const stackParams = buildStackQueryParams();
       const url = `${props.backendUrl}/pictures/stacks?threshold=${encodeURIComponent(
@@ -3075,6 +3150,7 @@ async function fetchAllPicturesCount() {
 watch(
   [
     () => props.selectedCharacter,
+    () => props.selectedReferenceCharacter,
     () => props.selectedSet,
     () => props.searchQuery,
     () => props.selectedSort,

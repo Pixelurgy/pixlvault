@@ -1333,6 +1333,7 @@ def create_router(server) -> APIRouter:
             f"Updating picture id={id} with params: {params} and json_body: {json_body}"
         )
         updated = False
+        updated_fields = {}
         for key, value in params.items():
             if not hasattr(pic, key):
                 logger.warning(
@@ -1368,11 +1369,30 @@ def create_router(server) -> APIRouter:
                 except Exception:
                     value = None
             if getattr(pic, key) != value:
-                setattr(pic, key, value)
+                updated_fields[key] = value
                 updated = True
 
         if updated:
-            server.vault.db.run_task(Picture.update, pic, priority=DBPriority.IMMEDIATE)
+
+            def apply_picture_updates(session: Session, picture_id: int, fields: dict):
+                pic_db = session.get(Picture, picture_id)
+                if pic_db is None:
+                    raise KeyError("Picture not found")
+                for field_name, field_value in fields.items():
+                    setattr(pic_db, field_name, field_value)
+                session.add(pic_db)
+                session.commit()
+                return pic_db
+
+            try:
+                pic = server.vault.db.run_task(
+                    apply_picture_updates,
+                    pic.id,
+                    updated_fields,
+                    priority=DBPriority.IMMEDIATE,
+                )
+            except KeyError:
+                raise HTTPException(status_code=404, detail="Picture not found")
             server.vault.notify(EventType.CHANGED_PICTURES)
 
         return {"status": "success", "picture": safe_model_dict(pic)}
@@ -1588,7 +1608,8 @@ def create_router(server) -> APIRouter:
         metadata_fields = Picture.metadata_fields()
 
         def serialize_metadata(pic: Picture):
-            return {field: getattr(pic, field) for field in metadata_fields}
+            data = safe_model_dict(pic)
+            return {field: data.get(field) for field in metadata_fields}
 
         query_params = {}
         format = None

@@ -1,4 +1,5 @@
 import pickle
+import time
 from datetime import datetime
 from collections import defaultdict
 
@@ -8,13 +9,11 @@ from sqlmodel import Session, select
 
 from pixlvault.database import DBPriority
 from pixlvault.db_models import (
-    Character,
     DEFAULT_SMART_SCORE_PENALIZED_TAGS,
     DEFAULT_SMART_SCORE_PENALIZED_TAG_WEIGHT,
     Face,
     FaceCharacterLikeness,
     Picture,
-    PictureSet,
     PictureSetMember,
     Quality,
     Tag,
@@ -145,9 +144,7 @@ def select_reference_faces_for_character(
         representatives.append(members[0]["face"])
 
     if len(representatives) < k:
-        rep_ids = {
-            face.id for face in representatives if face is not None and face.id
-        }
+        rep_ids = {face.id for face in representatives if face is not None and face.id}
         remaining = [item for item in eligible if item["face"].id not in rep_ids]
         remaining.sort(
             key=lambda item: (
@@ -201,15 +198,33 @@ def find_pictures_by_character_likeness(
     """
     reference_character_id = int(reference_character_id)
 
+    timing_start = time.perf_counter()
+
     reference_faces = server.vault.db.run_task(
         select_reference_faces_for_character,
         reference_character_id,
         10,
         priority=DBPriority.IMMEDIATE,
     )
+    timing_after_refs = time.perf_counter()
 
     if not reference_faces:
         logger.warning("No reference faces found for character id=%s", character_id)
+        return []
+
+    ref_arrs = []
+    for ref_face in reference_faces:
+        if ref_face.features is None:
+            continue
+        ref_arr = np.frombuffer(ref_face.features, dtype=np.float32)
+        if ref_arr.size == 0:
+            continue
+        ref_arrs.append(ref_arr)
+
+    if not ref_arrs:
+        logger.warning(
+            "No reference face features found for character id=%s", character_id
+        )
         return []
 
     def get_all_faces(session, character_id, candidate_ids=None):
@@ -230,61 +245,122 @@ def find_pictures_by_character_likeness(
     candidate_faces = server.vault.db.run_task(
         get_all_faces, character_id, candidate_ids
     )
+    timing_after_candidates = time.perf_counter()
     if not candidate_faces:
         logger.warning("No unassigned faces found")
         return []
 
-    def fetch_character_likeness(session, reference_character_id):
-        rows = session.exec(
-            select(FaceCharacterLikeness.face_id, FaceCharacterLikeness.likeness).where(
-                FaceCharacterLikeness.character_id == reference_character_id
-            )
-        ).all()
-        return {row.face_id: row.likeness for row in rows}
+    character_likeness_map = {}
+    face_vectors = []
+    face_ids = []
+    for face in candidate_faces:
+        if face.features is None:
+            continue
+        arr_face = np.frombuffer(face.features, dtype=np.float32)
+        if arr_face.size == 0:
+            continue
+        face_vectors.append(arr_face)
+        face_ids.append(face.id)
 
-    character_likeness_map = server.vault.db.run_task(
-        fetch_character_likeness, reference_character_id
-    )
+    if face_vectors:
+        cand = np.stack(face_vectors)
+        ref = np.stack(ref_arrs)
+        cand_norm = cand / np.maximum(np.linalg.norm(cand, axis=1, keepdims=True), 1e-8)
+        ref_norm = ref / np.maximum(np.linalg.norm(ref, axis=1, keepdims=True), 1e-8)
+        sims = cand_norm @ ref_norm.T
+        alpha = 5.0
+        sims = np.clip(sims, -1.0, 1.0)
+        weights = np.exp(alpha * sims)
+        denom = np.sum(weights, axis=1, keepdims=True)
+        denom = np.where(denom == 0, 1.0, denom)
+        softmax_avg = np.sum(weights * sims, axis=1) / denom.squeeze(1)
+        for face_id, likeness in zip(face_ids, softmax_avg, strict=False):
+            character_likeness_map[face_id] = float(likeness)
+    timing_after_likeness = time.perf_counter()
 
     picture_likeness_map = {}
     for face in candidate_faces:
         pic_id = face.picture_id
         likeness = character_likeness_map.get(face.id, 0.0)
         if pic_id not in picture_likeness_map:
-            picture_likeness_map[pic_id] = likeness
-        else:
-            picture_likeness_map[pic_id] = max(picture_likeness_map[pic_id], likeness)
+            picture_likeness_map = {}
+            for face in candidate_faces:
+                pic_id = face.picture_id
+                likeness = character_likeness_map.get(face.id, 0.0)
+                if pic_id not in picture_likeness_map:
+                    picture_likeness_map[pic_id] = likeness
+                else:
+                    picture_likeness_map[pic_id] = max(
+                        picture_likeness_map[pic_id], likeness
+                    )
 
-    candidate_pics = server.vault.db.run_task(
-        Picture.find,
-        id=list(picture_likeness_map.keys()),
-        select_fields=Picture.metadata_fields() | {"characters", "picture_sets"},
-    )
+            sorted_ids = sorted(
+                picture_likeness_map.items(),
+                key=lambda item: item[1],
+                reverse=descending,
+            )
+            sorted_ids = [pid for pid, _ in sorted_ids]
 
-    # Assign character_likeness to pictures
-    dicts = []
-    for pic in candidate_pics:
-        if character_id == "UNASSIGNED":
-            character_ids = [c.id for c in pic.characters]
-            if reference_character_id in character_ids or character_ids:
-                # Skip pictures that already have any characters assigned
-                continue
-            if candidate_ids is None:
-                if getattr(pic, "picture_sets", None):
-                    if pic.picture_sets:
-                        # Skip pictures that are already in a picture set
-                        continue
-        pic_dict = safe_model_dict(pic)
-        pic_id = pic_dict["id"]
-        pic_dict["character_likeness"] = picture_likeness_map.get(pic_id, 0.0)
-        dicts.append(pic_dict)
+            if character_id == "UNASSIGNED" and sorted_ids:
 
-    # Sort by character_likeness honoring descending flag
-    dicts.sort(key=lambda x: x["character_likeness"], reverse=descending)
+                def filter_unassigned_ids(session: Session, picture_ids: list[int]):
+                    if not picture_ids:
+                        return []
+                    assigned_faces = exists(
+                        select(Face.id).where(
+                            Face.picture_id == Picture.id,
+                            Face.character_id.is_not(None),
+                        )
+                    )
+                    in_set = exists(
+                        select(PictureSetMember.picture_id).where(
+                            PictureSetMember.picture_id == Picture.id
+                        )
+                    )
+                    rows = session.exec(
+                        select(Picture.id)
+                        .where(Picture.id.in_(picture_ids))
+                        .where(~assigned_faces)
+                        .where(~in_set)
+                    ).all()
+                    return [row for row in rows]
 
-    # Apply offset and limit
-    selected_pics = dicts[offset : offset + limit]
-    return selected_pics
+                eligible_ids = set(
+                    server.vault.db.run_task(filter_unassigned_ids, sorted_ids)
+                )
+                sorted_ids = [pid for pid in sorted_ids if pid in eligible_ids]
+
+            selected_ids = sorted_ids[offset : offset + limit]
+            if not selected_ids:
+                return []
+
+            candidate_pics = server.vault.db.run_task(
+                Picture.find,
+                id=selected_ids,
+                select_fields=Picture.metadata_fields(),
+            )
+            timing_after_fetch = time.perf_counter()
+
+            logger.info(
+                "[LIKELINESS TIMING] refs=%.3fms candidates=%.3fms likeness=%.3fms fetch=%.3fms total=%.3fms",
+                (timing_after_refs - timing_start) * 1000.0,
+                (timing_after_candidates - timing_after_refs) * 1000.0,
+                (timing_after_likeness - timing_after_candidates) * 1000.0,
+                (timing_after_fetch - timing_after_likeness) * 1000.0,
+                (timing_after_fetch - timing_start) * 1000.0,
+            )
+
+            pic_map = {pic.id: pic for pic in candidate_pics}
+            results = []
+            for pic_id in selected_ids:
+                pic = pic_map.get(pic_id)
+                if not pic:
+                    continue
+                pic_dict = safe_model_dict(pic)
+                pic_dict["character_likeness"] = picture_likeness_map.get(pic_id, 0.0)
+                results.append(pic_dict)
+
+            return results
 
 
 def fetch_smart_score_data(

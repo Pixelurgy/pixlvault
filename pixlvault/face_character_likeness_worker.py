@@ -3,6 +3,7 @@ import time
 from sqlmodel import select
 
 from pixlvault.database import DBPriority
+from pixlvault.db_models.character import Character
 from pixlvault.db_models.face_character_likeness import FaceCharacterLikeness
 from pixlvault.pixl_logging import get_logger
 from pixlvault.worker_registry import BaseWorker, WorkerType

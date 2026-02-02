@@ -28,6 +28,7 @@ const sidebarRef = ref(null);
 
 const selectedCharacter = ref(ALL_PICTURES_ID);
 const selectedSet = ref(null);
+const selectedReferenceCharacter = ref(null);
 const selectedSort = ref("");
 const selectedDescending = ref(true);
 const stackThreshold = ref(null);
@@ -286,25 +287,43 @@ async function handleSelectCharacter(charId) {
   console.log("[App.vue] handleSelectCharacter called with charId:", charId);
   if (charId == null) {
     selectedCharacter.value = null;
+    selectedReferenceCharacter.value = null;
     await nextTick();
     return;
   }
   selectedCharacter.value = charId;
   selectedSet.value = null; // Clear set selection
+  selectedReferenceCharacter.value = null;
   searchQuery.value = ""; // Clear search query
   await nextTick(); // Ensure reactivity propagates the change
   console.log("[App.vue] searchQuery cleared:", searchQuery.value);
   closeSidebarIfMobile();
 }
 
+async function handleSelectReferencePictures(charId) {
+  if (charId == null) {
+    selectedReferenceCharacter.value = null;
+    await nextTick();
+    return;
+  }
+  selectedReferenceCharacter.value = charId;
+  selectedCharacter.value = charId;
+  selectedSet.value = null;
+  searchQuery.value = "";
+  await nextTick();
+  closeSidebarIfMobile();
+}
+
 async function handleSelectSet(setId) {
   if (setId == null) {
     selectedSet.value = null;
+    selectedReferenceCharacter.value = null;
     await nextTick();
     return;
   }
   selectedSet.value = setId;
   selectedCharacter.value = null; // Clear character selection
+  selectedReferenceCharacter.value = null;
   searchQuery.value = ""; // Clear search query
   closeSidebarIfMobile();
 }
@@ -619,6 +638,7 @@ function commitSearch() {
 function handleResetToAll() {
   selectedCharacter.value = ALL_PICTURES_ID;
   selectedSet.value = null;
+  selectedReferenceCharacter.value = null;
   selectedSort.value = "DATE";
   selectedDescending.value = true;
   selectedSimilarityCharacter.value = null;

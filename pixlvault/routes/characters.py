@@ -13,6 +13,7 @@ from pixlvault.db_models import (
 from pixlvault.event_types import EventType
 from pixlvault.pixl_logging import get_logger
 from pixlvault.picture_utils import PictureUtils
+from pixlvault.picture_scoring import select_reference_faces_for_character
 from pixlvault.utils import safe_model_dict
 
 logger = get_logger(__name__)
@@ -70,36 +71,52 @@ def create_router(server) -> APIRouter:
             thumb_url = None
             if char_id not in (None, "", "null"):
                 thumb_url = f"/characters/{char_id}/thumbnail"
-
-            def find_reference_set(session: Session, character_id: int):
-                character = Character.find(
-                    session,
-                    id=character_id,
-                    select_fields=["reference_picture_set_id"],
-                )
-                return (
-                    character[0].reference_picture_set_id
-                    if len(character) > 0
-                    else None
-                )
-
-            reference_set_id = server.vault.db.run_immediate_read_task(
-                find_reference_set, char_id
-            )
         else:
             thumb_url = None
-            reference_set_id = None
 
         summary = {
             "character_id": char_id,
             "image_count": image_count,
             "thumbnail_url": thumb_url,
-            "reference_picture_set_id": reference_set_id,
         }
         elapsed = time.time() - start
         logger.debug(f"Category summary computed in {elapsed:.4f} seconds")
         logger.debug(f"Category summary: {summary}")
         return summary
+
+    @router.get("/characters/{id}/reference_pictures")
+    async def get_character_reference_pictures(id: int):
+        """Return reference picture ids for a character.
+
+        Args:
+            id: Character id to fetch reference pictures for.
+
+        Returns:
+            A dict containing reference picture ids.
+        """
+
+        def fetch_reference_pictures(session: Session, character_id: int):
+            faces = select_reference_faces_for_character(
+                session,
+                character_id=character_id,
+                max_refs=10,
+            )
+            picture_ids = []
+            seen = set()
+            for face in faces:
+                pic_id = getattr(face, "picture_id", None)
+                if pic_id is None or pic_id in seen:
+                    continue
+                seen.add(pic_id)
+                picture_ids.append(pic_id)
+            return picture_ids
+
+        picture_ids = server.vault.db.run_task(
+            fetch_reference_pictures,
+            id,
+            priority=DBPriority.IMMEDIATE,
+        )
+        return {"reference_picture_ids": picture_ids}
 
     @router.patch("/characters/{id}")
     async def patch_character(id: int, request: Request):
