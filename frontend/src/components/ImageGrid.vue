@@ -182,7 +182,9 @@
               <template v-if="img.thumbnail && isVideo(img)">
                 <video
                   class="thumbnail-img"
-                  :src="getImageDownloadUrl(img)"
+                  :src="
+                    buildMediaUrl({ backendUrl: props.backendUrl, image: img })
+                  "
                   :ref="(el) => setVideoRef(img.id, el)"
                   draggable="false"
                   @pointerdown="prepareThumbnailNativeDrag(img, $event)"
@@ -381,6 +383,8 @@ import {
   isSupportedImageFile,
   dataTransferHasSupportedMedia,
   isSupportedVideoFile,
+  normalizeMediaFormat,
+  buildMediaUrl,
   PIL_IMAGE_EXTENSIONS,
   VIDEO_EXTENSIONS,
 } from "../utils/media.js";
@@ -392,6 +396,7 @@ import SearchResultBar from "./SearchResultBar.vue";
 import StarRatingOverlay from "./StarRatingOverlay.vue";
 import { useSearchOverlay } from "../utils/useSearchOverlay";
 import { apiClient } from "../utils/apiClient";
+import { toggleScore } from "../utils/scoring";
 import { debounce, update } from "lodash-es";
 
 const emit = defineEmits([
@@ -975,19 +980,6 @@ function getThumbnailInfoItems(img) {
   return items;
 }
 
-function getImageFormatExtension(img) {
-  if (!img || !img.format) return "";
-  return String(img.format).trim().toLowerCase();
-}
-
-function getImageDownloadUrl(img) {
-  if (!img || !img.id) return "";
-  const ext = getImageFormatExtension(img);
-  const suffix = ext ? `.${ext}` : "";
-  const cacheBuster = img.pixel_sha ? `?v=${img.pixel_sha}` : "";
-  return `${props.backendUrl}/pictures/${img.id}${suffix}${cacheBuster}`;
-}
-
 function prefetchFullImage(img) {
   if (!img || !img.id) return;
   if (isVideo(img)) return;
@@ -995,7 +987,7 @@ function prefetchFullImage(img) {
   if (prefetchedFullImageIds.has(id) || fullImagePrefetchControllers.has(id)) {
     return;
   }
-  const url = getImageDownloadUrl(img);
+  const url = buildMediaUrl({ backendUrl: props.backendUrl, image: img });
   if (!url) return;
   const preloader = new Image();
   fullImagePrefetchControllers.set(id, preloader);
@@ -1179,14 +1171,11 @@ function pauseVideo(id) {
 
 function isVideo(img) {
   if (!img) return false;
-  let name = "";
-  if (img.id) {
-    name = img.id;
+  const format = normalizeMediaFormat(img);
+  if (format) {
+    return isSupportedVideoFile(`file.${format}`);
   }
-  if (img.format) {
-    name += `.${getImageFormatExtension(img)}`;
-  }
-  return isSupportedVideoFile(name);
+  return isSupportedVideoFile(img.id || "");
 }
 
 function removeFromGroup() {
@@ -1803,7 +1792,7 @@ function closeOverlay() {
 }
 
 async function setScore(img, n) {
-  const newScore = (img.score || 0) === n ? 0 : n;
+  const newScore = toggleScore(img.score, n);
   applyScore(img, newScore);
 }
 
@@ -2132,7 +2121,7 @@ async function applyScoresForSelection(imageIds, targetScore) {
     const img = gridById.get(key);
     if (!img) continue;
     const current = Number(img.score || 0);
-    const nextScore = current === targetScore ? 0 : targetScore;
+    const nextScore = toggleScore(current, targetScore);
     entries.push([key, nextScore]);
   }
 

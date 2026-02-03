@@ -641,11 +641,16 @@ import {
   toRefs,
   watch,
 } from "vue";
-import { isSupportedVideoFile, getOverlayFormat } from "../utils/media.js";
+import {
+  isSupportedVideoFile,
+  getOverlayFormat,
+  buildMediaUrl,
+} from "../utils/media.js";
 import { apiClient } from "../utils/apiClient";
 import unknownPerson from "../assets/unknown-person.png";
 import AddToSetControl from "./AddToSetControl.vue";
 import StarRatingOverlay from "./StarRatingOverlay.vue";
+import { toggleScore } from "../utils/scoring";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -823,18 +828,9 @@ function tagMatches(tag, target) {
   return false;
 }
 
-function normalizePictureFormat(target) {
-  if (!target || !target.format) return "";
-  return String(target.format).trim().toLowerCase();
-}
-
 function getFullImageUrl(targetImage = null) {
   const data = targetImage || image.value;
-  if (!data || !data.id) return "";
-  const ext = normalizePictureFormat(data);
-  const suffix = ext ? `.${ext}` : "";
-  const cacheBuster = data.pixel_sha ? `?v=${data.pixel_sha}` : "";
-  return `${backendUrl.value}/pictures/${data.id}${suffix}${cacheBuster}`;
+  return buildMediaUrl({ backendUrl: backendUrl.value, image: data });
 }
 
 function getFilmstripThumbSrc(target) {
@@ -924,7 +920,7 @@ async function clearTagsForImage() {
 
 function setScore(n) {
   if (!image.value) return;
-  image.value.score = (image.value.score || 0) === n ? 0 : n;
+  image.value.score = toggleScore(image.value.score, n);
   emit("apply-score", image.value, image.value.score);
 }
 
