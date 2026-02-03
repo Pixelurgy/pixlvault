@@ -95,57 +95,7 @@
       <div v-if="showEmptyState" class="empty-state">
         <div class="empty-state-card">
           <div class="empty-state-illustration" aria-hidden="true">
-            <svg
-              width="160"
-              height="120"
-              viewBox="0 0 160 120"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <rect
-                x="18"
-                y="16"
-                width="86"
-                height="64"
-                rx="10"
-                stroke="currentColor"
-                stroke-width="3"
-                opacity="0.4"
-              />
-              <rect
-                x="34"
-                y="28"
-                width="86"
-                height="64"
-                rx="10"
-                stroke="currentColor"
-                stroke-width="3"
-                opacity="0.6"
-              />
-              <rect
-                x="50"
-                y="40"
-                width="86"
-                height="64"
-                rx="10"
-                stroke="currentColor"
-                stroke-width="3"
-              />
-              <circle
-                cx="96"
-                cy="70"
-                r="8"
-                stroke="currentColor"
-                stroke-width="3"
-              />
-              <path
-                d="M60 86 L76 70 L88 82 L104 66 L122 86"
-                stroke="currentColor"
-                stroke-width="3"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
+            <img src="/public/Empty.png" alt="No images" style="width: 90%" />
           </div>
           <div class="empty-state-title">
             {{ emptyStateTitle }}
@@ -664,14 +614,6 @@ const PREFETCHED_FULL_IMAGE_LIMIT = 12;
 const fullImagePrefetchControllers = new Map();
 const prefetchedFullImageIds = new Set();
 const prefetchedFullImageOrder = [];
-const multiZipState = reactive({
-  key: null,
-  status: "idle",
-  blob: null,
-  filename: null,
-  error: null,
-});
-let multiZipAbortController = null;
 
 const exportProgress = reactive({
   visible: false,
@@ -718,13 +660,6 @@ const sortedCharacters = computed(() => {
       displayName: char.name.charAt(0).toUpperCase() + char.name.slice(1),
     }));
 });
-
-function hasCharacterOption(characterId) {
-  if (characterId == null) return false;
-  return sortedCharacters.value.some(
-    (char) => String(char.id) === String(characterId),
-  );
-}
 
 async function fetchCharacters(force = false) {
   if (!props.backendUrl || charactersLoading.value) return;
@@ -836,7 +771,6 @@ onUnmounted(() => {
   fullImagePrefetchControllers.clear();
   prefetchedFullImageIds.clear();
   prefetchedFullImageOrder.length = 0;
-  resetMultiSelectionZip();
   if (emptyStateDelayTimer) {
     clearTimeout(emptyStateDelayTimer);
     emptyStateDelayTimer = null;
@@ -929,10 +863,6 @@ function setThumbnailContainerRef(id, el) {
   } else {
     delete thumbnailContainerRefs[id];
   }
-}
-
-function hasThumbnailRef(id) {
-  return Boolean(id && thumbnailRefs[id]);
 }
 
 function isThumbnailReady(id) {
@@ -1223,16 +1153,6 @@ function appendExtIfMissing(name, ext) {
   return `${name}.${normalized}`;
 }
 
-function getImageFilename(img) {
-  if (!img) return "image";
-  const ext = getImageFormatExtension(img);
-  const original = appendExtIfMissing(img.original_filename, ext);
-  const fromFilename = appendExtIfMissing(img.filename, ext);
-  const fallbackBase = img.id ? String(img.id) : "image";
-  const fallback = ext ? `${fallbackBase}.${ext}` : `${fallbackBase}.jpg`;
-  return original || fromFilename || fallback;
-}
-
 function getImageDownloadUrl(img) {
   if (!img || !img.id) return "";
   const ext = getImageFormatExtension(img);
@@ -1283,28 +1203,6 @@ function getDragSelectionIds(img) {
   return img && img.id ? [img.id] : [];
 }
 
-function sanitizeFilenameSegment(name) {
-  if (!name || typeof name !== "string") return "PixlVault";
-  const cleaned = name.trim().replace(/[^a-z0-9_-]+/gi, "_");
-  return cleaned || "PixlVault";
-}
-
-function buildSelectionZipFilename(count) {
-  const base = sanitizeFilenameSegment(selectedGroupName.value || "PixlVault");
-  return `${base}-${String(count).padStart(2, "0")}-images.zip`;
-}
-
-function buildExportUrlForIds(ids) {
-  if (!Array.isArray(ids) || !ids.length) return "";
-  const params = new URLSearchParams();
-  ids.forEach((id) => {
-    if (id !== undefined && id !== null) {
-      params.append("id", id);
-    }
-  });
-  return `${props.backendUrl}/pictures/export?${params.toString()}`;
-}
-
 function handleImageError(event) {
   const imgEl = event?.target;
   if (imgEl instanceof HTMLImageElement) {
@@ -1337,90 +1235,6 @@ function setupMultiExportDrag(event, ids) {
     console.debug("[DRAG] Multi-selection drag data set:", dragData);
   } catch (err) {
     console.error("[ERROR] Failed to set drag data:", err);
-  }
-}
-
-function getSelectionSignature(ids) {
-  if (!Array.isArray(ids) || !ids.length) return null;
-  return ids
-    .slice()
-    .map((id) => String(id))
-    .sort()
-    .join(",");
-}
-
-function primeMultiSelectionZip(ids) {
-  const signature = getSelectionSignature(ids);
-  if (!signature) return;
-  if (
-    multiZipState.key === signature &&
-    (multiZipState.status === "pending" || multiZipState.status === "ready")
-  ) {
-    return;
-  }
-  resetMultiSelectionZip();
-  multiZipState.key = signature;
-  multiZipState.status = "pending";
-  multiZipState.filename = buildSelectionZipFilename(ids.length);
-  const url = buildExportUrlForIds(ids);
-  if (!url) {
-    multiZipState.status = "error";
-    multiZipState.error = "Missing export URL";
-    return;
-  }
-  const controller = new AbortController();
-  multiZipAbortController = controller;
-  apiClient
-    .get(url, { signal: controller.signal })
-    .then((res) => res.data.blob()) // Access the blob from res.data
-    .then((blob) => {
-      if (multiZipState.key !== signature) return;
-      multiZipState.status = "ready";
-      multiZipState.blob = blob;
-    })
-    .catch((err) => {
-      if (controller.signal.aborted) return;
-      multiZipState.status = "error";
-      multiZipState.error = err?.message || "Export failed";
-    });
-}
-
-function resetMultiSelectionZip() {
-  if (multiZipAbortController) {
-    multiZipAbortController.abort();
-    multiZipAbortController = null;
-  }
-  multiZipState.key = null;
-  multiZipState.status = "idle";
-  multiZipState.blob = null;
-  multiZipState.filename = null;
-  multiZipState.error = null;
-}
-
-function attachMultiSelectionZipToDrag(event, ids) {
-  if (!event?.dataTransfer) return false;
-  const signature = getSelectionSignature(ids);
-  if (
-    !signature ||
-    signature !== multiZipState.key ||
-    multiZipState.status !== "ready" ||
-    !multiZipState.blob
-  ) {
-    return false;
-  }
-  try {
-    const file = new File(
-      [multiZipState.blob],
-      multiZipState.filename || buildSelectionZipFilename(ids.length),
-      { type: "application/zip" },
-    );
-    event.dataTransfer.items.add(file);
-    event.dataTransfer.effectAllowed = "copy";
-    event.dataTransfer.dropEffect = "copy";
-    return true;
-  } catch (err) {
-    console.debug("[DRAG] Unable to attach zip file", err);
-    return false;
   }
 }
 
@@ -1857,18 +1671,6 @@ watch(
 // Local selection state (mirrors parent prop)
 const selectedImageIds = ref([]);
 let lastSelectedImageId = null;
-
-watch(
-  selectedImageIds,
-  (ids) => {
-    if (ids.length > 1) {
-      primeMultiSelectionZip(ids);
-    } else {
-      resetMultiSelectionZip();
-    }
-  },
-  { deep: false },
-);
 
 // --- Overlay ---
 async function fetchImageInfo(imageId, options = {}) {
@@ -3707,27 +3509,6 @@ function handleThumbnailNativeDragEnd(event) {
   dragSource.value = null;
 }
 
-function handleVideoDragStart(img, event) {
-  if (!img) return;
-  dragSource.value = "grid";
-  const selectionIds = getDragSelectionIds(img);
-  if (selectionIds.length > 1) {
-    setupMultiExportDrag(event, selectionIds);
-    return;
-  }
-  event.dataTransfer.setData(
-    "application/json",
-    JSON.stringify({
-      type: "image-ids",
-      imageIds: [img.id],
-    }),
-  );
-}
-
-function handleVideoDragEnd() {
-  dragSource.value = null;
-}
-
 function handleContainerDragStart(img, event) {
   if (!img || !event?.dataTransfer) return;
   if (event.target && event.target.closest?.(".face-bbox-overlay")) {
@@ -3851,10 +3632,6 @@ function handleGridBackgroundClick(e) {
 }
 
 // --- Text & Display Utilities ---
-function formatLikenessScore(score) {
-  if (typeof score !== "number") return "";
-  return `Likeness: ${(score * 100).toFixed(2)}%`;
-}
 
 const gridContainer = ref(null);
 const scrollWrapper = ref(null);
@@ -4202,15 +3979,6 @@ function abortExportZip() {
 // Search functionality
 const searchQuery = ref(props.searchQuery);
 const { visible, openSearchOverlay, closeSearchOverlay } = useSearchOverlay();
-
-function handleSearch(query) {
-  console.log("Search triggered with query:", query);
-  searchQuery.value = query;
-  props.searchQuery = query;
-  fetchAllGridImages().then(() => {
-    updateVisibleThumbnails();
-  });
-}
 
 onMounted(() => {
   console.log("ImageGrid mounted. Initial search query:", searchQuery.value);
