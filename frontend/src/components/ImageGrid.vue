@@ -356,27 +356,12 @@
     </div>
 
     <!-- Search Result Bar -->
-    <div
+    <SearchResultBar
       v-if="props.searchQuery && props.searchQuery.length > 0"
-      class="search-result-bar"
-    >
-      <span class="search-result-status">
-        <template v-if="imagesLoading">
-          <v-progress-circular
-            indeterminate
-            size="16"
-            width="2"
-            color="primary"
-            class="search-result-spinner"
-          ></v-progress-circular>
-          <span>Searching…</span>
-        </template>
-        <template v-else>
-          Search result found {{ allGridImages.length }} items
-        </template>
-      </span>
-      <v-btn color="primary" @click="clearSearchQuery">Clear</v-btn>
-    </div>
+      :images-loading="imagesLoading"
+      :count="allGridImages.length"
+      @clear="clearSearchQuery"
+    />
     <div
       v-if="isSmartScoreSortActive() && unscoredCount > 5"
       class="smart-score-bar"
@@ -413,6 +398,7 @@ import ImageImporter from "./ImageImporter.vue";
 import ImageOverlay from "./ImageOverlay.vue";
 import InteractiveScoringOverlay from "./InteractiveScoringOverlay.vue";
 import SelectionBar from "./SelectionBar.vue";
+import SearchResultBar from "./SearchResultBar.vue";
 import { useSearchOverlay } from "../utils/useSearchOverlay";
 import { apiClient } from "../utils/apiClient";
 import { debounce, update } from "lodash-es";
@@ -764,7 +750,6 @@ function getFaceBboxStyle(bbox, idx, img, el, isSelected) {
     containerHeight / naturalHeight,
   );
   const displayWidth = naturalWidth * scale;
-  const displayHeight = naturalHeight * scale;
   const offsetX = (containerWidth - displayWidth) / 2;
   const offsetY = 0;
   // Transform bbox
@@ -986,7 +971,7 @@ function getThumbnailInfoItems(img) {
       text: formatIsoDate(img.created_at),
     });
   } else if (
-    props.selectedSort === STACKS_SORT_KEY &&
+    selectedSort === STACKS_SORT_KEY &&
     (typeof img.stackIndex === "number" || typeof img.stack_index === "number")
   ) {
     const stackIndex =
@@ -4333,30 +4318,6 @@ function handleScoringClose() {
   z-index: 30;
   pointer-events: auto;
   padding: 2px;
-}
-
-.search-result-bar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  z-index: 200;
-  background-color: #f5f5f5;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 16px;
-  box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.search-result-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.search-result-spinner {
-  flex: 0 0 auto;
 }
 
 .smart-score-bar {
