@@ -371,9 +371,11 @@ async function submitPasswordChange() {
 }
 
 const sidebarNotice = ref(null);
-const sidebarNoticeSetId = ref(null);
+const sidebarNoticeTargetId = ref(null);
+const sidebarNoticeTargetType = ref("set");
 const sidebarNoticePosition = ref(null);
 const setItemRefs = ref(new Map());
+const characterItemRefs = ref(new Map());
 let sidebarNoticeTimeout = null;
 
 function registerSetRef(setId, el) {
@@ -385,12 +387,25 @@ function registerSetRef(setId, el) {
   }
 }
 
+function registerCharacterRef(characterId, el) {
+  if (!characterId) return;
+  if (el) {
+    characterItemRefs.value.set(characterId, el);
+  } else {
+    characterItemRefs.value.delete(characterId);
+  }
+}
+
 function updateSidebarNoticePosition() {
-  if (!sidebarNotice.value || !sidebarNoticeSetId.value) {
+  if (!sidebarNotice.value || !sidebarNoticeTargetId.value) {
     sidebarNoticePosition.value = null;
     return;
   }
-  const target = setItemRefs.value.get(sidebarNoticeSetId.value);
+  const targetMap =
+    sidebarNoticeTargetType.value === "character"
+      ? characterItemRefs.value
+      : setItemRefs.value;
+  const target = targetMap.get(sidebarNoticeTargetId.value);
   if (!target) return;
   const rect = target.getBoundingClientRect();
   sidebarNoticePosition.value = {
@@ -654,17 +669,23 @@ function setError(message) {
   emit("set-error", message);
 }
 
-function showNotice(message, setId = null, duration = 4000) {
+function showNotice(
+  message,
+  targetId = null,
+  targetType = "set",
+  duration = 4000,
+) {
   if (sidebarNoticeTimeout) {
     clearTimeout(sidebarNoticeTimeout);
     sidebarNoticeTimeout = null;
   }
   sidebarNotice.value = message;
-  sidebarNoticeSetId.value = setId;
+  sidebarNoticeTargetId.value = targetId;
+  sidebarNoticeTargetType.value = targetType;
   nextTick(() => updateSidebarNoticePosition());
   sidebarNoticeTimeout = setTimeout(() => {
     sidebarNotice.value = null;
-    sidebarNoticeSetId.value = null;
+    sidebarNoticeTargetId.value = null;
     sidebarNoticePosition.value = null;
     sidebarNoticeTimeout = null;
   }, duration);
@@ -962,7 +983,13 @@ async function onCharacterDrop(characterId, event) {
     }
     emit("images-assigned-to-character", { characterId, imageIds });
   } catch (e) {
-    console.error("Could not parse drag data:", e);
+    const detail = e?.response?.data?.detail || e?.message || String(e);
+    console.error("Error parsing drag data:", detail);
+    if (typeof detail === "string") {
+      showNotice(detail, characterId, "character");
+      return;
+    }
+    setError("Failed to add images to set: " + detail);
     return;
   }
 
@@ -1008,7 +1035,14 @@ async function onCharacterDrop(characterId, event) {
     );
     emit("images-assigned-to-character", { characterId, imageIds });
   } catch (e) {
-    alert("Failed to assign images to character: " + (e.message || e));
+    const detail = e?.response?.data?.detail || e?.message || String(e);
+    console.error("Error assignning character:", detail);
+    if (typeof detail === "string") {
+      showNotice(detail, characterId, "character");
+      return;
+    }
+    setError("Failed to add images to set: " + detail);
+    return;
   }
 }
 
@@ -1577,6 +1611,7 @@ defineExpose({ refreshSidebar });
               droppable: dragOverCharacter === char.id,
             },
           ]"
+          :ref="(el) => registerCharacterRef(char.id, el)"
           :title="char.name || 'Character'"
           @click="selectCharacter(char.id)"
           @dragover.prevent="handleDragOverCharacter(char.id)"
@@ -1730,6 +1765,7 @@ defineExpose({ refreshSidebar });
               droppable: dragOverCharacter === char.id,
             },
           ]"
+          :ref="(el) => registerCharacterRef(char.id, el)"
           @click="selectCharacter(char.id)"
           @dragover.prevent="handleDragOverCharacter(char.id)"
           @dragleave="handleDragLeaveCharacter"

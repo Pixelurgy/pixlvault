@@ -490,6 +490,9 @@ function handleGlobalKeydown(e) {
 }
 
 async function handleImagesAssignedToCharacter({ characterId, imageIds }) {
+  if (selectedCharacter.value !== UNASSIGNED_PICTURES_ID || selectedSet.value) {
+    return;
+  }
   // Forward to ImageGrid via ref
   if (
     gridContainer.value &&

@@ -1154,22 +1154,6 @@ function removeFromGroup() {
   }
 }
 
-function handleAddToCharacter(payload) {
-  const pictureIds = Array.isArray(payload?.pictureIds)
-    ? payload.pictureIds
-    : [];
-  if (!pictureIds.length) return;
-  if (
-    props.selectedCharacter === props.unassignedPicturesId &&
-    !props.selectedSet
-  ) {
-    removeImagesById(pictureIds);
-  }
-  clearSelection();
-  lastSelectedImageId = null;
-  emit("refresh-sidebar");
-}
-
 function handleOverlayAddedToSet(payload) {
   const pictureIds = Array.isArray(payload?.pictureIds)
     ? payload.pictureIds
@@ -2889,13 +2873,6 @@ async function fetchThumbnailsBatch(start, end) {
         }
         if (props.showHandBboxes && gridImg.hands.length) {
           overlayNeedsRedraw = true;
-        }
-        if (props.showHandBboxes && gridImg.hands.length) {
-          console.debug("[hand-bbox] Loaded hands", {
-            imageId: gridImg.id,
-            count: gridImg.hands.length,
-            first: gridImg.hands[0],
-          });
         }
         gridImg.penalized_tags =
           thumbObj && Array.isArray(thumbObj.penalized_tags)
