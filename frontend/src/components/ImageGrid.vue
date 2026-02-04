@@ -371,7 +371,6 @@ import ImageOverlay from "./ImageOverlay.vue";
 import SelectionBar from "./SelectionBar.vue";
 import SearchResultBar from "./SearchResultBar.vue";
 import StarRatingOverlay from "./StarRatingOverlay.vue";
-import { useSearchOverlay } from "../utils/useSearchOverlay";
 import { apiClient } from "../utils/apiClient";
 import { toggleScore } from "../utils/scoring";
 import { debounce, update } from "lodash-es";
@@ -3661,7 +3660,6 @@ function abortExportZip() {
 
 // Search functionality
 const searchQuery = ref(props.searchQuery);
-const { visible, openSearchOverlay, closeSearchOverlay } = useSearchOverlay();
 
 onMounted(() => {
   console.log("ImageGrid mounted. Initial search query:", searchQuery.value);
