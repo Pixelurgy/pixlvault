@@ -16,17 +16,6 @@
     @tag-refresh-start="handleTagRefreshStart"
     @added-to-set="handleOverlayAddedToSet"
   />
-  <InteractiveScoringOverlay
-    :open="interactiveScoringOpen"
-    :items="interactiveScoringItems"
-    :calibration-items="interactiveScoringCalibration"
-    :session="interactiveScoringSession"
-    :backendUrl="props.backendUrl"
-    @close="handleScoringClose"
-    @confirm="handleScoringConfirm"
-    @discard="handleScoringDiscard"
-    @session-update="handleScoringSessionUpdate"
-  />
   <ImageImporter
     ref="imageImporterRef"
     :backendUrl="props.backendUrl"
@@ -354,17 +343,6 @@
       :count="allGridImages.length"
       @clear="clearSearchQuery"
     />
-    <div
-      v-if="isSmartScoreSortActive() && unscoredCount > 5"
-      class="smart-score-bar"
-      :style="{ bottom: `${smartScoreBarOffset}px` }"
-    >
-      <span>
-        Score these images with a few quick choices ({{ unscoredCount }} items
-        with no score)
-      </span>
-      <v-btn color="primary" @click="handleStartScoring"> Start Scoring </v-btn>
-    </div>
   </div>
 </template>
 
@@ -390,7 +368,6 @@ import {
 } from "../utils/media.js";
 import ImageImporter from "./ImageImporter.vue";
 import ImageOverlay from "./ImageOverlay.vue";
-import InteractiveScoringOverlay from "./InteractiveScoringOverlay.vue";
 import SelectionBar from "./SelectionBar.vue";
 import SearchResultBar from "./SearchResultBar.vue";
 import StarRatingOverlay from "./StarRatingOverlay.vue";
@@ -404,7 +381,6 @@ const emit = defineEmits([
   "refresh-sidebar",
   "clear-search",
   "reset-to-all",
-  "start-scoring",
   "update:selected-sort",
 ]);
 
@@ -2019,21 +1995,6 @@ async function applyScore(img, newScore) {
     if (gridImg) {
       gridImg.score = newScore;
     }
-    if (interactiveScoringSession.value?.provisionalMap) {
-      const updatedMap = { ...interactiveScoringSession.value.provisionalMap };
-      if (updatedMap[imageId] != null) {
-        delete updatedMap[imageId];
-        interactiveScoringSession.value = {
-          ...interactiveScoringSession.value,
-          provisionalMap: updatedMap,
-        };
-      }
-    }
-    if (interactiveScoringItems.value?.length) {
-      interactiveScoringItems.value = interactiveScoringItems.value.filter(
-        (item) => item.id !== imageId,
-      );
-    }
     // Update overlay image if open and matches
     if (
       overlayOpen.value &&
@@ -2115,33 +2076,6 @@ async function applyScoresForSelection(imageIds, targetScore) {
     if (!scoreMap.has(key)) return img;
     return { ...img, score: scoreMap.get(key) };
   });
-
-  if (interactiveScoringSession.value?.provisionalMap) {
-    const updatedMap = { ...interactiveScoringSession.value.provisionalMap };
-    let changed = false;
-    for (const key of scoreMap.keys()) {
-      if (updatedMap[key] != null) {
-        delete updatedMap[key];
-        changed = true;
-      }
-    }
-    if (changed) {
-      interactiveScoringSession.value = {
-        ...interactiveScoringSession.value,
-        provisionalMap: updatedMap,
-      };
-    }
-  }
-
-  if (interactiveScoringItems.value?.length) {
-    const removeSet = new Set(Array.from(scoreMap.keys()));
-    const filtered = interactiveScoringItems.value.filter(
-      (item) => !removeSet.has(String(item.id)),
-    );
-    if (filtered.length !== interactiveScoringItems.value.length) {
-      interactiveScoringItems.value = filtered;
-    }
-  }
 
   if (
     overlayOpen.value &&
@@ -3745,162 +3679,6 @@ function clearSearchQuery() {
 
 function handleEmptyStateReset() {
   emit("reset-to-all");
-}
-
-function handleStartScoring() {
-  const scope = buildInteractiveScoringItems();
-  if (!scope.length) return;
-  const scopeKey = buildScoringScopeKey(scope);
-  if (
-    !interactiveScoringSession.value ||
-    interactiveScoringSession.value.scopeKey !== scopeKey
-  ) {
-    interactiveScoringSession.value = { scopeKey };
-  }
-  interactiveScoringCalibration.value = buildScoringCalibrationItems();
-  interactiveScoringItems.value = scope;
-  interactiveScoringOpen.value = true;
-  emit("start-scoring");
-}
-
-const smartScoreBarOffset = computed(() => {
-  return props.searchQuery && props.searchQuery.length > 0 ? 44 : 0;
-});
-
-const unscoredCount = computed(() => {
-  const list = Array.isArray(allGridImages.value) ? allGridImages.value : [];
-  let count = 0;
-  for (const img of list) {
-    if (!img || !img.id) continue;
-    const score = typeof img.score === "number" ? img.score : 0;
-    if (score <= 0) count += 1;
-  }
-  return count;
-});
-
-const interactiveScoringOpen = ref(false);
-const interactiveScoringItems = ref([]);
-const interactiveScoringSession = ref(null);
-const interactiveScoringCalibration = ref([]);
-
-function buildScoringScopeKey(items) {
-  return items.map((item) => String(item.id)).join(",");
-}
-
-function buildInteractiveScoringItems() {
-  const filtered = filterImagesByMediaType(allGridImages.value || []);
-  const scope = filtered.filter((img) => {
-    const score = typeof img?.score === "number" ? img.score : 0;
-    return img && img.id && typeof img.smartScore === "number" && score <= 0;
-  });
-  return scope
-    .map((img) => ({
-      id: img.id,
-      smartScore: Number(img.smartScore),
-      created_at: img.created_at || null,
-      format: img.format || null,
-      pixel_sha: img.pixel_sha || null,
-      thumbnail: img.thumbnail || null,
-    }))
-    .sort((a, b) => {
-      if (b.smartScore !== a.smartScore) {
-        return b.smartScore - a.smartScore;
-      }
-      if (a.created_at && b.created_at && a.created_at !== b.created_at) {
-        return a.created_at > b.created_at ? 1 : -1;
-      }
-      return String(a.id).localeCompare(String(b.id));
-    });
-}
-
-function buildScoringCalibrationItems() {
-  const filtered = filterImagesByMediaType(allGridImages.value || []);
-  return filtered
-    .filter((img) => {
-      const score = typeof img?.score === "number" ? img.score : 0;
-      return img && img.id && typeof img.smartScore === "number" && score > 0;
-    })
-    .map((img) => ({
-      id: img.id,
-      smartScore: Number(img.smartScore),
-      score: Number(img.score),
-      created_at: img.created_at || null,
-      format: img.format || null,
-      pixel_sha: img.pixel_sha || null,
-      thumbnail: img.thumbnail || null,
-    }));
-}
-
-function handleScoringSessionUpdate(session) {
-  if (!session) return;
-  interactiveScoringSession.value = {
-    ...interactiveScoringSession.value,
-    ...session,
-  };
-}
-
-async function applyScoresBulk(provisionalMap) {
-  const entries = Object.entries(provisionalMap || {});
-  if (!entries.length) return;
-  const chunkSize = 25;
-  for (let i = 0; i < entries.length; i += chunkSize) {
-    const chunk = entries.slice(i, i + chunkSize);
-    await Promise.all(
-      chunk.map(([id, stars]) =>
-        apiClient.patch(`${props.backendUrl}/pictures/${id}`, {
-          score: stars,
-        }),
-      ),
-    );
-  }
-
-  const scoreMap = new Map(
-    entries.map(([id, stars]) => [String(id), Number(stars)]),
-  );
-  allGridImages.value = allGridImages.value.map((img) => {
-    if (!img || !img.id) return img;
-    const key = String(img.id);
-    if (!scoreMap.has(key)) return img;
-    return { ...img, score: scoreMap.get(key) };
-  });
-}
-
-async function handleScoringConfirm(payload) {
-  const provisionalMap = payload?.provisionalMap || {};
-  await applyScoresBulk(provisionalMap);
-  emit("update:selected-sort", { sort: "SCORE", descending: true });
-
-  if (payload?.continueScoring) {
-    if (!interactiveScoringItems.value.length) {
-      interactiveScoringOpen.value = false;
-      interactiveScoringSession.value = null;
-      return;
-    }
-    interactiveScoringSession.value = {
-      ...interactiveScoringSession.value,
-      roundNumber: (payload?.roundNumber || 1) + 1,
-      roundOneMap: payload?.roundOneMap || {},
-    };
-    interactiveScoringCalibration.value = buildScoringCalibrationItems();
-    interactiveScoringOpen.value = false;
-    await nextTick();
-    interactiveScoringOpen.value = true;
-    return;
-  }
-
-  interactiveScoringOpen.value = false;
-  interactiveScoringItems.value = [];
-  interactiveScoringSession.value = null;
-}
-
-function handleScoringDiscard() {
-  interactiveScoringOpen.value = false;
-  interactiveScoringItems.value = [];
-  interactiveScoringSession.value = null;
-}
-
-function handleScoringClose() {
-  interactiveScoringOpen.value = false;
 }
 </script>
 
