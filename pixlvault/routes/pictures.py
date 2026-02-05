@@ -195,6 +195,9 @@ def _select_pictures_for_listing(
             descending,
             penalized_tags=penalized_tags,
         )
+        if return_ids_only:
+            return [pic.get("id") for pic in pics if pic.get("id") is not None]
+        return pics
     elif character_id == "UNASSIGNED":
         pics = server.vault.db.run_task(
             Picture.find_unassigned,
