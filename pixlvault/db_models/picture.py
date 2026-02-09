@@ -67,7 +67,7 @@ class SortMechanism:
         },
         Keys.PICTURE_STACKS: {
             "field": "id",
-            "description": "Picture Stacks",
+            "description": "Stacks",
         },
         Keys.IMAGE_SIZE: {
             "field": None,  # Special case, not a direct field
