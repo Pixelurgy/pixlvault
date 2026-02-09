@@ -26,7 +26,6 @@ const props = defineProps({
   selectedSort: { type: String, default: "" },
   selectedDescending: { type: Boolean, default: false },
   selectedSimilarityCharacter: { type: [String, Number, null], default: null },
-  stackThreshold: { type: [String, Number, null], default: null },
   backendUrl: { type: String, required: true },
 });
 
@@ -44,7 +43,7 @@ const emit = defineEmits([
   "images-moved",
   "search-images",
   "update:similarity-character",
-  "update:stack-threshold",
+  "update:similarity-options",
   "toggle-sidebar",
   "update:sort-options",
 ]);
@@ -510,42 +509,28 @@ const nonReferenceSets = computed(() =>
 
 // --- Similarity Character Dropdown State ---
 const SIMILARITY_SORT_KEY = "CHARACTER_LIKENESS"; // Adjust if backend uses a different key
-const STACKS_SORT_KEY = "PICTURE_STACKS";
 const DATE_SORT_KEY = "DATE";
 
 const similarityCharacterOptions = computed(() => {
   let options = sortedCharacters.value.map((c) => ({
     text: c.name,
     value: c.id,
+    thumbnail: characterThumbnails.value?.[c.id] || null,
   }));
   return options;
 });
 
+watch(
+  similarityCharacterOptions,
+  (options) => {
+    emit("update:similarity-options", options);
+  },
+  { immediate: true },
+);
+
 const similarityCharacterModel = computed({
   get: () => props.selectedSimilarityCharacter,
   set: (value) => emit("update:similarity-character", value ?? null),
-});
-
-const stackThresholdOptions = [
-  { label: "Very Loose", value: "0.90" },
-  { label: "Loose", value: "0.92" },
-  { label: "Medium", value: "0.94" },
-  { label: "Strict", value: "0.96" },
-  { label: "Very Strict", value: "0.98" },
-];
-
-const stackThresholdModel = computed({
-  get: () => {
-    if (props.stackThreshold == null || props.stackThreshold === "") {
-      return "0.94";
-    }
-    const parsed = parseFloat(String(props.stackThreshold));
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      return "0.94";
-    }
-    return String(props.stackThreshold);
-  },
-  set: (value) => emit("update:stack-threshold", value),
 });
 
 const isSearchActive = computed(() => {
@@ -2035,58 +2020,6 @@ defineExpose({ refreshSidebar, openSettingsDialog });
       >
         <div v-if="isSearchActive" class="sidebar-search-result-label">
           Search Result
-        </div>
-        <div v-if="!isSearchActive && sortModel === SIMILARITY_SORT_KEY">
-          <div class="sidebar-section-header">
-            Similarity Character
-            <span style="flex: 1 1 auto"></span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px">
-            <div style="flex: 1 1 0; min-width: 0; position: relative">
-              <select
-                v-model="similarityCharacterModel"
-                class="sidebar-native-select"
-              >
-                <option
-                  v-for="opt in similarityCharacterOptions"
-                  :key="opt.value"
-                  :value="opt.value"
-                >
-                  {{ opt.text }}
-                </option>
-              </select>
-              <span class="sidebar-native-select-chevron">
-                <v-icon size="18">mdi-menu-down</v-icon>
-              </span>
-            </div>
-            <div style="width: 34px"></div>
-          </div>
-        </div>
-        <div v-if="!isSearchActive && sortModel === STACKS_SORT_KEY">
-          <div class="sidebar-section-header">
-            Stack Strictness
-            <span style="flex: 1 1 auto"></span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px">
-            <div style="flex: 1 1 0; min-width: 0; position: relative">
-              <select
-                v-model="stackThresholdModel"
-                class="sidebar-native-select"
-              >
-                <option
-                  v-for="opt in stackThresholdOptions"
-                  :key="opt.value"
-                  :value="opt.value"
-                >
-                  {{ opt.label }}
-                </option>
-              </select>
-              <span class="sidebar-native-select-chevron">
-                <v-icon size="18">mdi-menu-down</v-icon>
-              </span>
-            </div>
-            <div style="width: 34px"></div>
-          </div>
         </div>
       </div>
       <div class="sidebar-footer-spacer"></div>
