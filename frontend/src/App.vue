@@ -357,10 +357,15 @@ function handleUpdateStackThreshold(value) {
 }
 
 const selectedSimilarityCharacter = ref(null);
+const similarityCharacterOptions = ref([]);
 function handleUpdateSimilarityCharacter(val) {
   selectedSimilarityCharacter.value = val;
   refreshGridVersion();
   closeSidebarIfMobile();
+}
+
+function handleUpdateSimilarityOptions(options) {
+  similarityCharacterOptions.value = Array.isArray(options) ? options : [];
 }
 
 function handleColumnsEnd() {
@@ -771,7 +776,7 @@ defineExpose({ sidebarVisible, mediaTypeFilter });
             :selectedDescending="selectedDescending"
             :backendUrl="BACKEND_URL"
             :selectedSimilarityCharacter="selectedSimilarityCharacter"
-            :stackThreshold="stackThreshold"
+            @update:similarity-options="handleUpdateSimilarityOptions"
             @update:sort-options="handleUpdateSortOptions"
             @select-character="handleSelectCharacter"
             @select-reference-pictures="handleSelectReferencePictures"
@@ -782,7 +787,6 @@ defineExpose({ sidebarVisible, mediaTypeFilter });
             @toggle-sidebar="sidebarVisible = !sidebarVisible"
             @update:selected-sort="handleUpdateSelectedSort"
             @update:similarity-character="handleUpdateSimilarityCharacter"
-            @update:stack-threshold="handleUpdateStackThreshold"
             @update:set-error="error = $event"
             @update:set-loading="loading = $event"
           />
@@ -808,6 +812,9 @@ defineExpose({ sidebarVisible, mediaTypeFilter });
             :sortOptions="sortOptions"
             :selectedSort="selectedSort"
             :selectedDescending="selectedDescending"
+            :similarityCharacterOptions="similarityCharacterOptions"
+            :selectedSimilarityCharacter="selectedSimilarityCharacter"
+            :stackThreshold="stackThreshold"
             v-model:searchInput="searchInput"
             v-model:isSearchHistoryOpen="isSearchHistoryOpen"
             v-model:columnsMenuOpen="columnsMenuOpen"
@@ -826,6 +833,8 @@ defineExpose({ sidebarVisible, mediaTypeFilter });
             v-model:exportIncludeCharacterName="exportIncludeCharacterName"
             v-model:mediaTypeFilter="mediaTypeFilter"
             @update:selected-sort="handleUpdateSelectedSort"
+            @update:similarity-character="handleUpdateSimilarityCharacter"
+            @update:stack-threshold="handleUpdateStackThreshold"
             @open-search-overlay="openSearchOverlay"
             @commit-search="commitSearch"
             @clear-search="handleClearSearch"
