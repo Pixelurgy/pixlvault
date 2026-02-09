@@ -68,6 +68,7 @@ HAND_TAG_BLACKLIST = {
     "black hair",
     "blonde hair",
     "blue eyes",
+    "blurry",
     "blush",
     "bikini",
     "blue eyes",
@@ -238,11 +239,10 @@ FACE_TAG_ALLOWLIST_PATTERNS = [
 
 HAND_TAG_ALLOWLIST_PATTERNS = [
     r"hand",
-    r"hands",
+    r"digit",
     r"finger",
     r"fingers",
     r"fingernail",
-    r"fingernails",
     r"nail",
     r"nails",
     r"thumb",

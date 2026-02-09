@@ -509,6 +509,19 @@ def fetch_smart_score_data(
                         candidate["id"], 0
                     )
 
+        if candidate_id_list:
+            tag_count_rows = session.exec(
+                select(Tag.picture_id, func.count(Tag.id))
+                .where(
+                    Tag.picture_id.in_(candidate_id_list),
+                    Tag.tag.is_not(None),
+                )
+                .group_by(Tag.picture_id)
+            ).all()
+            tag_count_map = {pic_id: count for pic_id, count in tag_count_rows}
+            for candidate in candidates:
+                candidate["tag_count"] = tag_count_map.get(candidate["id"], 0)
+
         return good, bad, candidates
 
     return server.vault.db.run_task(fetch_data, priority=DBPriority.IMMEDIATE)
@@ -610,6 +623,7 @@ def prepare_smart_score_inputs(good_anchors, bad_anchors, candidates):
                     "height": get_attr(p, "height"),
                     "noise_level": get_attr(p, "noise_level"),
                     "edge_density": get_attr(p, "edge_density"),
+                    "tag_count": get_attr(p, "tag_count"),
                 }
             )
 
@@ -650,18 +664,15 @@ def find_pictures_by_smart_score(
     scored_ids = []
 
     if candidates:
-        # 2. Prepare inputs (unpickling)
         good_list, bad_list, cand_list, cand_ids = prepare_smart_score_inputs(
             good_anchors, bad_anchors, candidates
         )
 
         if cand_list:
-            # 3. Calculate Scores (delegated to PictureUtils)
             scores = PictureUtils.calculate_smart_score_batch_numpy(
                 cand_list, good_list, bad_list
             )
 
-            # 4. Sort and build scored id list
             if descending:
                 sorted_indices = np.argsort(-scores)
             else:
@@ -689,7 +700,6 @@ def find_pictures_by_smart_score(
     if len(final_ids) == 0:
         return []
 
-    # 5. Fetch Final Objects
     def fetch_final_pics(session, ids):
         return session.exec(select(Picture).where(Picture.id.in_(ids))).all()
 
