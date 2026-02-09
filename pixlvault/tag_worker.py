@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 
 HAND_CROP_MIN_AREA_RATIO = 0.01
 HAND_CROP_MAX_PER_PICTURE = 2
-HAND_CROP_EXPAND_SCALE = 1.5
+CROP_EXPAND_SCALE = 1.75
 CROP_DEBUG_ENABLED = False
 
 
@@ -393,12 +393,22 @@ class TagWorker(BaseWorker):
                                 if getattr(face, "face_index", 0) < 0:
                                     continue
                                 bbox = getattr(face, "bbox", None)
-                                crop = PictureUtils.crop_face_from_frame(frame, bbox)
+                                expanded = expand_bbox(
+                                    bbox,
+                                    frame_w,
+                                    frame_h,
+                                    CROP_EXPAND_SCALE,
+                                )
+                                if expanded is None:
+                                    continue
+                                crop = PictureUtils.crop_face_from_frame(
+                                    frame, expanded
+                                )
                                 if crop is None:
                                     logger.debug(
                                         "Face crop failed for %s bbox=%s",
                                         file_path,
-                                        bbox,
+                                        expanded,
                                     )
                                     continue
                                 save_crop_debug(crop, "face", pic.id)
@@ -409,7 +419,7 @@ class TagWorker(BaseWorker):
                                     logger.debug(
                                         "Face crop conversion failed for %s bbox=%s: %s",
                                         file_path,
-                                        bbox,
+                                        expanded,
                                         e,
                                     )
                                     continue
@@ -442,7 +452,7 @@ class TagWorker(BaseWorker):
                                     [x1, y1, x2, y2],
                                     frame_w,
                                     frame_h,
-                                    HAND_CROP_EXPAND_SCALE,
+                                    CROP_EXPAND_SCALE,
                                 )
                                 if expanded is None:
                                     continue
@@ -463,9 +473,7 @@ class TagWorker(BaseWorker):
                                     ]
 
                             for _, bbox, hand in hand_candidates:
-                                crop = PictureUtils.crop_face_from_frame(
-                                    frame, bbox
-                                )
+                                crop = PictureUtils.crop_face_from_frame(frame, bbox)
                                 if crop is None:
                                     logger.debug(
                                         "Hand crop failed for %s bbox=%s",
@@ -527,7 +535,9 @@ class TagWorker(BaseWorker):
                                 crop_tags_by_pic_id[pic_id] = existing
                                 hand_id = item_to_hand_id.get(key)
                                 if hand_id is not None:
-                                    existing_hand = hand_tags_by_hand_id.get(hand_id, [])
+                                    existing_hand = hand_tags_by_hand_id.get(
+                                        hand_id, []
+                                    )
                                     existing_hand.extend(filtered)
                                     hand_tags_by_hand_id[hand_id] = existing_hand
                             else:
@@ -536,7 +546,9 @@ class TagWorker(BaseWorker):
                                 crop_tags_by_pic_id[pic_id] = existing
                                 face_id = item_to_face_id.get(key)
                                 if face_id is not None:
-                                    existing_face = face_tags_by_face_id.get(face_id, [])
+                                    existing_face = face_tags_by_face_id.get(
+                                        face_id, []
+                                    )
                                     filtered = [tag for tag in tags if is_face_tag(tag)]
                                     existing_face.extend(filtered)
                                     face_tags_by_face_id[face_id] = existing_face
@@ -664,18 +676,14 @@ class TagWorker(BaseWorker):
                                 tag_obj = tag_objs.get(tag_value)
                                 if tag_obj is None:
                                     continue
-                                session.add(
-                                    FaceTag(face_id=face_id, tag_id=tag_obj.id)
-                                )
+                                session.add(FaceTag(face_id=face_id, tag_id=tag_obj.id))
 
                         for hand_id, hand_tags in hand_map.items():
                             for tag_value in hand_tags:
                                 tag_obj = tag_objs.get(tag_value)
                                 if tag_obj is None:
                                     continue
-                                session.add(
-                                    HandTag(hand_id=hand_id, tag_id=tag_obj.id)
-                                )
+                                session.add(HandTag(hand_id=hand_id, tag_id=tag_obj.id))
 
                         updated_ids.append(pic_id)
 
