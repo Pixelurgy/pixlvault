@@ -4,7 +4,7 @@ import numpy as np
 
 from datetime import datetime
 
-from enum import Enum, auto
+from enum import Enum, auto, IntEnum
 from sqlalchemy import String, desc, func
 from sqlalchemy.orm import load_only, selectinload
 from sqlalchemy.types import LargeBinary
@@ -100,6 +100,29 @@ class SortMechanism:
         raise ValueError(f"{key_string!r} is not a valid SortMechanism")
 
 
+class LikenessParameter(IntEnum):
+    SIZE_BIN = 0
+    BRIGHTNESS = 1
+    CONTRAST = 2
+    EDGE_DENSITY = 3
+    NOISE_LEVEL = 4
+    ASPECT_RATIO = 5
+    PHASH_PREFIX = 6
+    DATE = 7
+    COLORFULNESS = 8
+    LUMINANCE_ENTROPY = 9
+    DOMINANT_HUE = 10
+
+
+LIKENESS_PARAMETER_SENTINEL = -1.0
+
+
+def _default_likeness_parameters() -> np.ndarray:
+    return np.full(
+        len(LikenessParameter), LIKENESS_PARAMETER_SENTINEL, dtype=np.float32
+    )
+
+
 class ExportType(Enum):
     FULL = "full"
     FACE = "face"
@@ -124,6 +147,7 @@ class Picture(SQLModel, table=True):
     width: Optional[int] = None
     height: Optional[int] = None
     size_bytes: Optional[int] = None
+    size_bin_index: Optional[int] = Field(default=None, index=True)
     created_at: Optional[datetime] = Field(
         default=None, sa_column=Column("created_at", type_=DateTime, nullable=True)
     )
@@ -136,6 +160,12 @@ class Picture(SQLModel, table=True):
     )
     image_embedding: Optional[np.ndarray] = Field(
         sa_column=Column("image_embedding", LargeBinary, default=None, nullable=True)
+    )
+    likeness_parameters: Optional[np.ndarray] = Field(
+        default_factory=_default_likeness_parameters,
+        sa_column=Column(
+            "likeness_parameters", LargeBinary, default=None, nullable=True
+        ),
     )
     perceptual_hash: Optional[str] = Field(
         default=None,
@@ -527,6 +557,20 @@ class Picture(SQLModel, table=True):
         return cls.scalar_fields() - cls.large_binary_fields()
 
     @classmethod
+    def grid_fields(cls):
+        """
+        Return a minimal set of fields for grid listing.
+        """
+        return {
+            "id",
+            "width",
+            "height",
+            "format",
+            "score",
+            "created_at",
+        }
+
+    @classmethod
     def scalar_fields(cls):
         """
         Return a list of simple scalar fields
@@ -612,7 +656,7 @@ class Picture(SQLModel, table=True):
         if format:
             query = query.where(Picture.format.in_(format))
 
-        select_fields = cls.metadata_fields()
+        select_fields = metadata_fields or cls.metadata_fields()
         if select_fields:
             select_fields = list(set(select_fields) | {"id"})
             scalar_attrs = [

@@ -1,207 +1,582 @@
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import cv2
-import numpy as np
+from __future__ import annotations
 
-from sqlmodel import select, Session
-from typing import List, Optional, Tuple
+import math
+import time
+from datetime import timedelta
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+from sqlalchemy import func
+from sqlmodel import Session, delete, select
 
 from pixlvault.database import DBPriority
 from pixlvault.pixl_logging import get_logger
 from pixlvault.worker_registry import BaseWorker, WorkerType
-from pixlvault.db_models.face import Face
-from pixlvault.db_models.picture import Picture
+from pixlvault.db_models.picture import (
+    LIKENESS_PARAMETER_SENTINEL,
+    LikenessParameter,
+    Picture,
+)
 from pixlvault.db_models.picture_likeness import (
     PictureLikeness,
-    PictureLikenessFrontier,
+    PictureLikenessQueue,
 )
 
 logger = get_logger(__name__)
 
 
 class LikenessWorker(BaseWorker):
-    BATCH_SIZE = 5000
+    """
+    Speed-focused likeness worker for stacking near-identical images.
+    Uses aggressive pruning to avoid N^2 behavior.
+    """
+
+    BATCH_CANDIDATES = 1024
+    MAX_A_PER_CYCLE = 256
+    YIELD_SLEEP_SECONDS = 0.0
+
+    PHASH_PREFIX_LEN = 3
+    PHASH_MIN_SIM = 0.45
+    EMBEDDING_MIN_SIM = 0.9
+    LIKENESS_GAMMA = 2.0
+
+    PARAM_GAP_PERCENTILE = 80
+    PARAM_THRESHOLD_SAMPLE_LIMIT = 5000
+    MIN_PARAM_OVERLAP = 1
+    DATE_WINDOW_FRACTION = 0.004
+    DATE_MAX_NEIGHBORS = 30
+    BULK_MAX_WINDOW_SIZE = 60
+    BULK_GAP_PERCENTILE = 60
+
+    MAX_DIM_RATIO_DIFF = 0.2
+    MAX_ASPECT_RATIO_DIFF = 0.1
+    MAX_SIZE_RATIO_DIFF = 0.3
+
     TOP_K = 200
-    FACE_COUNT_MAX_DIFF = 1
-    FACE_WEIGHT = 0.5
-    IMAGE_WEIGHT = 0.5
     PHASH_BITS = 64
-    PHASH_STRONG_MATCH = 0.95
+
+    GATING_PARAMS = tuple(
+        param
+        for param in LikenessParameter
+        if param
+        not in {
+            LikenessParameter.SIZE_BIN,
+            LikenessParameter.PHASH_PREFIX,
+            LikenessParameter.DATE,
+        }
+    )
 
     def worker_type(self) -> WorkerType:
         return WorkerType.LIKENESS
 
-    @classmethod
-    def get_next_batch(cls, session: Session) -> Optional[Tuple[int, List[int]]]:
-        """
-        Return the next work chunk as (a, bs), where:
-        - a is the next picture_id_a with remaining work and embedding ready,
-        - bs is a contiguous list of b ids (a < b) with embedding ready,
-        - len(bs) <= batch_size and starts at the current frontier start_b.
-        Returns None if nothing to do.
-        """
-
-        a = PictureLikenessFrontier.get_next_a_candidate(
-            session, quality_ready=cls._embedding_ready
-        )
-        if a is None:
-            return None, None
-
-        max_id = PictureLikenessFrontier.max_picture_id(session)
-        # Ask the model to compute the next contiguous [start_b, end_b] window
-        rng = PictureLikenessFrontier.range_to_compare(
-            session, a, max_id=max_id, batch_limit=cls.BATCH_SIZE
-        )
-        if not rng:
-            return None, None  # frontier already at max or race
-
-        start_b, end_b = rng
-
-        # Filter window to b with embedding ready on both sides
-        # Query all b rows in one go for efficiency
-        b_rows = session.exec(
-            select(Picture.id)
-            .where(
-                (Picture.id >= start_b)
-                & (Picture.id <= end_b)
-                & (Picture.image_embedding.is_not(None))
-            )
-            .order_by(Picture.id)
-        ).all()
-        eligible_bs_all = [int(pid) for pid in b_rows]
-
-        # Allow sparse ranges: take any eligible b values within the window
-        if not eligible_bs_all:
-            return None, None  # No eligible b in the window
-
-        return a, eligible_bs_all[: cls.BATCH_SIZE]
-
     def _run(self):
-        logger.info("LikenessWorker: Likeness worker started.")
+        logger.info("LikenessWorker: started.")
 
-        self._db.run_task(PictureLikenessFrontier.ensure_all)
+        def submit_low(func, *args, **kwargs):
+            return self._db.result_or_throw(
+                self._db.submit_task(func, *args, priority=DBPriority.LOW, **kwargs)
+            )
 
-        logger.info("LikenessWorker: PictureLikenessFrontier initialized.")
+        submit_low(LikenessWorker._seed_queue)
+        logger.info("LikenessWorker: queue initialized.")
+
+        param_thresholds = submit_low(
+            LikenessWorker._compute_param_gap_thresholds,
+            self.PARAM_GAP_PERCENTILE,
+            self.PARAM_THRESHOLD_SAMPLE_LIMIT,
+        )
+        date_span_seconds = submit_low(LikenessWorker._compute_date_span_seconds)
+        if param_thresholds:
+            logger.info(
+                "LikenessWorker: Loaded %s parameter gap thresholds.",
+                len(param_thresholds),
+            )
+        if date_span_seconds:
+            logger.info(
+                "LikenessWorker: Date span seconds=%s, window fraction=%s.",
+                int(date_span_seconds),
+                self.DATE_WINDOW_FRACTION,
+            )
 
         while not self._stop.is_set():
-            a, bs = self._db.run_immediate_read_task(LikenessWorker.get_next_batch)
+            work_items = submit_low(
+                LikenessWorker._get_next_work_batch,
+                self.MAX_A_PER_CYCLE,
+            )
 
-            if not a or not bs:
+            if not work_items:
                 logger.info("LikenessWorker: No pending pairs. Sleeping...")
                 self._wait()
                 continue
 
-            logger.info(f"LikenessWorker: Processing {len(bs)} pairs.")
-
-            pids_needed = set()
-            for b in bs:
-                pids_needed.add(a)
-                pids_needed.add(b)
-
-            def fetch_embeddings_and_faces(session, ids):
-                embeddings = session.exec(
-                    select(Picture.id, Picture.image_embedding).where(
-                        Picture.id.in_(ids)
-                    )
-                ).all()
-                embedding_dict = {}
-                for pid, emb in embeddings:
-                    if isinstance(emb, (memoryview, bytearray)):
-                        emb = bytes(emb)
-                    embedding_dict[pid] = emb
-
-                face_rows = session.exec(
-                    select(Face.picture_id, Face.features).where(
-                        Face.picture_id.in_(ids)
-                        & (Face.face_index != -1)
-                        & (Face.features.is_not(None))
-                    )
-                ).all()
-                face_dict = defaultdict(list)
-                for pic_id, features in face_rows:
-                    if isinstance(features, (memoryview, bytearray)):
-                        features = bytes(features)
-                    face_dict[pic_id].append(features)
-
-                return embedding_dict, face_dict
-
-            embedding_dict, face_dict = self._db.run_task(
-                fetch_embeddings_and_faces, list(pids_needed), priority=DBPriority.LOW
+            queued_ids = [int(item[0]) for item in work_items]
+            bulk_rows = submit_low(LikenessWorker._fetch_bulk_candidate_data)
+            likeness_results = self._compute_bulk_likeness(
+                queued_ids,
+                bulk_rows,
+                param_thresholds,
+                date_span_seconds,
             )
 
-            likeness_results = []
-            processed_notify_ids = []
-            for b in bs:
-                if self._stop.is_set():
-                    break
-                logger.debug(f"LikenessWorker: Processing pair (a={a}, b={b})")
-                embedding_a = embedding_dict.get(a)
-                embedding_b = embedding_dict.get(b)
-                if embedding_a is None or embedding_b is None:
-                    logger.warning(
-                        "LikenessWorker: Missing embeddings for pair (a=%s, b=%s)",
-                        a,
-                        b,
-                    )
-                    continue
-                emb_a = self._decode_embedding(embedding_a)
-                emb_b = self._decode_embedding(embedding_b)
-                if emb_a is None or emb_b is None:
-                    logger.warning(
-                        "LikenessWorker: Invalid embeddings for pair (a=%s, b=%s)",
-                        a,
-                        b,
-                    )
-                    continue
+            processed_notify_ids = [
+                (PictureLikenessQueue, pid, "queue", None) for pid in queued_ids
+            ]
 
-                face_features_a = face_dict.get(a, [])
-                face_features_b = face_dict.get(b, [])
-                likeness = self._embedding_likeness(
-                    emb_a, emb_b, face_features_a, face_features_b
+            if likeness_results:
+                submit_low(
+                    LikenessWorker._write_results,
+                    likeness_results,
+                    self.TOP_K,
                 )
-                if likeness is None:
-                    continue
-
-                likeness_results.append(
-                    PictureLikeness(
-                        picture_id_a=a,
-                        picture_id_b=b,
-                        likeness=likeness,
-                        metric="image_face_embedding",
-                    )
-                )
-                processed_notify_ids.append((PictureLikeness, (a, b), "pair", likeness))
-                if self._stop.is_set():
-                    break
-
-            logger.debug("LikenessWorker: Writing likeness scores to database...")
-
-            def insert_likeness_and_update_frontier(
-                session, likeness_results, a, max_b
-            ):
-                PictureLikeness.bulk_insert_ignore(session, likeness_results)
-                PictureLikenessFrontier.update(session, a, max_b)
-                PictureLikeness.prune_below_top_k(session, a, self.TOP_K)
-                session.commit()
-
-            self._db.run_task(
-                insert_likeness_and_update_frontier,
-                likeness_results,
-                a,
-                max(bs),
-                priority=DBPriority.LOW,
+            logger.info(
+                "LikenessWorker: Cycle summary queued=%s pairs_scored=%s",
+                len(work_items),
+                len(likeness_results),
             )
 
             if processed_notify_ids:
                 self._notify_ids_processed(processed_notify_ids)
-                # Update completed_tasks to track all b's for each a
-                logger.debug(
-                    f"LikenessWorker: Processed {len(processed_notify_ids)} likeness scores."
+
+            if self.YIELD_SLEEP_SECONDS > 0 and not self._stop.is_set():
+                time.sleep(self.YIELD_SLEEP_SECONDS)
+
+        logger.info("LikenessWorker: stopped.")
+
+    @staticmethod
+    def _get_next_work_batch(
+        session: Session, max_a: int
+    ) -> List[
+        Tuple[
+            int,
+            int,
+            int,
+            Optional[str],
+            Optional[int],
+            Optional[int],
+            Optional[int],
+            Optional[bytes],
+            Optional[object],
+            Optional[bytes],
+        ]
+    ]:
+        rows = session.exec(
+            select(
+                PictureLikenessQueue.picture_id,
+                Picture.perceptual_hash,
+                Picture.width,
+                Picture.height,
+                Picture.size_bytes,
+                Picture.likeness_parameters,
+                Picture.created_at,
+                Picture.image_embedding,
+            )
+            .join(Picture, Picture.id == PictureLikenessQueue.picture_id)
+            .where(Picture.image_embedding.is_not(None))
+            .where(Picture.likeness_parameters.is_not(None))
+            .where(Picture.perceptual_hash.is_not(None))
+            .order_by(PictureLikenessQueue.queued_at)
+            .limit(max_a)
+        ).all()
+        if not rows:
+            return []
+
+        queued_ids = [int(row[0]) for row in rows]
+        if queued_ids:
+            session.exec(
+                delete(PictureLikenessQueue).where(
+                    PictureLikenessQueue.picture_id.in_(queued_ids)
                 )
-            else:
-                logger.debug("LikenessWorker: No likeness scores computed. Sleeping...")
-                self._wait()
-        logger.info("LikenessWorker: Likeness worker stopped.")
+            )
+            session.commit()
+
+        batch = []
+        for row in rows:
+            (
+                pic_id,
+                phash_a,
+                width_a,
+                height_a,
+                size_a,
+                params_blob,
+                created_at,
+                emb_blob,
+            ) = row
+            a = int(pic_id)
+            batch.append(
+                (
+                    a,
+                    None,
+                    None,
+                    phash_a,
+                    width_a,
+                    height_a,
+                    size_a,
+                    params_blob,
+                    created_at,
+                    emb_blob,
+                )
+            )
+
+        return batch
+
+    @staticmethod
+    def _fetch_embedding(session: Session, picture_id: int) -> Optional[bytes]:
+        return session.exec(
+            select(Picture.image_embedding).where(Picture.id == picture_id)
+        ).first()
+
+    @staticmethod
+    def _fetch_candidates(
+        session: Session,
+        a_id: int,
+        phash_prefix: str,
+        width_a: Optional[int],
+        height_a: Optional[int],
+        size_a: Optional[int],
+        limit: int,
+    ) -> List[
+        Tuple[
+            int,
+            Optional[str],
+            Optional[int],
+            Optional[int],
+            Optional[int],
+            Optional[bytes],
+            Optional[bytes],
+            Optional[object],
+        ]
+    ]:
+        if not phash_prefix:
+            return []
+        query = select(
+            Picture.id,
+            Picture.perceptual_hash,
+            Picture.width,
+            Picture.height,
+            Picture.size_bytes,
+            Picture.image_embedding,
+            Picture.likeness_parameters,
+            Picture.created_at,
+        ).where(Picture.image_embedding.is_not(None))
+        query = query.where(
+            Picture.perceptual_hash.is_not(None)
+            & (
+                func.substr(Picture.perceptual_hash, 1, len(phash_prefix))
+                == phash_prefix
+            )
+        )
+        query = query.where(Picture.id != a_id)
+        if (
+            isinstance(width_a, int)
+            and isinstance(height_a, int)
+            and width_a > 0
+            and height_a > 0
+        ):
+            min_w, max_w = LikenessWorker._range_with_ratio(
+                width_a, LikenessWorker.MAX_DIM_RATIO_DIFF
+            )
+            min_h, max_h = LikenessWorker._range_with_ratio(
+                height_a, LikenessWorker.MAX_DIM_RATIO_DIFF
+            )
+            query = query.where(
+                (Picture.width >= min_w)
+                & (Picture.width <= max_w)
+                & (Picture.height >= min_h)
+                & (Picture.height <= max_h)
+            )
+        if isinstance(size_a, int) and size_a > 0:
+            min_s, max_s = LikenessWorker._range_with_ratio(
+                size_a, LikenessWorker.MAX_SIZE_RATIO_DIFF
+            )
+            query = query.where(
+                (Picture.size_bytes >= min_s) & (Picture.size_bytes <= max_s)
+            )
+        return session.exec(query.order_by(Picture.id).limit(limit)).all()
+
+    @staticmethod
+    def _fetch_candidates_for_prefixes(
+        session: Session,
+        prefixes: List[str],
+        limit: int,
+    ) -> Dict[str, List[Tuple]]:
+        if not prefixes:
+            return {}
+        results: Dict[str, List[Tuple]] = {prefix: [] for prefix in prefixes}
+        for prefix in prefixes:
+            if not prefix:
+                continue
+            rows = session.exec(
+                select(
+                    Picture.id,
+                    Picture.perceptual_hash,
+                    Picture.width,
+                    Picture.height,
+                    Picture.size_bytes,
+                    Picture.image_embedding,
+                    Picture.likeness_parameters,
+                    Picture.created_at,
+                )
+                .where(Picture.image_embedding.is_not(None))
+                .where(Picture.perceptual_hash.is_not(None))
+                .where(func.substr(Picture.perceptual_hash, 1, len(prefix)) == prefix)
+                .order_by(Picture.id)
+                .limit(limit)
+            ).all()
+            results[prefix] = rows
+        return results
+
+    @staticmethod
+    def _fetch_bulk_candidate_data(session: Session) -> List[Tuple]:
+        return session.exec(
+            select(
+                Picture.id,
+                Picture.likeness_parameters,
+                Picture.image_embedding,
+                Picture.perceptual_hash,
+                Picture.created_at,
+                Picture.width,
+                Picture.height,
+                Picture.size_bytes,
+            )
+            .where(Picture.deleted.is_(False))
+            .where(Picture.image_embedding.is_not(None))
+            .where(Picture.likeness_parameters.is_not(None))
+            .where(Picture.perceptual_hash.is_not(None))
+        ).all()
+
+    def _compute_bulk_likeness(
+        self,
+        queued_ids: List[int],
+        rows: List[Tuple],
+        param_thresholds: Optional[Dict[LikenessParameter, float]],
+        date_span_seconds: Optional[float],
+    ) -> List[PictureLikeness]:
+        if not rows or not queued_ids:
+            return []
+        queued_set = set(int(pid) for pid in queued_ids)
+        ids = [int(row[0]) for row in rows]
+        vectors = [
+            self._decode_likeness_parameters(row[1], len(LikenessParameter))
+            for row in rows
+        ]
+        embeddings = {int(row[0]): self._decode_embedding(row[2]) for row in rows}
+        phash_by_id = {int(row[0]): str(row[3]) for row in rows if row[3]}
+
+        n = len(ids)
+        candidate_counts: Dict[Tuple[int, int], int] = {}
+        params = [
+            param
+            for param in self.GATING_PARAMS
+            if param not in {LikenessParameter.PHASH_PREFIX, LikenessParameter.DATE}
+        ]
+
+        for param in params:
+            param_index = int(param)
+            values = [
+                vec[param_index] if vec is not None else LIKENESS_PARAMETER_SENTINEL
+                for vec in vectors
+            ]
+            sorted_indices = sorted(
+                range(n),
+                key=lambda i: (not math.isfinite(values[i]), values[i]),
+            )
+            values_sorted = [values[i] for i in sorted_indices]
+            diffs = []
+            for idx in range(1, n):
+                prev_val = values_sorted[idx - 1]
+                curr_val = values_sorted[idx]
+                if not math.isfinite(prev_val) or not math.isfinite(curr_val):
+                    continue
+                diff = curr_val - prev_val
+                if diff >= 0:
+                    diffs.append(diff)
+            gap_threshold = (
+                float(np.percentile(diffs, self.BULK_GAP_PERCENTILE)) if diffs else 0.0
+            )
+            for position, i in enumerate(sorted_indices):
+                value_a = values_sorted[position]
+                if not math.isfinite(value_a):
+                    continue
+                upper = min(position + self.BULK_MAX_WINDOW_SIZE, n - 1)
+                id_a = ids[i]
+                for neighbor_pos in range(position + 1, upper + 1):
+                    value_b = values_sorted[neighbor_pos]
+                    if not math.isfinite(value_b):
+                        break
+                    if (value_b - value_a) > gap_threshold:
+                        break
+                    j = sorted_indices[neighbor_pos]
+                    id_b = ids[j]
+                    if id_a not in queued_set and id_b not in queued_set:
+                        continue
+                    a_id, b_id = PictureLikeness.canon_pair(id_a, id_b)
+                    candidate_counts[(a_id, b_id)] = (
+                        candidate_counts.get((a_id, b_id), 0) + 1
+                    )
+
+        if date_span_seconds:
+            date_values = [
+                vec[int(LikenessParameter.DATE)] if vec is not None else -1.0
+                for vec in vectors
+            ]
+            finite_dates = [val for val in date_values if math.isfinite(val)]
+            if finite_dates:
+                min_date = min(finite_dates)
+                max_date = max(finite_dates)
+                date_span = max_date - min_date
+                max_gap = date_span * self.DATE_WINDOW_FRACTION
+                if max_gap > 0:
+                    date_sorted_indices = sorted(
+                        range(n),
+                        key=lambda i: (
+                            not math.isfinite(date_values[i]),
+                            date_values[i],
+                        ),
+                    )
+                    for position, i in enumerate(date_sorted_indices):
+                        date_a = date_values[i]
+                        if not math.isfinite(date_a):
+                            continue
+                        id_a = ids[i]
+                        upper = min(position + self.DATE_MAX_NEIGHBORS, n - 1)
+                        for neighbor_pos in range(position + 1, upper + 1):
+                            j = date_sorted_indices[neighbor_pos]
+                            date_b = date_values[j]
+                            if not math.isfinite(date_b):
+                                break
+                            if (date_b - date_a) > max_gap:
+                                break
+                            id_b = ids[j]
+                            if id_a not in queued_set and id_b not in queued_set:
+                                continue
+                            a_id, b_id = PictureLikeness.canon_pair(id_a, id_b)
+                            candidate_counts[(a_id, b_id)] = (
+                                candidate_counts.get((a_id, b_id), 0) + 1
+                            )
+
+        candidate_pairs = {
+            pair
+            for pair, count in candidate_counts.items()
+            if count >= self.MIN_PARAM_OVERLAP
+        }
+
+        results: List[PictureLikeness] = []
+        for a_id, b_id in candidate_pairs:
+            if a_id not in queued_set and b_id not in queued_set:
+                continue
+            phash_a = phash_by_id.get(a_id)
+            phash_b = phash_by_id.get(b_id)
+            if not phash_a or not phash_b:
+                continue
+            if self._phash_similarity(phash_a, phash_b) < self.PHASH_MIN_SIM:
+                continue
+            emb_a = embeddings.get(a_id)
+            emb_b = embeddings.get(b_id)
+            if emb_a is None or emb_b is None or emb_a.shape != emb_b.shape:
+                continue
+            norm_a = np.linalg.norm(emb_a)
+            norm_b = np.linalg.norm(emb_b)
+            if norm_a == 0 or norm_b == 0:
+                continue
+            sim = float((emb_a / norm_a) @ (emb_b / norm_b))
+            sim = float(np.clip(sim, -1.0, 1.0))
+            likeness = 0.5 * (sim + 1.0)
+            if self.LIKENESS_GAMMA != 1.0:
+                likeness = float(pow(max(likeness, 0.0), self.LIKENESS_GAMMA))
+            if likeness > 1.0:
+                likeness = 1.0
+            elif likeness < 0.0:
+                likeness = 0.0
+            if likeness < self.EMBEDDING_MIN_SIM:
+                continue
+            results.append(
+                PictureLikeness(
+                    picture_id_a=a_id,
+                    picture_id_b=b_id,
+                    likeness=likeness,
+                    metric="image_embedding",
+                )
+            )
+
+        return results
+
+    @staticmethod
+    def _fetch_date_candidates(
+        session: Session,
+        a_id: int,
+        a_created_at: object,
+        window_seconds: float,
+        limit: int,
+    ) -> List[
+        Tuple[
+            int,
+            Optional[str],
+            Optional[int],
+            Optional[int],
+            Optional[int],
+            Optional[bytes],
+            Optional[bytes],
+            Optional[object],
+        ]
+    ]:
+        if not a_created_at or window_seconds <= 0:
+            return []
+        window = timedelta(seconds=window_seconds)
+        start_time = a_created_at - window
+        end_time = a_created_at + window
+        query = (
+            select(
+                Picture.id,
+                Picture.perceptual_hash,
+                Picture.width,
+                Picture.height,
+                Picture.size_bytes,
+                Picture.image_embedding,
+                Picture.likeness_parameters,
+                Picture.created_at,
+            )
+            .where(
+                (Picture.image_embedding.is_not(None))
+                & (Picture.created_at.is_not(None))
+                & (Picture.created_at >= start_time)
+                & (Picture.created_at <= end_time)
+            )
+            .order_by(Picture.created_at, Picture.id)
+            .limit(limit)
+        )
+        query = query.where(Picture.id != a_id)
+        return session.exec(query).all()
+
+    @staticmethod
+    def _write_results(
+        session: Session,
+        likeness_results: List[PictureLikeness],
+        top_k: int,
+    ) -> None:
+        PictureLikeness.bulk_insert_ignore(session, likeness_results)
+        processed_as = {pl.picture_id_a for pl in likeness_results}
+        for a_id in processed_as:
+            PictureLikeness.prune_below_top_k(session, a_id, top_k)
+        session.commit()
+
+    @staticmethod
+    def _seed_queue(session: Session) -> None:
+        rows = session.exec(select(Picture.id)).all()
+        ids = [
+            int(row[0]) if isinstance(row, (tuple, list)) else int(row) for row in rows
+        ]
+        PictureLikenessQueue.enqueue(session, ids)
+        session.commit()
+
+    @staticmethod
+    def _ack_queue(session: Session, picture_ids: List[int]) -> None:
+        PictureLikenessQueue.dequeue(session, picture_ids)
+        session.commit()
+
+    @staticmethod
+    def _range_with_ratio(value: int, ratio: float) -> Tuple[int, int]:
+        delta = max(1, int(round(value * ratio)))
+        return max(1, value - delta), value + delta
 
     @staticmethod
     def _embedding_ready(session: Session, picture_id: int) -> bool:
@@ -237,206 +612,151 @@ class LikenessWorker(BaseWorker):
             return None
 
     @staticmethod
-    def _cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> Optional[float]:
-        if vec_a is None or vec_b is None:
+    def _decode_likeness_parameters(
+        blob: Optional[object], length: int
+    ) -> Optional[np.ndarray]:
+        if blob is None:
             return None
-        if vec_a.shape != vec_b.shape or vec_a.size == 0:
+        if isinstance(blob, np.ndarray):
+            if blob.size == length:
+                return blob.astype(np.float32, copy=False)
             return None
-        norm_a = np.linalg.norm(vec_a)
-        norm_b = np.linalg.norm(vec_b)
-        if norm_a == 0 or norm_b == 0:
+        if isinstance(blob, (bytes, bytearray, memoryview)):
+            data = np.frombuffer(blob, dtype=np.float32)
+            if data.size == length:
+                return data.copy()
             return None
-        sim = float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
-        sim = float(np.clip(sim, -1.0, 1.0))
-        return 0.5 * (sim + 1.0)
+        return None
 
-    def _decode_face_vectors(self, features_list: list[bytes]) -> list[np.ndarray]:
-        vectors = []
-        for blob in features_list:
-            arr = self._decode_embedding(blob)
-            if arr is None:
+    @classmethod
+    def _count_param_overlap(
+        cls,
+        a_params: np.ndarray,
+        b_params: np.ndarray,
+        thresholds: Dict[LikenessParameter, float],
+    ) -> int:
+        overlap = 0
+        for param in cls.GATING_PARAMS:
+            threshold = thresholds.get(param)
+            if threshold is None:
                 continue
-            if arr.ndim != 1:
-                arr = arr.ravel()
-            if arr.size == 0:
+            val_a = float(a_params[int(param)])
+            val_b = float(b_params[int(param)])
+            if (
+                val_a == LIKENESS_PARAMETER_SENTINEL
+                or val_b == LIKENESS_PARAMETER_SENTINEL
+                or not math.isfinite(val_a)
+                or not math.isfinite(val_b)
+            ):
                 continue
-            vectors.append(arr)
-        if not vectors:
-            return []
-        target_size = vectors[0].size
-        return [vec for vec in vectors if vec.size == target_size]
+            if abs(val_a - val_b) <= threshold:
+                overlap += 1
+        return overlap
+
+    @classmethod
+    def _compute_param_gap_thresholds(
+        cls, session: Session, percentile: int, sample_limit: int
+    ) -> Dict[LikenessParameter, float]:
+        rows = session.exec(
+            select(Picture.likeness_parameters)
+            .where(Picture.likeness_parameters.is_not(None))
+            .limit(sample_limit)
+        ).all()
+        if not rows:
+            return {}
+        values_by_param: Dict[LikenessParameter, List[float]] = {
+            param: [] for param in cls.GATING_PARAMS
+        }
+        for row in rows:
+            blob = row[0] if isinstance(row, (tuple, list)) else row
+            vec = cls._decode_likeness_parameters(blob, len(LikenessParameter))
+            if vec is None:
+                continue
+            for param in cls.GATING_PARAMS:
+                value = float(vec[int(param)])
+                if value == LIKENESS_PARAMETER_SENTINEL or not math.isfinite(value):
+                    continue
+                values_by_param[param].append(value)
+
+        thresholds: Dict[LikenessParameter, float] = {}
+        for param, values in values_by_param.items():
+            if len(values) < 2:
+                continue
+            values.sort()
+            diffs = []
+            prev = values[0]
+            for value in values[1:]:
+                diff = value - prev
+                if diff >= 0:
+                    diffs.append(diff)
+                prev = value
+            if diffs:
+                thresholds[param] = float(np.percentile(diffs, percentile))
+        return thresholds
 
     @staticmethod
-    def _filter_common_face_vectors(
-        vecs_a: list[np.ndarray], vecs_b: list[np.ndarray]
-    ) -> tuple[list[np.ndarray], list[np.ndarray]]:
-        if not vecs_a or not vecs_b:
-            return [], []
-        sizes_a = [vec.size for vec in vecs_a]
-        sizes_b = [vec.size for vec in vecs_b]
-        common_sizes = set(sizes_a) & set(sizes_b)
-        if not common_sizes:
-            return [], []
-        common_size = max(
-            common_sizes, key=lambda s: sizes_a.count(s) + sizes_b.count(s)
-        )
-        return (
-            [vec for vec in vecs_a if vec.size == common_size],
-            [vec for vec in vecs_b if vec.size == common_size],
-        )
-
-    @staticmethod
-    def _max_face_similarity(
-        vecs_a: list[np.ndarray], vecs_b: list[np.ndarray]
-    ) -> Optional[float]:
-        if not vecs_a or not vecs_b:
+    def _compute_date_span_seconds(session: Session) -> Optional[float]:
+        row = session.exec(
+            select(func.min(Picture.created_at), func.max(Picture.created_at))
+        ).first()
+        if not row:
             return None
-        a = np.stack(vecs_a)
-        b = np.stack(vecs_b)
-        if a.ndim == 1:
-            a = a.reshape(1, -1)
-        if b.ndim == 1:
-            b = b.reshape(1, -1)
-        if a.shape[1] != b.shape[1]:
+        min_date, max_date = row
+        if min_date is None or max_date is None:
             return None
-        a_norm = a / np.maximum(np.linalg.norm(a, axis=1, keepdims=True), 1e-8)
-        b_norm = b / np.maximum(np.linalg.norm(b, axis=1, keepdims=True), 1e-8)
-        sims = a_norm @ b_norm.T
-        sim = float(np.max(sims))
-        sim = float(np.clip(sim, -1.0, 1.0))
-        return 0.5 * (sim + 1.0)
+        span = max_date - min_date
+        return float(span.total_seconds())
 
-    def _embedding_likeness(
-        self,
-        emb_a: np.ndarray,
-        emb_b: np.ndarray,
-        face_features_a: list[bytes],
-        face_features_b: list[bytes],
-    ) -> Optional[float]:
-        image_sim = self._cosine_similarity(emb_a, emb_b)
-        if image_sim is None:
-            return None
-
-        vecs_a = self._decode_face_vectors(face_features_a)
-        vecs_b = self._decode_face_vectors(face_features_b)
-        if vecs_a or vecs_b:
-            if not vecs_a or not vecs_b:
-                return 0.0
-            vecs_a, vecs_b = self._filter_common_face_vectors(vecs_a, vecs_b)
-            if not vecs_a or not vecs_b:
-                return 0.0
-            if abs(len(vecs_a) - len(vecs_b)) > self.FACE_COUNT_MAX_DIFF:
-                return 0.0
-            face_sim = self._max_face_similarity(vecs_a, vecs_b)
-            if face_sim is None:
-                return 0.0
-            likeness = (self.IMAGE_WEIGHT * image_sim) + (self.FACE_WEIGHT * face_sim)
-            return float(np.clip(likeness, 0.0, 1.0))
-
-        return float(np.clip(image_sim, 0.0, 1.0))
-
-    def _color_histogram_likeness(self, img_a, img_b, bins=32):
-        if img_a is None or img_b is None:
+    @classmethod
+    def _phash_similarity(cls, hash_a: str, hash_b: str) -> float:
+        try:
+            int_a = int(hash_a, 16)
+            int_b = int(hash_b, 16)
+        except Exception:
             return 0.0
+        distance = (int_a ^ int_b).bit_count()
+        return 1.0 - (distance / float(cls.PHASH_BITS))
 
-        def get_hist(img):
-            chans = cv2.split(img)
-            hist = [
-                cv2.calcHist([c], [0], None, [bins], [0, 256]).flatten() for c in chans
-            ]
-            hist = np.concatenate(hist)
-            hist = hist / (np.sum(hist) + 1e-8)
-            return hist
+    @classmethod
+    def _passes_metadata_filter(
+        cls,
+        width_a: Optional[int],
+        height_a: Optional[int],
+        size_a: Optional[int],
+        width_b: Optional[int],
+        height_b: Optional[int],
+        size_b: Optional[int],
+    ) -> bool:
+        if (
+            isinstance(width_a, int)
+            and isinstance(height_a, int)
+            and isinstance(width_b, int)
+            and isinstance(height_b, int)
+            and width_a > 0
+            and height_a > 0
+            and width_b > 0
+            and height_b > 0
+        ):
+            width_ratio = abs(width_a - width_b) / max(width_a, width_b)
+            height_ratio = abs(height_a - height_b) / max(height_a, height_b)
+            if width_ratio > cls.MAX_DIM_RATIO_DIFF:
+                return False
+            if height_ratio > cls.MAX_DIM_RATIO_DIFF:
+                return False
+            aspect_a = width_a / float(height_a)
+            aspect_b = width_b / float(height_b)
+            aspect_ratio = abs(aspect_a - aspect_b) / max(aspect_a, aspect_b)
+            if aspect_ratio > cls.MAX_ASPECT_RATIO_DIFF:
+                return False
 
-        hist_a = (
-            img_a if hasattr(img_a, "ndim") and img_a.ndim == 1 else get_hist(img_a)
-        )
-        hist_b = (
-            img_b if hasattr(img_b, "ndim") and img_b.ndim == 1 else get_hist(img_b)
-        )
-        l1 = np.sum(np.abs(hist_a - hist_b))
-        likeness = 1.0 - (l1 / 2.0)
-        return float(np.clip(likeness, 0.0, 1.0))
+        if (
+            isinstance(size_a, int)
+            and isinstance(size_b, int)
+            and size_a > 0
+            and size_b > 0
+        ):
+            size_ratio = abs(size_a - size_b) / max(size_a, size_b)
+            if size_ratio > cls.MAX_SIZE_RATIO_DIFF:
+                return False
 
-    def _process_batches_for_color_histogram_likeness(self, pending_pairs, bins=32):
-        """
-        Batch process color histogram likeness for all pending pairs.
-        Returns (likeness_scores, processed_pairs, processed_total)
-        """
-        batches = [
-            pending_pairs[i * self.BATCH_SIZE : (i + 1) * self.BATCH_SIZE]
-            for i in range(
-                min(
-                    self.CHUNKS,
-                    (len(pending_pairs) + self.BATCH_SIZE - 1) // self.BATCH_SIZE,
-                )
-            )
-        ]
-
-        def process_batch(batch):
-            likeness_scores = []
-            queue_pairs = []
-            for item in batch:
-                pic_a_id, pic_b_id, pic_a, pic_b = item
-                # Assume PictureModel has .image_data or .get_image() returning np.ndarray (H,W,3)
-                try:
-                    img_a = (
-                        pic_a.get_image()
-                        if hasattr(pic_a, "get_image")
-                        else pic_a.image_data
-                    )
-                    img_b = (
-                        pic_b.get_image()
-                        if hasattr(pic_b, "get_image")
-                        else pic_b.image_data
-                    )
-                    if img_a is None or img_b is None:
-                        continue
-                    likeness = self._color_histogram_likeness(img_a, img_b, bins)
-                    likeness_scores.append(
-                        (pic_a_id, pic_b_id, float(likeness), "color_hist")
-                    )
-                    queue_pairs.append((pic_a_id, pic_b_id))
-                except Exception as e:
-                    logger.warning(
-                        f"Color histogram likeness failed for pair ({pic_a_id}, {pic_b_id}): {e}"
-                    )
-            return likeness_scores, queue_pairs
-
-        processed_total = 0
-        all_likeness_scores = []
-        all_processed_pairs = []
-        with ThreadPoolExecutor(max_workers=len(batches)) as executor:
-            futures = [
-                executor.submit(process_batch, batch) for batch in batches if batch
-            ]
-            for future in as_completed(futures):
-                batch_scores, processed_pairs = future.result()
-                all_likeness_scores.extend(batch_scores)
-                all_processed_pairs.extend(processed_pairs)
-                processed_total += len(batch_scores)
-        return all_likeness_scores, all_processed_pairs, processed_total
-
-    def _color_histogram_likeness_batch(self, img_a, imgs_b, bins=32):
-        """
-        Compute color histogram likeness between img_a and a list of imgs_b efficiently.
-        Returns a list of likeness scores.
-        """
-
-        def get_hist(img):
-            chans = cv2.split(img)
-            hist = [
-                cv2.calcHist([c], [0], None, [bins], [0, 256]).flatten() for c in chans
-            ]
-            hist = np.concatenate(hist)
-            hist = hist / (np.sum(hist) + 1e-8)
-            return hist
-
-        hist_a = get_hist(img_a)
-        hists_b = [get_hist(img) for img in imgs_b]
-        if not hists_b:
-            return []
-        hists_b = np.stack(hists_b, axis=0)
-        l1 = np.sum(np.abs(hists_b - hist_a), axis=1)
-        likeness = 1.0 - (l1 / 2.0)
-        return np.clip(likeness, 0.0, 1.0).tolist()
+        return True

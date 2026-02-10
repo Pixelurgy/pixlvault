@@ -324,6 +324,7 @@ def create_router(server) -> APIRouter:
 
     @router.get("/pictures/stacks")
     async def get_picture_stacks(
+        request: Request,
         threshold: float = 0.0,
         min_group_size: int = 2,
         set_id: int = Query(None),
@@ -539,11 +540,58 @@ def create_router(server) -> APIRouter:
         ordered_pics = [pics_by_id.get(pid) for pid in ordered_ids]
         ordered_pics = [pic for pic in ordered_pics if pic is not None]
 
-        response = []
+        smart_score_by_id = {}
+        if ordered_pics:
+            try:
+                penalized_tags = get_smart_score_penalized_tags_from_request(
+                    server, request
+                )
+                good_anchors, bad_anchors, candidates = fetch_smart_score_data(
+                    server,
+                    None,
+                    candidate_ids=ordered_ids,
+                    penalized_tags=penalized_tags,
+                )
+                if candidates:
+                    good_list, bad_list, cand_list, cand_ids = (
+                        prepare_smart_score_inputs(
+                            good_anchors, bad_anchors, candidates
+                        )
+                    )
+                    if cand_list:
+                        scores = PictureUtils.calculate_smart_score_batch_numpy(
+                            cand_list, good_list, bad_list
+                        )
+                        smart_score_by_id = {
+                            int(pid): float(score)
+                            for pid, score in zip(cand_ids, scores)
+                            if score is not None
+                        }
+            except Exception as exc:
+                logger.warning(
+                    "[stacks] Failed to compute smart scores: %s",
+                    exc,
+                )
+
+        stacks_by_index = defaultdict(list)
         for pic in ordered_pics:
             pic_dict = safe_model_dict(pic)
             pic_dict["stack_index"] = stack_index_map.get(pic.id)
-            response.append(pic_dict)
+            if pic.id in smart_score_by_id:
+                pic_dict["smartScore"] = smart_score_by_id[pic.id]
+            stacks_by_index[pic_dict["stack_index"]].append(pic_dict)
+
+        response = []
+        for stack_idx in sorted(stacks_by_index.keys()):
+            stack_items = stacks_by_index[stack_idx]
+            stack_items.sort(
+                key=lambda item: (
+                    -(item.get("score") or 0),
+                    -(item.get("smartScore") or 0),
+                    int(item.get("id") or 0),
+                )
+            )
+            response.extend(stack_items)
 
         return response
 
@@ -683,6 +731,26 @@ def create_router(server) -> APIRouter:
                 include_deleted=True,
             )
         )
+        character_name_map = {}
+        character_ids = set()
+        for pic in pics:
+            for face in getattr(pic, "faces", []):
+                if getattr(face, "character_id", None) is not None:
+                    character_ids.add(face.character_id)
+        if character_ids:
+
+            def fetch_character_names(session: Session):
+                rows = session.exec(
+                    select(Character.id, Character.name).where(
+                        Character.id.in_(character_ids)
+                    )
+                ).all()
+                return rows
+
+            rows = server.vault.db.run_task(
+                fetch_character_names, priority=DBPriority.IMMEDIATE
+            )
+            character_name_map = {char_id: name for char_id, name in rows or []}
         results = {}
         for pic in pics:
             try:
@@ -700,25 +768,14 @@ def create_router(server) -> APIRouter:
                         bbox = None
                     if bbox and isinstance(bbox, (list, tuple)) and len(bbox) == 4:
                         raw_face_bboxes.append(list(bbox))
-                        character = (
-                            server.vault.db.run_task(
-                                lambda session: Character.find(
-                                    session,
-                                    id=face.character_id,
-                                    select_fields=["name"],
-                                )
-                            )
-                            if face.character_id
-                            else None
-                        )
                         face_entries.append(
                             {
                                 "id": face.id,
                                 "bbox": list(bbox),
                                 "character_id": face.character_id,
-                                "character_name": getattr(character[0], "name", None)
-                                if character
-                                else None,
+                                "character_name": character_name_map.get(
+                                    face.character_id
+                                ),
                                 "frame_index": getattr(face, "frame_index", None),
                             }
                         )
@@ -1596,7 +1653,20 @@ def create_router(server) -> APIRouter:
         }
 
         def run_import_task(server):
+            running_workers = {
+                worker_type
+                for worker_type in WorkerType.all()
+                if server.vault.is_worker_running(worker_type)
+            }
+            workers_resumed = False
             try:
+                if running_workers:
+                    logger.info(
+                        "Pausing %d workers during import.",
+                        len(running_workers),
+                    )
+                    server.vault.stop_workers(running_workers)
+
                 shas, existing_map, new_pictures = _create_picture_imports(
                     server, uploaded_files, dest_folder
                 )
@@ -1657,6 +1727,9 @@ def create_router(server) -> APIRouter:
                 server.import_tasks[task_id]["processed"] = len(uploaded_files)
                 if new_pictures:
                     server.import_tasks[task_id]["status"] = "processing_faces"
+                    if running_workers and not workers_resumed:
+                        server.vault.start_workers(running_workers)
+                        workers_resumed = True
                     face_futures = [
                         server.vault.get_worker_future(
                             WorkerType.FACE, Picture, pic.id, "faces"
@@ -1675,11 +1748,17 @@ def create_router(server) -> APIRouter:
                     server.import_tasks[task_id]["status"] = "completed"
                 else:
                     server.import_tasks[task_id]["status"] = "completed"
+                    if running_workers and not workers_resumed:
+                        server.vault.start_workers(running_workers)
+                        workers_resumed = True
                     server.vault.notify(EventType.CHANGED_PICTURES)
             except Exception as exc:
                 server.import_tasks[task_id]["status"] = "failed"
                 server.import_tasks[task_id]["error"] = str(exc)
                 logger.error(f"Import task {task_id} failed: {exc}")
+            finally:
+                if running_workers and not workers_resumed:
+                    server.vault.start_workers(running_workers)
 
         background_tasks.add_task(run_import_task, server)
         return {"task_id": task_id}
@@ -2304,6 +2383,7 @@ def create_router(server) -> APIRouter:
                 updated = True
 
         if updated:
+            picture_id = pic.id
 
             def apply_picture_updates(session: Session, picture_id: int, fields: dict):
                 pic_db = session.get(Picture, picture_id)
@@ -2318,13 +2398,13 @@ def create_router(server) -> APIRouter:
             try:
                 pic = server.vault.db.run_task(
                     apply_picture_updates,
-                    pic.id,
+                    picture_id,
                     updated_fields,
                     priority=DBPriority.IMMEDIATE,
                 )
             except KeyError:
                 raise HTTPException(status_code=404, detail="Picture not found")
-            server.vault.notify(EventType.CHANGED_PICTURES)
+            server.vault.notify(EventType.CHANGED_PICTURES, [picture_id])
 
         return {"status": "success", "picture": safe_model_dict(pic)}
 
@@ -2448,8 +2528,12 @@ def create_router(server) -> APIRouter:
         descending: bool = Query(True),
         offset: int = Query(0),
         limit: int = Query(sys.maxsize),
+        fields: str = Query(None),
     ):
-        metadata_fields = Picture.metadata_fields()
+        if fields == "grid":
+            metadata_fields = list(Picture.grid_fields())
+        else:
+            metadata_fields = Picture.metadata_fields()
         return _select_pictures_for_listing(
             server=server,
             request=request,

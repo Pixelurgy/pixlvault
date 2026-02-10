@@ -64,7 +64,6 @@ def serialize_user_config(user) -> dict:
 
     default_user = User()
     source = user or default_user
-    data = safe_model_dict(source)
 
     allowed_fields = {
         "description",
@@ -78,14 +77,18 @@ def serialize_user_config(user) -> dict:
         "show_resolution",
         "show_problem_icon",
         "similarity_character",
+        "stack_strictness",
         "auto_scrapheap_smart_score_threshold",
         "auto_scrapheap_lookback_minutes",
     }
 
     config = {
-        key: (value if value is not None else getattr(default_user, key))
+        key: (
+            getattr(source, key)
+            if getattr(source, key) is not None
+            else getattr(default_user, key)
+        )
         for key in allowed_fields
-        for value in (data.get(key),)
     }
 
     config["smart_score_penalized_tags"] = normalize_smart_score_penalized_tags(
@@ -112,6 +115,7 @@ def apply_user_config_patch(user, patch_data) -> bool:
         "show_resolution",
         "show_problem_icon",
         "similarity_character",
+        "stack_strictness",
         "smart_score_penalized_tags",
         "auto_scrapheap_smart_score_threshold",
         "auto_scrapheap_lookback_minutes",
@@ -167,6 +171,15 @@ def apply_user_config_patch(user, patch_data) -> bool:
                 new_value = int(value)
             if user.auto_scrapheap_lookback_minutes != new_value:
                 user.auto_scrapheap_lookback_minutes = new_value
+                updated = True
+            continue
+        if key == "stack_strictness":
+            if value in ("", None, "null"):
+                new_value = None
+            else:
+                new_value = float(value)
+            if user.stack_strictness != new_value:
+                user.stack_strictness = new_value
                 updated = True
             continue
         if key == "columns":

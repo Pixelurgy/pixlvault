@@ -348,7 +348,9 @@
               v-for="info in getThumbnailInfoItems(img)"
               :key="`${info.key}-${img.id}`"
               class="thumbnail-info"
-              :ref="(el) => setThumbnailInfoRef(img.id, info.key, info.text, el)"
+              :ref="
+                (el) => setThumbnailInfoRef(img.id, info.key, info.text, el)
+              "
               :title="getThumbnailInfoTitle(img.id, info.key)"
               @mouseenter="handleThumbnailInfoMouseEnter(img.id, info.key)"
             >
@@ -487,6 +489,10 @@ const textMeasureContext = textMeasureCanvas
   : null;
 const thumbnailLoadedMap = reactive({});
 const thumbnailReadyMap = reactive({});
+const THUMBNAIL_RETRY_DELAY_MS = 10000;
+const THUMBNAIL_RETRY_LIMIT = 1;
+const thumbnailRetryTimers = new Map();
+const thumbnailRetryCounts = reactive({});
 const PREFETCHED_FULL_IMAGE_LIMIT = 12;
 const fullImagePrefetchControllers = new Map();
 const prefetchedFullImageIds = new Set();
@@ -623,6 +629,16 @@ function refreshAllThumbnailInfoDisplays() {
 onMounted(() => {
   window.addEventListener("resize", triggerFaceOverlayRedraw);
   fetchAllPicturesCount();
+  if (!hasLoadedOnce.value && !imagesLoading.value) {
+    if (
+      !Array.isArray(allGridImages.value) ||
+      allGridImages.value.length === 0
+    ) {
+      fetchAllGridImages().then(() => {
+        updateVisibleThumbnails();
+      });
+    }
+  }
   nextTick(() => {
     updateRowHeightFromGrid();
     if (typeof ResizeObserver !== "undefined" && gridContainer.value) {
@@ -712,6 +728,33 @@ function isImageRecentlyAdded(id) {
 
 function onThumbnailLoad(id) {
   thumbnailLoadedMap[id] = (thumbnailLoadedMap[id] || 0) + 1;
+  clearThumbnailRetry(id);
+}
+
+function clearThumbnailRetry(id) {
+  if (!id) return;
+  const timer = thumbnailRetryTimers.get(id);
+  if (timer) {
+    clearTimeout(timer);
+  }
+  thumbnailRetryTimers.delete(id);
+}
+
+function scheduleThumbnailRetry(id, index, requestEpoch) {
+  if (!id || index == null) return;
+  if ((thumbnailRetryCounts[id] || 0) >= THUMBNAIL_RETRY_LIMIT) return;
+  if (thumbnailRetryTimers.has(id)) return;
+  const timer = setTimeout(() => {
+    thumbnailRetryTimers.delete(id);
+    if (requestEpoch !== thumbnailRequestEpoch.value) return;
+    const current = allGridImages.value[index];
+    if (!current || current.id !== id) return;
+    if (current.thumbnail) return;
+    thumbnailRetryCounts[id] = (thumbnailRetryCounts[id] || 0) + 1;
+    invalidateThumbnailIndex(index);
+    fetchThumbnailsBatch(index, index + 1);
+  }, THUMBNAIL_RETRY_DELAY_MS);
+  thumbnailRetryTimers.set(id, timer);
 }
 
 function setThumbnailRef(id, el) {
@@ -1663,7 +1706,8 @@ async function refreshGridImage(imageId) {
   );
   if (idx === -1) return;
   const latestInfo = await fetchImageInfo(imageId, {
-    smartScore: isSmartScoreSortActive(),
+    smartScore:
+      isSmartScoreSortActive() || props.selectedSort === STACKS_SORT_KEY,
   });
   if (latestInfo && !Array.isArray(latestInfo)) {
     const current = allGridImages.value[idx] || {};
@@ -1673,8 +1717,55 @@ async function refreshGridImage(imageId) {
       idx: current.idx ?? idx,
     };
   }
+  if (props.selectedSort === STACKS_SORT_KEY) {
+    const stackIndex = getStackIndexFromItem(allGridImages.value[idx]);
+    if (typeof stackIndex === "number") {
+      reorderStackByScore(stackIndex);
+    }
+  }
   invalidateThumbnailIndex(idx);
   fetchThumbnailsBatch(idx, idx + 1);
+}
+
+function getStackIndexFromItem(item) {
+  if (!item) return null;
+  if (typeof item.stackIndex === "number") return item.stackIndex;
+  if (typeof item.stack_index === "number") return item.stack_index;
+  return null;
+}
+
+function reorderStackByScore(stackIndex) {
+  const items = allGridImages.value.slice();
+  const stackItems = items.filter(
+    (item) => getStackIndexFromItem(item) === stackIndex,
+  );
+  if (stackItems.length <= 1) return;
+  stackItems.sort((a, b) => {
+    const scoreA = a?.score ?? 0;
+    const scoreB = b?.score ?? 0;
+    if (scoreA !== scoreB) return scoreB - scoreA;
+    const smartA = a?.smartScore ?? 0;
+    const smartB = b?.smartScore ?? 0;
+    if (smartA !== smartB) return smartB - smartA;
+    return (a?.id ?? 0) - (b?.id ?? 0);
+  });
+  const result = [];
+  let inserted = false;
+  for (const item of items) {
+    const idx = getStackIndexFromItem(item);
+    if (idx === stackIndex) {
+      if (inserted) continue;
+      result.push(...stackItems);
+      inserted = true;
+      continue;
+    }
+    result.push(item);
+  }
+  for (let i = 0; i < result.length; i += 1) {
+    result[i].idx = i;
+  }
+  allGridImages.value = result;
+  invalidateVisibleThumbnailRanges();
 }
 
 function addImageToGrid(imageData) {
@@ -2306,6 +2397,7 @@ function buildPictureIdsQueryParams() {
       );
     }
   }
+  params.append("fields", "grid");
   // Add format filter for backend media type filtering
   if (props.mediaTypeFilter === "images") {
     for (const ext of PIL_IMAGE_EXTENSIONS) {
@@ -2574,12 +2666,13 @@ async function fetchAllGridImages() {
     const windowCount = Math.max(cols, divisibleViewWindow.value || cols);
     visibleStart.value = 0;
     visibleEnd.value = Math.min(newImages.length, windowCount);
-    const prefetchStart = Math.max(0, visibleStart.value - renderBuffer.value);
-    const prefetchEnd = Math.min(
-      newImages.length,
-      visibleEnd.value + renderBuffer.value,
-    );
-    fetchThumbnailsBatch(prefetchStart, prefetchEnd);
+    if (initialRender.value) {
+      const prefetchEnd = Math.min(
+        newImages.length,
+        visibleEnd.value + divisibleViewWindow.value,
+      );
+      fetchThumbnailsBatch(visibleStart.value, prefetchEnd);
+    }
     const rangeEnd = performance.now();
     const fetchEnd = performance.now();
     console.log("[ImageGrid.vue] fetchAllGridImages total timing", {
@@ -2608,7 +2701,9 @@ async function fetchAllGridImages() {
       gridReady.value = true;
     }
   }
-  updateVisibleThumbnails();
+  if (!initialRender.value) {
+    updateVisibleThumbnails();
+  }
   if (pendingScrollTop.value !== null && scrollWrapper.value) {
     const targetTop = pendingScrollTop.value;
     pendingScrollTop.value = null;
@@ -2710,6 +2805,13 @@ function resetThumbnailState() {
   thumbnailRequestEpoch.value += 1;
   for (const key of Object.keys(thumbnailLoadedMap)) {
     delete thumbnailLoadedMap[key];
+  }
+  for (const timer of thumbnailRetryTimers.values()) {
+    clearTimeout(timer);
+  }
+  thumbnailRetryTimers.clear();
+  for (const key of Object.keys(thumbnailRetryCounts)) {
+    delete thumbnailRetryCounts[key];
   }
 }
 
@@ -3035,6 +3137,11 @@ async function fetchThumbnailsBatch(start, end) {
       const img = gridImages[i];
       img.idx = start + i; // Redundant but explicit for safety
       allGridImages.value[start + i] = img;
+      if (img.thumbnail) {
+        clearThumbnailRetry(img.id);
+      } else {
+        scheduleThumbnailRetry(img.id, start + i, requestEpoch);
+      }
     }
     loadedRanges.value.push([start, end]);
     if (overlayNeedsRedraw) {
@@ -3417,7 +3524,7 @@ watch(
       const newVisibleEnd = Math.ceil(lastVisibleRow) * cols;
       visibleStart.value = newVisibleStart;
       visibleEnd.value = newVisibleEnd;
-      updateVisibleThumbnails();
+      updateVisibleThumbnails(); // test
     });
   },
 );
@@ -3757,6 +3864,7 @@ function handleEmptyStateReset() {
   color: rgb(var(--v-theme-on-surface));
   text-overflow: ellipsis;
   overflow-y: hidden;
+  overflow-x: hidden;
   white-space: nowrap;
 }
 

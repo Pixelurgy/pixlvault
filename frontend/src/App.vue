@@ -113,6 +113,8 @@ let columnsMenuCloseTimeout = null;
 const updatesSocket = ref(null);
 let updatesReconnectTimer = null;
 const configLoading = ref(false);
+const configApplying = ref(false);
+const configSnapshot = ref({});
 
 function refreshGridVersion() {
   gridVersion.value++;
@@ -172,6 +174,14 @@ function connectUpdatesSocket() {
     }
     if (payload?.type === "pictures_changed") {
       refreshSidebar({ flashCounts: true });
+      const pictureIds = Array.isArray(payload.picture_ids)
+        ? payload.picture_ids
+        : [];
+      if (pictureIds.length > 0 && selectedSort.value === "PICTURE_STACKS") {
+        const nextKey = (wsTagUpdate.value?.key || 0) + 1;
+        wsTagUpdate.value = { key: nextKey, pictureIds };
+        return;
+      }
       if (shouldRefreshForPictureChange()) {
         wsUpdateKey.value = Date.now();
         refreshGridVersion();
@@ -260,6 +270,7 @@ const config = reactive({
   show_format: true,
   show_resolution: true,
   show_problem_icon: true,
+  stack_strictness: 0.92,
 });
 
 const loading = ref(false);
@@ -448,6 +459,7 @@ function handleColumnsEnd() {
 async function fetchConfig() {
   if (configLoading.value) return;
   configLoading.value = true;
+  configApplying.value = true;
   try {
     const res = await apiClient.get("/users/me/config");
     console.log("Fetched config:", res);
@@ -478,6 +490,9 @@ async function fetchConfig() {
     if (typeof res.data.columns === "number") {
       columns.value = res.data.columns;
     }
+    if (res.data.stack_strictness != null) {
+      stackThreshold.value = String(res.data.stack_strictness);
+    }
     config.sort_order = sortValue || selectedSort.value;
     config.descending = selectedDescending.value;
     config.columns = columns.value;
@@ -505,11 +520,31 @@ async function fetchConfig() {
       typeof res.data.show_problem_icon === "boolean"
         ? res.data.show_problem_icon
         : showProblemIcon.value;
+    config.stack_strictness =
+      res.data.stack_strictness != null
+        ? res.data.stack_strictness
+        : config.stack_strictness;
     const similarityValue =
       res.data.similarity_character ?? res.data.selected_similarity_character;
     selectedSimilarityCharacter.value =
       similarityValue ?? selectedSimilarityCharacter.value ?? null;
     config.selectedSimilarityCharacter = selectedSimilarityCharacter.value;
+    configSnapshot.value = {
+      sort: selectedSort.value || "",
+      descending: selectedDescending.value,
+      columns: typeof columns.value === "number" ? columns.value : null,
+      show_stars: showStars.value,
+      show_face_bboxes: showFaceBboxes.value,
+      show_hand_bboxes: showHandBboxes.value,
+      show_format: showFormat.value,
+      show_resolution: showResolution.value,
+      show_problem_icon: showProblemIcon.value,
+      similarity_character: selectedSimilarityCharacter.value,
+      stack_strictness:
+        res.data.stack_strictness != null
+          ? Number(res.data.stack_strictness)
+          : null,
+    };
     console.debug("[Config] Overlay settings applied", {
       showFaceBboxes: showFaceBboxes.value,
       showHandBboxes: showHandBboxes.value,
@@ -520,13 +555,15 @@ async function fetchConfig() {
   } catch (e) {
     console.error("Failed to fetch /users/me/config:", e);
   } finally {
+    configApplying.value = false;
     configLoading.value = false;
     configLoaded.value = true;
   }
 }
 
 async function patchConfigUIOptions() {
-  if (!configLoaded.value || configLoading.value) return;
+  if (!configLoaded.value || configLoading.value || configApplying.value)
+    return;
   // Only include fields the backend expects and that are not undefined/null/empty
   const patch = {};
   if (selectedSort.value) patch.sort = selectedSort.value;
@@ -551,13 +588,28 @@ async function patchConfigUIOptions() {
   if (selectedSimilarityCharacter.value != null) {
     patch.similarity_character = selectedSimilarityCharacter.value;
   }
+  if (stackThreshold.value != null && stackThreshold.value !== "") {
+    const parsed = parseFloat(String(stackThreshold.value));
+    if (Number.isFinite(parsed)) {
+      patch.stack_strictness = parsed;
+    }
+  }
 
-  console.log("PATCH /users/me/config payload:", patch);
+  const snapshot = configSnapshot.value || {};
+  const changed = Object.fromEntries(
+    Object.entries(patch).filter(([key, value]) => snapshot[key] !== value),
+  );
+  if (Object.keys(changed).length === 0) {
+    return;
+  }
+
+  console.log("PATCH /users/me/config payload:", changed);
   try {
-    const response = await apiClient.patch("/users/me/config", patch);
+    const response = await apiClient.patch("/users/me/config", changed);
 
     const updatedConfig = await response.data;
     console.log("PATCH /users/me/config response:", updatedConfig);
+    configSnapshot.value = { ...snapshot, ...changed };
   } catch (e) {
     console.error("Error patching /users/me/config:", e);
   }
@@ -774,6 +826,11 @@ watch(
 );
 
 watch(selectedSimilarityCharacter, () => {
+  patchConfigUIOptions();
+});
+
+watch(stackThreshold, () => {
+  if (!configLoaded.value) return;
   patchConfigUIOptions();
 });
 
