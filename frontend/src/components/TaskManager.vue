@@ -127,8 +127,8 @@
                   viewBox="0 0 10 10"
                   refX="7"
                   refY="5"
-                  markerWidth="3"
-                  markerHeight="3"
+                  markerWidth="4"
+                  markerHeight="4"
                   orient="auto-start-reverse"
                 >
                   <path
@@ -142,9 +142,11 @@
                 :key="edge.id"
                 :points="edge.points"
                 stroke="rgba(242, 229, 218, 0.4)"
-                stroke-width="0.4"
+                stroke-width="2"
                 marker-end="url(#arrow)"
                 fill="none"
+                vector-effect="non-scaling-stroke"
+                shape-rendering="crispEdges"
               />
             </svg>
             <div
@@ -222,28 +224,28 @@ const graphLayout = [
   { id: "watch", workerKey: "WatchFolderWorker", x: 2, y: 39 },
   { id: "features", workerKey: "FeatureExtractionWorker", x: 2, y: 67 },
   { id: "image_embeddings", workerKey: "ImageEmbeddingWorker", x: 36, y: 14 },
-  { id: "descriptions", workerKey: "DescriptionWorker", x: 36, y: 45 },
-  { id: "tags", workerKey: "TagWorker", x: 36, y: 67 },
+  { id: "descriptions", workerKey: "DescriptionWorker", x: 36, y: 39 },
+  { id: "tags", workerKey: "TagWorker", x: 36, y: 61 },
   { id: "likeness_params", workerKey: "LikenessParameterWorker", x: 70, y: 1 },
   { id: "likeness", workerKey: "LikenessWorker", x: 70, y: 25 },
-  { id: "text_embeddings", workerKey: "EmbeddingWorker", x: 70, y: 59 },
-  { id: "scrapheap", workerKey: "SmartScoreScrapheapWorker", x: 70, y: 79 },
+  { id: "text_embeddings", workerKey: "EmbeddingWorker", x: 70, y: 48 },
+  { id: "scrapheap", workerKey: "SmartScoreScrapheapWorker", x: 70, y: 72 },
 ];
 
 const graphEdgesConfig = [
-  { from: "watch", to: "features", preferDirect: true },
-  { from: "watch", to: "quality", preferDirect: true },
-  { from: "watch", to: "image_embeddings" },
-  { from: "watch", to: "descriptions" },
-  { from: "features", to: "tags" },
-  { from: "quality", to: "likeness", route: "lane", laneX: 28 },
-  { from: "quality", to: "likeness_params", route: "right-first" },
-  { from: "quality", to: "scrapheap", route: "lane", laneX: 32 },
+  { from: "watch", to: "features", route: "direct" },
+  { from: "watch", to: "quality", route: "direct" },
+  { from: "watch", to: "image_embeddings", route: "bus" },
+  { from: "watch", to: "descriptions", route: "bus" },
+  { from: "features", to: "tags", route: "bus" },
+  { from: "quality", to: "likeness", route: "bus" },
+  { from: "quality", to: "likeness_params", route: "lane", laneX: 46 },
+  { from: "quality", to: "scrapheap", route: "bus" },
   { from: "descriptions", to: "text_embeddings" },
   { from: "tags", to: "scrapheap" },
-  { from: "text_embeddings", to: "likeness", preferDirect: true },
+  { from: "text_embeddings", to: "likeness", route: "direct" },
   { from: "image_embeddings", to: "likeness" },
-  { from: "likeness_params", to: "likeness", preferDirect: true },
+  { from: "likeness_params", to: "likeness", route: "direct" },
 ];
 
 const labelMap = {
@@ -334,7 +336,7 @@ const graphEdges = computed(() => {
     h: GRAPH_NODE_HEIGHT,
   }));
 
-  const pointKey = (point) => `${point[0]},${point[1]}`;
+  const pointKey = (point) => `${Math.round(point[0])},${Math.round(point[1])}`;
 
   const segmentIntersectsRect = (a, b, rect) => {
     const [x1, y1] = a;
@@ -376,14 +378,7 @@ const graphEdges = computed(() => {
   };
 
   const routeEdge = (edge) => {
-    const {
-      from: fromId,
-      to: toId,
-      preferDirect,
-      avoidReverse,
-      route,
-      laneX,
-    } = edge;
+    const { from: fromId, to: toId, route, laneX } = edge;
     const from = nodeMap.get(fromId);
     const to = nodeMap.get(toId);
     if (!from || !to) return null;
@@ -429,9 +424,6 @@ const graphEdges = computed(() => {
       : dy >= 0
         ? GRAPH_NODE_HEIGHT * 0.6
         : -GRAPH_NODE_HEIGHT * 0.6;
-    const offsetWide = offset * 1.6;
-    const preferPositiveX = dx >= 0;
-    const preferPositiveY = dy >= 0;
 
     const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
     const edgeMin = 2;
@@ -444,31 +436,24 @@ const graphEdges = computed(() => {
       const clampedY = clamp(y, edgeMin, edgeMax);
       return [start, [startX, clampedY], [endX, clampedY], end];
     };
-    const buildLanePathX = (laneX, laneY) => {
-      const clampedX = clamp(laneX, edgeMin, edgeMax);
-      const clampedY = clamp(laneY, edgeMin, edgeMax);
-      return [
-        start,
-        [clampedX, startY],
-        [clampedX, clampedY],
-        [endX, clampedY],
-        end,
-      ];
-    };
-    const buildLanePathY = (laneX, laneY) => {
-      const clampedX = clamp(laneX, edgeMin, edgeMax);
-      const clampedY = clamp(laneY, edgeMin, edgeMax);
-      return [
-        start,
-        [startX, clampedY],
-        [clampedX, clampedY],
-        [clampedX, endY],
-        end,
-      ];
-    };
-
     const useX = horizontal || Math.abs(startX - endX) < 0.01;
     const useY = !horizontal || Math.abs(startY - endY) < 0.01;
+
+    const leftColumnX = nodeMap.get("watch")?.x ?? from.x;
+    const middleColumnX = nodeMap.get("image_embeddings")?.x ?? startX;
+    const busX = Math.round(
+      (leftColumnX + GRAPH_NODE_WIDTH + middleColumnX) / 2,
+    );
+
+    if (route === "direct") {
+      return [start, end];
+    }
+
+    if (route === "bus") {
+      const busStart = [from.x + GRAPH_NODE_WIDTH, fromCenterY];
+      const busEnd = [to.x, toCenterY];
+      return [busStart, [busX, busStart[1]], [busX, busEnd[1]], busEnd];
+    }
 
     if (route === "lane") {
       const lane = clamp(laneX ?? (startX + endX) / 2, edgeMin, edgeMax);
@@ -482,74 +467,19 @@ const graphEdges = computed(() => {
       ];
     }
 
-    if (route === "right-first") {
-      const lane = clamp(startX + GRAPH_NODE_WIDTH * 0.9, edgeMin, edgeMax);
-      const forcedStart = [from.x + GRAPH_NODE_WIDTH, fromCenterY];
-      const forcedEnd = [to.x, toCenterY];
-      return [
-        forcedStart,
-        [lane, forcedStart[1]],
-        [lane, forcedEnd[1]],
-        forcedEnd,
-      ];
+    const primary = useX ? buildElbowX(midX) : buildElbowY(midY);
+    if (segmentsClear(primary)) {
+      return primary;
     }
 
-    if (preferDirect && segmentsClear([start, end])) {
-      return [start, end];
+    const alternate = useX
+      ? buildElbowX(startX + offset)
+      : buildElbowY(startY + offset);
+    if (segmentsClear(alternate)) {
+      return alternate;
     }
 
-    const candidates = [];
-    if (useX) {
-      candidates.push(buildElbowX(midX));
-      candidates.push(buildElbowX(startX + offset));
-      candidates.push(buildElbowX(startX + offsetWide));
-      if (!avoidReverse) {
-        candidates.push(buildElbowX(startX - offset));
-        candidates.push(buildElbowX(startX - offsetWide));
-      }
-      if (!avoidReverse) {
-        candidates.push(buildElbowX(edgeMin));
-        candidates.push(buildElbowX(edgeMax));
-      } else {
-        candidates.push(buildElbowX(preferPositiveX ? edgeMax : edgeMin));
-      }
-    }
-    if (useY) {
-      candidates.push(buildElbowY(midY));
-      candidates.push(buildElbowY(startY + offset));
-      candidates.push(buildElbowY(startY + offsetWide));
-      if (!avoidReverse) {
-        candidates.push(buildElbowY(startY - offset));
-        candidates.push(buildElbowY(startY - offsetWide));
-      }
-      if (!avoidReverse) {
-        candidates.push(buildElbowY(edgeMin));
-        candidates.push(buildElbowY(edgeMax));
-      } else {
-        candidates.push(buildElbowY(preferPositiveY ? edgeMax : edgeMin));
-      }
-    }
-
-    const laneXs = avoidReverse
-      ? [preferPositiveX ? edgeMax : edgeMin]
-      : [edgeMin, edgeMax];
-    const laneYs = avoidReverse
-      ? [preferPositiveY ? edgeMax : edgeMin]
-      : [edgeMin, edgeMax];
-    for (const laneX of laneXs) {
-      for (const laneY of laneYs) {
-        candidates.push(buildLanePathX(laneX, laneY));
-        candidates.push(buildLanePathY(laneX, laneY));
-      }
-    }
-
-    for (const candidate of candidates) {
-      if (segmentsClear(candidate)) {
-        return candidate;
-      }
-    }
-
-    return [start, end];
+    return primary;
   };
 
   return graphEdgesConfig
@@ -803,6 +733,20 @@ onBeforeUnmount(() => {
 
 .task-manager-tab-window {
   margin-top: 12px;
+  height: 50vh;
+  min-height: 500px;
+}
+
+.task-manager-tab-window :deep(.v-window__container) {
+  height: 100%;
+}
+
+.task-manager-tab-window :deep(.v-window-item) {
+  height: 100%;
+}
+
+.task-manager-tab-window :deep(.v-window-item__content) {
+  height: 100%;
 }
 
 .task-manager-grid {
@@ -816,10 +760,10 @@ onBeforeUnmount(() => {
   background: rgba(0, 0, 0, 0.15);
   border: 1px solid rgba(var(--v-theme-border), 0.4);
   border-radius: 12px;
-  padding: 12px;
+  padding: 11px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .task-manager-panel--combined {
@@ -830,7 +774,7 @@ onBeforeUnmount(() => {
 .task-manager-graph {
   position: relative;
   width: 100%;
-  height: 520px;
+  height: 100%;
   border-radius: 14px;
   background: rgba(0, 0, 0, 0.12);
   border: 1px solid rgba(var(--v-theme-border), 0.4);
@@ -914,7 +858,7 @@ onBeforeUnmount(() => {
 
 .task-manager-canvas-wrap {
   width: 100%;
-  height: 70px;
+  height: 60px;
   background: rgba(0, 0, 0, 0.15);
   border-radius: 8px;
   overflow: hidden;
