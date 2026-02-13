@@ -3105,7 +3105,7 @@ function downloadComfyWorkflow(workflow) {
 .image-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.92);
+  background: rgba(var(--v-theme-scrim), 0.92);
   z-index: 1000;
 }
 
@@ -3149,7 +3149,7 @@ function downloadComfyWorkflow(workflow) {
 .overlay-close {
   border: none;
   background: rgba(var(--v-theme-primary), 0.7);
-  color: #fff;
+  color: rgb(var(--v-theme-on-primary));
   padding: 6px 14px;
   border-radius: 4px;
   display: flex;
@@ -3183,7 +3183,7 @@ function downloadComfyWorkflow(workflow) {
 .overlay-desc-teaser {
   border: none;
   background: transparent;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(var(--v-theme-on-dark-surface), 0.7);
   text-align: left;
   font-size: 0.9rem;
   white-space: nowrap;
@@ -3328,8 +3328,8 @@ function downloadComfyWorkflow(workflow) {
   height: auto;
   object-fit: contain;
   border-radius: 12px;
-  background: #111;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  background: rgb(var(--v-theme-dark-surface));
+  box-shadow: 0 12px 30px rgba(var(--v-theme-shadow), 0.45);
   position: relative;
   z-index: 1;
 }
@@ -3341,9 +3341,9 @@ function downloadComfyWorkflow(workflow) {
   width: 44px;
   height: 44px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.35);
-  color: #fff;
+  border: 1px solid rgba(var(--v-theme-on-dark-surface), 0.2);
+  background: rgba(var(--v-theme-shadow), 0.35);
+  color: rgb(var(--v-theme-on-dark-surface));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3371,8 +3371,8 @@ function downloadComfyWorkflow(workflow) {
   right: 16px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  background: rgba(var(--v-theme-shadow), 0.55);
+  color: rgb(var(--v-theme-on-dark-surface));
   font-size: 0.75rem;
   transition: opacity 0.2s ease;
   z-index: 4;
@@ -3392,8 +3392,8 @@ function downloadComfyWorkflow(workflow) {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  background: rgba(var(--v-theme-shadow), 0.55);
+  color: rgb(var(--v-theme-on-dark-surface));
   border-radius: 999px;
   font-size: 0.85rem;
   z-index: 4;
@@ -3406,7 +3406,7 @@ function downloadComfyWorkflow(workflow) {
   bottom: 0;
   width: var(--filmstrip-rail-width, var(--rail-open-width));
   background: rgba(var(--v-theme-dark-surface), 0.9);
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid rgba(var(--v-theme-on-dark-surface), 0.08);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3450,8 +3450,8 @@ function downloadComfyWorkflow(workflow) {
 }
 
 .filmstrip-thumb.active {
-  border-color: rgba(255, 183, 77, 0.9);
-  box-shadow: 0 0 0 2px rgba(255, 183, 77, 0.35);
+  border-color: rgba(var(--v-theme-accent), 0.9);
+  box-shadow: 0 0 0 2px rgba(var(--v-theme-accent), 0.35);
 }
 
 .filmstrip-thumb img {
@@ -3467,8 +3467,8 @@ function downloadComfyWorkflow(workflow) {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.85);
+  background: rgba(var(--v-theme-on-dark-surface), 0.08);
+  color: rgba(var(--v-theme-on-dark-surface), 0.85);
 }
 
 .overlay-sidebar {
@@ -3517,7 +3517,7 @@ function downloadComfyWorkflow(workflow) {
   justify-content: space-between;
   font-weight: 600;
   margin-bottom: 8px;
-  color: #fff;
+  color: rgb(var(--v-theme-on-dark-surface));
 }
 
 .section-meta-group {
@@ -3529,7 +3529,7 @@ function downloadComfyWorkflow(workflow) {
 .section-meta-btn {
   border: none;
   background: transparent;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(var(--v-theme-on-dark-surface), 0.7);
   padding: 2px;
   display: inline-flex;
   align-items: center;
@@ -3551,16 +3551,16 @@ function downloadComfyWorkflow(workflow) {
 
 .section-meta {
   font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(var(--v-theme-on-dark-surface), 0.6);
 }
 
 .description-editor textarea {
   width: 100%;
   min-height: 120px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.35);
-  color: #fff;
+  border: 1px solid rgba(var(--v-theme-on-dark-surface), 0.2);
+  background: rgba(var(--v-theme-shadow), 0.35);
+  color: rgb(var(--v-theme-on-dark-surface));
   padding: 6px;
   resize: vertical;
 }
@@ -3589,8 +3589,8 @@ function downloadComfyWorkflow(workflow) {
 }
 
 .overlay-tag {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+  background: rgba(var(--v-theme-on-dark-surface), 0.1);
+  color: rgb(var(--v-theme-on-dark-surface));
   border-radius: 6px;
   padding: 1px 2px 1px 6px;
   font-size: 0.72rem;
@@ -3626,9 +3626,9 @@ function downloadComfyWorkflow(workflow) {
 }
 
 .tag-add-input {
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
+  background: rgba(var(--v-theme-shadow), 0.4);
+  border: 1px solid rgba(var(--v-theme-on-dark-surface), 0.2);
+  color: rgb(var(--v-theme-on-dark-surface));
   border-radius: 999px;
   padding: 1px 6px;
   font-size: 0.7rem;
@@ -3642,8 +3642,8 @@ function downloadComfyWorkflow(workflow) {
 }
 
 .face-assign-card {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(var(--v-theme-on-dark-surface), 0.06);
+  border: 1px solid rgba(var(--v-theme-on-dark-surface), 0.12);
   border-radius: 6px;
   padding: 4px;
 }
@@ -3684,7 +3684,7 @@ function downloadComfyWorkflow(workflow) {
 
 .face-assign-label {
   font-size: 0.78rem;
-  color: rgba(255, 255, 255, 0.9);
+  color: rgba(var(--v-theme-on-dark-surface), 0.9);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3692,9 +3692,9 @@ function downloadComfyWorkflow(workflow) {
 
 .face-assign-select {
   width: 100%;
-  background: rgba(0, 0, 0, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #fff;
+  background: rgba(var(--v-theme-shadow), 0.45);
+  border: 1px solid rgba(var(--v-theme-on-dark-surface), 0.15);
+  color: rgb(var(--v-theme-on-dark-surface));
   border-radius: 8px;
   padding: 2px 6px;
   font-size: 0.75rem;
@@ -3707,13 +3707,13 @@ function downloadComfyWorkflow(workflow) {
 
 .face-assign-empty {
   font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(var(--v-theme-on-dark-surface), 0.6);
   padding: 4px 6px;
 }
 
 .metadata-empty {
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(var(--v-theme-on-dark-surface), 0.6);
 }
 
 .metadata-list {
@@ -3728,13 +3728,13 @@ function downloadComfyWorkflow(workflow) {
   gap: 8px;
   padding: 10px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--v-theme-on-dark-surface), 0.06);
 }
 
 .metadata-info-header {
   font-size: 0.84rem;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(var(--v-theme-on-dark-surface), 0.85);
 }
 
 .metadata-info-grid {
@@ -3752,12 +3752,12 @@ function downloadComfyWorkflow(workflow) {
 
 .metadata-info-label {
   font-size: 0.7rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(var(--v-theme-on-dark-surface), 0.6);
 }
 
 .metadata-info-value {
   font-size: 0.8rem;
-  color: #fff;
+  color: rgb(var(--v-theme-on-dark-surface));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3769,7 +3769,7 @@ function downloadComfyWorkflow(workflow) {
   gap: 10px;
   padding: 10px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--v-theme-on-dark-surface), 0.06);
 }
 
 .metadata-comfy-header {
@@ -3778,17 +3778,17 @@ function downloadComfyWorkflow(workflow) {
   gap: 4px;
   font-weight: 600;
   font-size: 0.74rem;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(var(--v-theme-on-dark-surface), 0.85);
 }
 
 .metadata-comfy-subtitle {
   font-size: 0.78rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(var(--v-theme-on-dark-surface), 0.65);
 }
 
 .metadata-comfy-details {
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(var(--v-theme-shadow), 0.25);
   border-radius: 8px;
   padding: 8px 10px;
 }
@@ -3796,7 +3796,7 @@ function downloadComfyWorkflow(workflow) {
 .metadata-comfy-details summary {
   cursor: pointer;
   font-size: 0.78rem;
-  color: rgba(255, 255, 255, 0.75);
+  color: rgba(var(--v-theme-on-dark-surface), 0.75);
 }
 
 .metadata-comfy-details summary::-webkit-details-marker {
@@ -3823,7 +3823,7 @@ function downloadComfyWorkflow(workflow) {
   gap: 2px;
   border: none;
   background: transparent;
-  color: rgba(255, 255, 255, 0.75);
+  color: rgba(var(--v-theme-on-dark-surface), 0.75);
   font-size: 0.72rem;
   padding: 2px 2px;
   border-radius: 4px;
@@ -3831,8 +3831,8 @@ function downloadComfyWorkflow(workflow) {
 }
 
 .metadata-comfy-workflow-action:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
+  background: rgba(var(--v-theme-on-dark-surface), 0.12);
+  color: rgb(var(--v-theme-on-dark-surface));
 }
 
 .metadata-comfy-textarea {
@@ -3843,9 +3843,9 @@ function downloadComfyWorkflow(workflow) {
   min-height: 160px;
   max-height: 280px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.35);
-  color: #fff;
+  border: 1px solid rgba(var(--v-theme-on-dark-surface), 0.15);
+  background: rgba(var(--v-theme-shadow), 0.35);
+  color: rgb(var(--v-theme-on-dark-surface));
   font-size: 0.74rem;
   line-height: 1.4;
   padding: 8px;
@@ -3864,7 +3864,7 @@ function downloadComfyWorkflow(workflow) {
   grid-template-columns: 1fr auto;
   gap: 8px;
   align-items: start;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--v-theme-on-dark-surface), 0.05);
   padding: 8px;
   border-radius: 8px;
 }
@@ -3872,12 +3872,12 @@ function downloadComfyWorkflow(workflow) {
 .metadata-key {
   font-weight: 600;
   font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(var(--v-theme-on-dark-surface), 0.7);
 }
 
 .metadata-value {
   font-size: 0.8rem;
-  color: #fff;
+  color: rgb(var(--v-theme-on-dark-surface));
   word-break: break-word;
 }
 

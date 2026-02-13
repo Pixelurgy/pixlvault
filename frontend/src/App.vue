@@ -9,6 +9,7 @@ import {
   ref,
   watch,
 } from "vue";
+import { useTheme } from "vuetify";
 import { apiClient, API_BASE_URL } from "./utils/apiClient";
 
 import SideBar from "./components/SideBar.vue";
@@ -61,6 +62,8 @@ const showFormat = ref(true);
 const showResolution = ref(true);
 const showProblemIcon = ref(true);
 const dateFormat = ref("locale");
+const themeMode = ref("light");
+const theme = useTheme();
 
 const activeCategoryLabel = computed(() => {
   if (selectedSet.value) {
@@ -276,6 +279,7 @@ const config = reactive({
   show_resolution: true,
   show_problem_icon: true,
   date_format: "locale",
+  theme_mode: "light",
   stack_strictness: 0.92,
 });
 
@@ -465,6 +469,11 @@ function handleUpdateDateFormat(value) {
   dateFormat.value = String(value);
 }
 
+function handleUpdateThemeMode(value) {
+  if (value == null) return;
+  themeMode.value = String(value);
+}
+
 function handleUpdateSidebarThumbnailSize(value) {
   const nextValue = Number(value);
   if (!Number.isFinite(nextValue)) return;
@@ -512,6 +521,12 @@ async function fetchConfig() {
     if (typeof res.data.date_format === "string" && res.data.date_format) {
       dateFormat.value = res.data.date_format;
     }
+    if (typeof res.data.theme_mode === "string" && res.data.theme_mode) {
+      themeMode.value = res.data.theme_mode;
+    }
+    if (typeof res.data.date_format === "string" && res.data.date_format) {
+      dateFormat.value = res.data.date_format;
+    }
     if (typeof res.data.descending === "boolean") {
       selectedDescending.value = res.data.descending;
     }
@@ -553,6 +568,7 @@ async function fetchConfig() {
         ? res.data.show_problem_icon
         : showProblemIcon.value;
     config.date_format = dateFormat.value;
+    config.theme_mode = themeMode.value;
     config.stack_strictness =
       res.data.stack_strictness != null
         ? res.data.stack_strictness
@@ -581,6 +597,7 @@ async function fetchConfig() {
       show_resolution: showResolution.value,
       show_problem_icon: showProblemIcon.value,
       date_format: dateFormat.value,
+      theme_mode: themeMode.value,
       similarity_character: selectedSimilarityCharacter.value,
       stack_strictness:
         res.data.stack_strictness != null
@@ -635,6 +652,9 @@ async function patchConfigUIOptions() {
   if (typeof dateFormat.value === "string" && dateFormat.value) {
     patch.date_format = dateFormat.value;
   }
+  if (typeof themeMode.value === "string" && themeMode.value) {
+    patch.theme_mode = themeMode.value;
+  }
   if (selectedSimilarityCharacter.value != null) {
     patch.similarity_character = selectedSimilarityCharacter.value;
   }
@@ -673,6 +693,10 @@ function handleGlobalKeydown(e) {
       grid.onGlobalKeyPress(e.key, e);
     }
   }
+}
+
+function resolveThemeName(mode) {
+  return mode === "dark" ? "pixlVaultDark" : "pixlVaultLight";
 }
 
 async function handleImagesAssignedToCharacter({ characterId, imageIds }) {
@@ -908,6 +932,16 @@ watch(dateFormat, () => {
   refreshGridVersion();
 });
 
+watch(
+  themeMode,
+  (value) => {
+    theme.global.name.value = resolveThemeName(value);
+    if (!configLoaded.value) return;
+    patchConfigUIOptions();
+  },
+  { immediate: true },
+);
+
 watch(exportMenuOpen, async (isOpen) => {
   if (!isOpen) return;
   await nextTick();
@@ -972,11 +1006,13 @@ defineExpose({ sidebarVisible, mediaTypeFilter });
             :selectedSimilarityCharacter="selectedSimilarityCharacter"
             :sidebarThumbnailSize="sidebarThumbnailSize"
             :dateFormat="dateFormat"
+            :themeMode="themeMode"
             @update:similarity-options="handleUpdateSimilarityOptions"
             @update:sort-options="handleUpdateSortOptions"
             @update:hidden-tags="handleUpdateHiddenTags"
             @update:apply-tag-filter="handleUpdateApplyTagFilter"
             @update:date-format="handleUpdateDateFormat"
+            @update:theme-mode="handleUpdateThemeMode"
             @update:sidebar-thumbnail-size="handleUpdateSidebarThumbnailSize"
             @select-character="handleSelectCharacter"
             @select-reference-pictures="handleSelectReferencePictures"

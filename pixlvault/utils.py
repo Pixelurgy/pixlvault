@@ -78,6 +78,7 @@ def serialize_user_config(user) -> dict:
         "show_resolution",
         "show_problem_icon",
         "date_format",
+        "theme_mode",
         "similarity_character",
         "stack_strictness",
         "apply_tag_filter",
@@ -128,6 +129,7 @@ def apply_user_config_patch(user, patch_data) -> bool:
         "show_resolution",
         "show_problem_icon",
         "date_format",
+        "theme_mode",
         "similarity_character",
         "stack_strictness",
         "smart_score_penalised_tags",
@@ -146,6 +148,7 @@ def apply_user_config_patch(user, patch_data) -> bool:
         "ymd-dot",
         "ymd-jp",
     }
+    allowed_theme_modes = {"light", "dark"}
 
     updated = False
     for key, value in patch_data.items():
@@ -211,6 +214,17 @@ def apply_user_config_patch(user, patch_data) -> bool:
                 raise ValueError("date_format is not a supported value")
             if user.date_format != new_value:
                 user.date_format = new_value
+                updated = True
+            continue
+        if key == "theme_mode":
+            if value in ("", None, "null"):
+                new_value = None
+            else:
+                new_value = str(value)
+            if new_value is not None and new_value not in allowed_theme_modes:
+                raise ValueError("theme_mode is not a supported value")
+            if user.theme_mode != new_value:
+                user.theme_mode = new_value
                 updated = True
             continue
         if key == "auto_scrapheap_smart_score_threshold":

@@ -1176,7 +1176,7 @@ defineExpose({ blurSearchInput });
 
 .toolbar-split-toggle {
   border-right: 1px solid rgba(var(--v-theme-on-background), 0.1);
-  background: rgba(var(--v-theme-primary), 0.35) !important;
+  background: rgba(var(--v-theme-primary), 0.85) !important;
   color: rgb(var(--v-theme-on-primary)) !important;
 }
 

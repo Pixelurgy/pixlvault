@@ -132,7 +132,7 @@
                     >
                       <path
                         d="M 0 0 L 10 5 L 0 10 z"
-                        fill="rgba(242, 229, 218, 0.45)"
+                        fill="rgba(var(--v-theme-on-surface), 0.45)"
                       />
                     </marker>
                   </defs>
@@ -140,7 +140,7 @@
                     v-for="edge in graphEdges"
                     :key="edge.id"
                     :points="edge.points"
-                    stroke="rgba(242, 229, 218, 0.4)"
+                    stroke="rgba(var(--v-theme-on-surface), 0.4)"
                     stroke-width="2"
                     marker-end="url(#arrow)"
                     fill="none"
@@ -273,6 +273,23 @@ const labelMap = {
   scrapheap_candidates: "Scrapheap candidates",
   watch_folder_import: "Watch folder import",
 };
+
+function getThemeRgb(name) {
+  if (typeof window === "undefined") return null;
+  const root = getComputedStyle(document.documentElement);
+  const value = root.getPropertyValue(`--v-theme-${name}`).trim();
+  return value || null;
+}
+
+function themeRgb(name, fallback = "0, 0, 0") {
+  const value = getThemeRgb(name) || fallback;
+  return `rgb(${value})`;
+}
+
+function themeRgba(name, alpha, fallback = "0, 0, 0") {
+  const value = getThemeRgb(name) || fallback;
+  return `rgba(${value}, ${alpha})`;
+}
 
 const workerEntries = computed(() => {
   const entries = Object.entries(workerSnapshots.value || {});
@@ -610,7 +627,7 @@ function drawSparkline(canvas, samples) {
   ctx.scale(dpr, dpr);
 
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+  ctx.fillStyle = themeRgba("on-surface", 0.04, "255, 255, 255");
   ctx.fillRect(0, 0, width, height);
 
   if (!samples.length) {
@@ -619,7 +636,7 @@ function drawSparkline(canvas, samples) {
     ctx.beginPath();
     ctx.moveTo(pad, y);
     ctx.lineTo(width - pad, y);
-    ctx.strokeStyle = "rgba(242, 229, 218, 0.45)";
+    ctx.strokeStyle = themeRgba("on-surface", 0.45, "242, 229, 218");
     ctx.lineWidth = 1.2;
     ctx.stroke();
     return;
@@ -641,14 +658,14 @@ function drawSparkline(canvas, samples) {
       ctx.lineTo(x, y);
     }
   });
-  ctx.strokeStyle = "rgba(242, 229, 218, 0.85)";
+  ctx.strokeStyle = themeRgba("on-surface", 0.85, "242, 229, 218");
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
   ctx.lineTo(pad + step * (samples.length - 1), pad + plotHeight);
   ctx.lineTo(pad, pad + plotHeight);
   ctx.closePath();
-  ctx.fillStyle = "rgba(142, 166, 4, 0.18)";
+  ctx.fillStyle = themeRgba("primary", 0.18, "142, 166, 4");
   ctx.fill();
 }
 
@@ -799,7 +816,7 @@ onBeforeUnmount(() => {
 }
 
 .task-manager-panel {
-  background: rgba(0, 0, 0, 0.15);
+  background: rgba(var(--v-theme-shadow), 0.15);
   border: 1px solid rgba(var(--v-theme-border), 0.4);
   border-radius: 10px;
   padding: 10px;
@@ -809,7 +826,7 @@ onBeforeUnmount(() => {
 }
 
 .task-manager-panel--combined {
-  background: rgba(0, 0, 0, 0.22);
+  background: rgba(var(--v-theme-shadow), 0.22);
   border-color: rgba(var(--v-theme-primary), 0.6);
 }
 
@@ -818,7 +835,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   border-radius: 14px;
-  background: rgba(0, 0, 0, 0.12);
+  background: rgba(var(--v-theme-shadow), 0.12);
   border: 1px solid rgba(var(--v-theme-border), 0.4);
   overflow: hidden;
 }
@@ -836,7 +853,7 @@ onBeforeUnmount(() => {
   padding: 8px;
   border-radius: 10px;
   border: 1px solid rgba(var(--v-theme-border), 0.5);
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(var(--v-theme-shadow), 0.25);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -845,7 +862,7 @@ onBeforeUnmount(() => {
 
 .task-manager-graph-node--combined {
   border-color: rgba(var(--v-theme-primary), 0.7);
-  background: rgba(0, 0, 0, 0.32);
+  background: rgba(var(--v-theme-shadow), 0.32);
 }
 
 .task-manager-graph-header {
@@ -901,7 +918,7 @@ onBeforeUnmount(() => {
 .task-manager-canvas-wrap {
   width: 100%;
   height: 60px;
-  background: rgba(0, 0, 0, 0.15);
+  background: rgba(var(--v-theme-shadow), 0.15);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -928,12 +945,12 @@ onBeforeUnmount(() => {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(var(--v-theme-on-surface), 0.25);
 }
 
 .task-manager-status-dot--running {
   background: rgb(var(--v-theme-primary));
-  box-shadow: 0 0 6px rgba(142, 166, 4, 0.6);
+  box-shadow: 0 0 6px rgba(var(--v-theme-primary), 0.6);
 }
 
 .task-manager-close {
