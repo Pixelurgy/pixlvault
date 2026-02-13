@@ -15,86 +15,181 @@
       Last {{ windowSeconds / 60 }} minutes. Rates are pictures per second.
     </div>
     <div v-if="loading" class="task-manager-loading">Loading...</div>
-    <div v-else class="task-manager-grid">
-      <div
-        v-for="entry in workerEntries"
-        :key="entry.key"
-        class="task-manager-panel"
+    <div v-else class="task-manager-tabs">
+      <v-tabs
+        v-model="activeTab"
+        density="compact"
+        class="task-manager-tablist"
       >
-        <div class="task-manager-panel-header">
-          <div class="task-manager-metric">
-            {{ formatLabel(entry.key, entry.snapshot.label) }}
+        <v-tab value="grid">Grid</v-tab>
+        <v-tab value="graph">Graph</v-tab>
+      </v-tabs>
+      <v-window v-model="activeTab" class="task-manager-tab-window">
+        <v-window-item value="grid">
+          <div class="task-manager-grid">
+            <div
+              v-for="entry in workerEntries"
+              :key="entry.key"
+              class="task-manager-panel"
+            >
+              <div class="task-manager-panel-header">
+                <div class="task-manager-metric">
+                  {{ formatLabel(entry.key, entry.snapshot.label) }}
+                </div>
+                <div class="task-manager-progress">
+                  {{ formatProgress(entry.snapshot) }}
+                </div>
+              </div>
+              <div class="task-manager-panel-subheader">
+                <span class="task-manager-rate">
+                  {{ formatRate(getLatestRate(entry.key)) }}/s
+                </span>
+                <span class="task-manager-max">
+                  Max {{ formatRate(getMaxRate(entry.key)) }}/s
+                </span>
+              </div>
+              <div class="task-manager-canvas-wrap">
+                <canvas
+                  :ref="
+                    (el) => registerCanvas(`${entry.key}-grid`, entry.key, el)
+                  "
+                  class="task-manager-canvas"
+                ></canvas>
+              </div>
+              <div class="task-manager-status">
+                <span
+                  class="task-manager-status-dot"
+                  :class="{
+                    'task-manager-status-dot--running': entry.snapshot.running,
+                  }"
+                ></span>
+                <span class="task-manager-status-text">
+                  {{
+                    entry.snapshot.running
+                      ? "running"
+                      : entry.snapshot.status || "idle"
+                  }}
+                </span>
+              </div>
+            </div>
+            <div
+              v-if="combinedSnapshot"
+              class="task-manager-panel task-manager-panel--combined"
+            >
+              <div class="task-manager-panel-header">
+                <div class="task-manager-metric">Total throughput</div>
+                <div class="task-manager-progress">
+                  {{ formatProgress(combinedSnapshot) }}
+                </div>
+              </div>
+              <div class="task-manager-panel-subheader">
+                <span class="task-manager-rate">
+                  {{ formatRate(getLatestRate(combinedKey)) }}/s
+                </span>
+                <span class="task-manager-max">
+                  Max {{ formatRate(getMaxRate(combinedKey)) }}/s
+                </span>
+              </div>
+              <div class="task-manager-canvas-wrap">
+                <canvas
+                  :ref="
+                    (el) =>
+                      registerCanvas(`${combinedKey}-grid`, combinedKey, el)
+                  "
+                  class="task-manager-canvas"
+                ></canvas>
+              </div>
+              <div class="task-manager-status">
+                <span
+                  class="task-manager-status-dot"
+                  :class="{
+                    'task-manager-status-dot--running':
+                      combinedSnapshot.running,
+                  }"
+                ></span>
+                <span class="task-manager-status-text">
+                  {{ combinedSnapshot.running ? "running" : "idle" }}
+                </span>
+              </div>
+            </div>
           </div>
-          <div class="task-manager-progress">
-            {{ formatProgress(entry.snapshot) }}
+        </v-window-item>
+        <v-window-item value="graph">
+          <div class="task-manager-graph">
+            <svg
+              class="task-manager-graph-lines"
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+            >
+              <defs>
+                <marker
+                  id="arrow"
+                  viewBox="0 0 10 10"
+                  refX="7"
+                  refY="5"
+                  markerWidth="3"
+                  markerHeight="3"
+                  orient="auto-start-reverse"
+                >
+                  <path
+                    d="M 0 0 L 10 5 L 0 10 z"
+                    fill="rgba(242, 229, 218, 0.45)"
+                  />
+                </marker>
+              </defs>
+              <polyline
+                v-for="edge in graphEdges"
+                :key="edge.id"
+                :points="edge.points"
+                stroke="rgba(242, 229, 218, 0.4)"
+                stroke-width="0.4"
+                marker-end="url(#arrow)"
+                fill="none"
+              />
+            </svg>
+            <div
+              v-for="node in graphNodes"
+              :key="node.id"
+              class="task-manager-graph-node"
+              :class="{
+                'task-manager-graph-node--combined': node.id === combinedKey,
+              }"
+              :style="{
+                left: `${node.x}%`,
+                top: `${node.y}%`,
+                width: `${GRAPH_NODE_WIDTH}%`,
+                height: `${GRAPH_NODE_HEIGHT}%`,
+              }"
+            >
+              <div class="task-manager-graph-header">
+                <div class="task-manager-graph-title">{{ node.title }}</div>
+                <div class="task-manager-graph-progress">
+                  {{ formatProgress(node.snapshot) }}
+                </div>
+              </div>
+              <div class="task-manager-graph-subheader">
+                <span class="task-manager-rate">
+                  {{ formatRate(getLatestRate(node.workerKey)) }}/s
+                </span>
+                <span class="task-manager-max">
+                  {{ formatRate(getMaxRate(node.workerKey)) }}/s
+                </span>
+              </div>
+              <div
+                class="task-manager-canvas-wrap task-manager-canvas-wrap--graph"
+              >
+                <canvas
+                  :ref="
+                    (el) =>
+                      registerCanvas(`${node.id}-graph`, node.workerKey, el)
+                  "
+                  class="task-manager-canvas"
+                ></canvas>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="task-manager-panel-subheader">
-          <span class="task-manager-rate">
-            {{ formatRate(getLatestRate(entry.key)) }}/s
-          </span>
-          <span class="task-manager-max">
-            Max {{ formatRate(getMaxRate(entry.key)) }}/s
-          </span>
-        </div>
-        <div class="task-manager-canvas-wrap">
-          <canvas
-            :ref="(el) => registerCanvas(entry.key, el)"
-            class="task-manager-canvas"
-          ></canvas>
-        </div>
-        <div class="task-manager-status">
-          <span
-            class="task-manager-status-dot"
-            :class="{
-              'task-manager-status-dot--running': entry.snapshot.running,
-            }"
-          ></span>
-          <span class="task-manager-status-text">
-            {{
-              entry.snapshot.running
-                ? "running"
-                : entry.snapshot.status || "idle"
-            }}
-          </span>
-        </div>
-      </div>
-      <div
-        v-if="combinedSnapshot"
-        class="task-manager-panel task-manager-panel--combined"
-      >
-        <div class="task-manager-panel-header">
-          <div class="task-manager-metric">Total throughput</div>
-          <div class="task-manager-progress">
-            {{ formatProgress(combinedSnapshot) }}
-          </div>
-        </div>
-        <div class="task-manager-panel-subheader">
-          <span class="task-manager-rate">
-            {{ formatRate(getLatestRate(combinedKey)) }}/s
-          </span>
-          <span class="task-manager-max">
-            Max {{ formatRate(getMaxRate(combinedKey)) }}/s
-          </span>
-        </div>
-        <div class="task-manager-canvas-wrap">
-          <canvas
-            :ref="(el) => registerCanvas(combinedKey, el)"
-            class="task-manager-canvas"
-          ></canvas>
-        </div>
-        <div class="task-manager-status">
-          <span
-            class="task-manager-status-dot"
-            :class="{
-              'task-manager-status-dot--running': combinedSnapshot.running,
-            }"
-          ></span>
-          <span class="task-manager-status-text">
-            {{ combinedSnapshot.running ? "running" : "idle" }}
-          </span>
-        </div>
-      </div>
+        </v-window-item>
+      </v-window>
     </div>
   </v-card>
 </template>
@@ -118,6 +213,38 @@ const canvasRefs = new Map();
 const lastSnapshot = new Map();
 let pollTimer = null;
 const combinedKey = "__combined__";
+const activeTab = ref("grid");
+const GRAPH_NODE_WIDTH = 23;
+const GRAPH_NODE_HEIGHT = 20;
+
+const graphLayout = [
+  { id: "quality", workerKey: "QualityWorker", x: 2, y: 1 },
+  { id: "watch", workerKey: "WatchFolderWorker", x: 2, y: 39 },
+  { id: "features", workerKey: "FeatureExtractionWorker", x: 2, y: 67 },
+  { id: "image_embeddings", workerKey: "ImageEmbeddingWorker", x: 36, y: 14 },
+  { id: "descriptions", workerKey: "DescriptionWorker", x: 36, y: 45 },
+  { id: "tags", workerKey: "TagWorker", x: 36, y: 67 },
+  { id: "likeness_params", workerKey: "LikenessParameterWorker", x: 70, y: 1 },
+  { id: "likeness", workerKey: "LikenessWorker", x: 70, y: 25 },
+  { id: "text_embeddings", workerKey: "EmbeddingWorker", x: 70, y: 59 },
+  { id: "scrapheap", workerKey: "SmartScoreScrapheapWorker", x: 70, y: 79 },
+];
+
+const graphEdgesConfig = [
+  { from: "watch", to: "features", preferDirect: true },
+  { from: "watch", to: "quality", preferDirect: true },
+  { from: "watch", to: "image_embeddings" },
+  { from: "watch", to: "descriptions" },
+  { from: "features", to: "tags" },
+  { from: "quality", to: "likeness", route: "lane", laneX: 28 },
+  { from: "quality", to: "likeness_params", route: "right-first" },
+  { from: "quality", to: "scrapheap", route: "lane", laneX: 32 },
+  { from: "descriptions", to: "text_embeddings" },
+  { from: "tags", to: "scrapheap" },
+  { from: "text_embeddings", to: "likeness", preferDirect: true },
+  { from: "image_embeddings", to: "likeness" },
+  { from: "likeness_params", to: "likeness", preferDirect: true },
+];
 
 const labelMap = {
   quality_scored: "Quality scored",
@@ -165,10 +292,278 @@ const combinedSnapshot = computed(() => {
   };
 });
 
-function registerCanvas(key, el) {
+function registerCanvas(canvasKey, dataKey, el) {
   if (!el) return;
-  canvasRefs.set(key, el);
+  canvasRefs.set(canvasKey, { el, dataKey });
 }
+
+const graphNodes = computed(() =>
+  graphLayout.map((node) => {
+    if (node.workerKey === combinedKey) {
+      return {
+        ...node,
+        title: "Total throughput",
+        snapshot: combinedSnapshot.value || {
+          current: 0,
+          total: 0,
+          running: false,
+        },
+      };
+    }
+    const snapshot = workerSnapshots.value[node.workerKey] || {
+      label: "uninitialized",
+      current: 0,
+      total: 0,
+      running: false,
+    };
+    return {
+      ...node,
+      snapshot,
+      title: formatLabel(node.workerKey, snapshot.label),
+    };
+  }),
+);
+
+const graphEdges = computed(() => {
+  const nodeMap = new Map(graphLayout.map((node) => [node.id, node]));
+  const rects = graphLayout.map((node) => ({
+    id: node.id,
+    x: node.x,
+    y: node.y,
+    w: GRAPH_NODE_WIDTH,
+    h: GRAPH_NODE_HEIGHT,
+  }));
+
+  const pointKey = (point) => `${point[0]},${point[1]}`;
+
+  const segmentIntersectsRect = (a, b, rect) => {
+    const [x1, y1] = a;
+    const [x2, y2] = b;
+    const minX = rect.x;
+    const maxX = rect.x + rect.w;
+    const minY = rect.y;
+    const maxY = rect.y + rect.h;
+
+    if (Math.max(x1, x2) < minX || Math.min(x1, x2) > maxX) return false;
+    if (Math.max(y1, y2) < minY || Math.min(y1, y2) > maxY) return false;
+
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    let t0 = 0;
+    let t1 = 1;
+
+    const clip = (p, q) => {
+      if (p === 0) {
+        return q >= 0;
+      }
+      const r = q / p;
+      if (p < 0) {
+        if (r > t1) return false;
+        if (r > t0) t0 = r;
+      } else {
+        if (r < t0) return false;
+        if (r < t1) t1 = r;
+      }
+      return true;
+    };
+
+    if (!clip(-dx, x1 - minX)) return false;
+    if (!clip(dx, maxX - x1)) return false;
+    if (!clip(-dy, y1 - minY)) return false;
+    if (!clip(dy, maxY - y1)) return false;
+
+    return t0 <= t1;
+  };
+
+  const routeEdge = (edge) => {
+    const {
+      from: fromId,
+      to: toId,
+      preferDirect,
+      avoidReverse,
+      route,
+      laneX,
+    } = edge;
+    const from = nodeMap.get(fromId);
+    const to = nodeMap.get(toId);
+    if (!from || !to) return null;
+    const fromCenterX = from.x + GRAPH_NODE_WIDTH / 2;
+    const fromCenterY = from.y + GRAPH_NODE_HEIGHT / 2;
+    const toCenterX = to.x + GRAPH_NODE_WIDTH / 2;
+    const toCenterY = to.y + GRAPH_NODE_HEIGHT / 2;
+    const dx = toCenterX - fromCenterX;
+    const dy = toCenterY - fromCenterY;
+    const horizontal = Math.abs(dx) >= Math.abs(dy);
+
+    const start = horizontal
+      ? [from.x + (dx >= 0 ? GRAPH_NODE_WIDTH : 0), fromCenterY]
+      : [fromCenterX, from.y + (dy >= 0 ? GRAPH_NODE_HEIGHT : 0)];
+    const end = horizontal
+      ? [to.x + (dx >= 0 ? 0 : GRAPH_NODE_WIDTH), toCenterY]
+      : [toCenterX, to.y + (dy >= 0 ? 0 : GRAPH_NODE_HEIGHT)];
+
+    const segmentsClear = (points) => {
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        for (const rect of rects) {
+          if (rect.id === fromId || rect.id === toId) continue;
+          if (segmentIntersectsRect(a, b, rect)) {
+            return false;
+          }
+        }
+      }
+      return true;
+    };
+
+    const startX = start[0];
+    const startY = start[1];
+    const endX = end[0];
+    const endY = end[1];
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
+    const offset = horizontal
+      ? dx >= 0
+        ? GRAPH_NODE_WIDTH * 0.6
+        : -GRAPH_NODE_WIDTH * 0.6
+      : dy >= 0
+        ? GRAPH_NODE_HEIGHT * 0.6
+        : -GRAPH_NODE_HEIGHT * 0.6;
+    const offsetWide = offset * 1.6;
+    const preferPositiveX = dx >= 0;
+    const preferPositiveY = dy >= 0;
+
+    const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+    const edgeMin = 2;
+    const edgeMax = 98;
+    const buildElbowX = (x) => {
+      const clampedX = clamp(x, edgeMin, edgeMax);
+      return [start, [clampedX, startY], [clampedX, endY], end];
+    };
+    const buildElbowY = (y) => {
+      const clampedY = clamp(y, edgeMin, edgeMax);
+      return [start, [startX, clampedY], [endX, clampedY], end];
+    };
+    const buildLanePathX = (laneX, laneY) => {
+      const clampedX = clamp(laneX, edgeMin, edgeMax);
+      const clampedY = clamp(laneY, edgeMin, edgeMax);
+      return [
+        start,
+        [clampedX, startY],
+        [clampedX, clampedY],
+        [endX, clampedY],
+        end,
+      ];
+    };
+    const buildLanePathY = (laneX, laneY) => {
+      const clampedX = clamp(laneX, edgeMin, edgeMax);
+      const clampedY = clamp(laneY, edgeMin, edgeMax);
+      return [
+        start,
+        [startX, clampedY],
+        [clampedX, clampedY],
+        [clampedX, endY],
+        end,
+      ];
+    };
+
+    const useX = horizontal || Math.abs(startX - endX) < 0.01;
+    const useY = !horizontal || Math.abs(startY - endY) < 0.01;
+
+    if (route === "lane") {
+      const lane = clamp(laneX ?? (startX + endX) / 2, edgeMin, edgeMax);
+      const forcedStart = [from.x + GRAPH_NODE_WIDTH, fromCenterY];
+      const forcedEnd = [to.x, toCenterY];
+      return [
+        forcedStart,
+        [lane, forcedStart[1]],
+        [lane, forcedEnd[1]],
+        forcedEnd,
+      ];
+    }
+
+    if (route === "right-first") {
+      const lane = clamp(startX + GRAPH_NODE_WIDTH * 0.9, edgeMin, edgeMax);
+      const forcedStart = [from.x + GRAPH_NODE_WIDTH, fromCenterY];
+      const forcedEnd = [to.x, toCenterY];
+      return [
+        forcedStart,
+        [lane, forcedStart[1]],
+        [lane, forcedEnd[1]],
+        forcedEnd,
+      ];
+    }
+
+    if (preferDirect && segmentsClear([start, end])) {
+      return [start, end];
+    }
+
+    const candidates = [];
+    if (useX) {
+      candidates.push(buildElbowX(midX));
+      candidates.push(buildElbowX(startX + offset));
+      candidates.push(buildElbowX(startX + offsetWide));
+      if (!avoidReverse) {
+        candidates.push(buildElbowX(startX - offset));
+        candidates.push(buildElbowX(startX - offsetWide));
+      }
+      if (!avoidReverse) {
+        candidates.push(buildElbowX(edgeMin));
+        candidates.push(buildElbowX(edgeMax));
+      } else {
+        candidates.push(buildElbowX(preferPositiveX ? edgeMax : edgeMin));
+      }
+    }
+    if (useY) {
+      candidates.push(buildElbowY(midY));
+      candidates.push(buildElbowY(startY + offset));
+      candidates.push(buildElbowY(startY + offsetWide));
+      if (!avoidReverse) {
+        candidates.push(buildElbowY(startY - offset));
+        candidates.push(buildElbowY(startY - offsetWide));
+      }
+      if (!avoidReverse) {
+        candidates.push(buildElbowY(edgeMin));
+        candidates.push(buildElbowY(edgeMax));
+      } else {
+        candidates.push(buildElbowY(preferPositiveY ? edgeMax : edgeMin));
+      }
+    }
+
+    const laneXs = avoidReverse
+      ? [preferPositiveX ? edgeMax : edgeMin]
+      : [edgeMin, edgeMax];
+    const laneYs = avoidReverse
+      ? [preferPositiveY ? edgeMax : edgeMin]
+      : [edgeMin, edgeMax];
+    for (const laneX of laneXs) {
+      for (const laneY of laneYs) {
+        candidates.push(buildLanePathX(laneX, laneY));
+        candidates.push(buildLanePathY(laneX, laneY));
+      }
+    }
+
+    for (const candidate of candidates) {
+      if (segmentsClear(candidate)) {
+        return candidate;
+      }
+    }
+
+    return [start, end];
+  };
+
+  return graphEdgesConfig
+    .map((edge, index) => {
+      const points = routeEdge(edge);
+      if (!points) return null;
+      const pointString = points.map((p) => pointKey(p)).join(" ");
+      return {
+        id: `${edge.from}-${edge.to}-${index}`,
+        points: pointString,
+      };
+    })
+    .filter(Boolean);
+});
 
 function startPolling() {
   if (pollTimer) return;
@@ -250,10 +645,8 @@ async function fetchProgress() {
 }
 
 function drawAll() {
-  for (const key of Object.keys(series.value || {})) {
-    const canvas = canvasRefs.get(key);
-    if (!canvas) continue;
-    drawSparkline(canvas, series.value[key] || []);
+  for (const { el, dataKey } of canvasRefs.values()) {
+    drawSparkline(el, series.value[dataKey] || []);
   }
 }
 
@@ -263,6 +656,7 @@ function drawSparkline(canvas, samples) {
   const rect = canvas.getBoundingClientRect();
   const width = Math.max(1, Math.floor(rect.width));
   const height = Math.max(1, Math.floor(rect.height));
+  if (width < 4 || height < 4) return;
   const dpr = window.devicePixelRatio || 1;
   const targetWidth = Math.floor(width * dpr);
   const targetHeight = Math.floor(height * dpr);
@@ -399,6 +793,18 @@ onBeforeUnmount(() => {
   color: rgba(var(--v-theme-on-surface), 0.7);
 }
 
+.task-manager-tabs {
+  margin-top: 8px;
+}
+
+.task-manager-tablist {
+  border-bottom: 1px solid rgba(var(--v-theme-border), 0.5);
+}
+
+.task-manager-tab-window {
+  margin-top: 12px;
+}
+
 .task-manager-grid {
   margin-top: 16px;
   display: grid;
@@ -419,6 +825,66 @@ onBeforeUnmount(() => {
 .task-manager-panel--combined {
   background: rgba(0, 0, 0, 0.22);
   border-color: rgba(var(--v-theme-primary), 0.6);
+}
+
+.task-manager-graph {
+  position: relative;
+  width: 100%;
+  height: 520px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.12);
+  border: 1px solid rgba(var(--v-theme-border), 0.4);
+  overflow: hidden;
+}
+
+.task-manager-graph-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.task-manager-graph-node {
+  position: absolute;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(var(--v-theme-border), 0.5);
+  background: rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.task-manager-graph-node--combined {
+  border-color: rgba(var(--v-theme-primary), 0.7);
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.task-manager-graph-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.task-manager-graph-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.task-manager-graph-progress {
+  font-size: 0.75rem;
+  color: rgba(var(--v-theme-on-surface), 0.7);
+}
+
+.task-manager-graph-subheader {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: rgba(var(--v-theme-on-surface), 0.7);
 }
 
 .task-manager-panel-header {
@@ -452,6 +918,10 @@ onBeforeUnmount(() => {
   background: rgba(0, 0, 0, 0.15);
   border-radius: 8px;
   overflow: hidden;
+}
+
+.task-manager-canvas-wrap--graph {
+  height: 48px;
 }
 
 .task-manager-canvas {
