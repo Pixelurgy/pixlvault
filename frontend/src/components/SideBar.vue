@@ -30,6 +30,7 @@ const props = defineProps({
   backendUrl: { type: String, required: true },
   sidebarThumbnailSize: { type: Number, default: 48 },
   dateFormat: { type: String, default: "locale" },
+  themeMode: { type: String, default: "light" },
 });
 
 const emit = defineEmits([
@@ -49,6 +50,7 @@ const emit = defineEmits([
   "update:similarity-options",
   "update:sidebar-thumbnail-size",
   "update:date-format",
+  "update:theme-mode",
   "toggle-sidebar",
   "update:sort-options",
   "update:hidden-tags",
@@ -105,6 +107,18 @@ const taskIndicatorLast = new Map();
 let taskIndicatorTimer = null;
 const TASK_INDICATOR_WINDOW_SECONDS = 180;
 const TASK_INDICATOR_POLL_MS = 2000;
+
+function getThemeRgb(name) {
+  if (typeof window === "undefined") return null;
+  const root = getComputedStyle(document.documentElement);
+  const value = root.getPropertyValue(`--v-theme-${name}`).trim();
+  return value || null;
+}
+
+function themeRgba(name, alpha, fallback = "0, 0, 0") {
+  const value = getThemeRgb(name) || fallback;
+  return `rgba(${value}, ${alpha})`;
+}
 
 function updateLabelOverflow(key, el = null) {
   const element = el || labelRefs.get(key);
@@ -241,7 +255,7 @@ function drawTaskIndicator() {
   ctx.scale(dpr, dpr);
 
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "rgba(0, 0, 0, 0.15)";
+  ctx.fillStyle = themeRgba("shadow", 0.15, "0, 0, 0");
   ctx.fillRect(0, 0, width, height);
 
   const samples = taskIndicatorSeries.value || [];
@@ -250,7 +264,7 @@ function drawTaskIndicator() {
     ctx.beginPath();
     ctx.moveTo(2, y);
     ctx.lineTo(width - 2, y);
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+    ctx.strokeStyle = themeRgba("on-surface", 0.6, "255, 255, 255");
     ctx.lineWidth = 1;
     ctx.stroke();
     return;
@@ -272,7 +286,7 @@ function drawTaskIndicator() {
       ctx.lineTo(x, y);
     }
   });
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.strokeStyle = themeRgba("on-surface", 0.9, "255, 255, 255");
   ctx.lineWidth = 1.2;
   ctx.stroke();
 }
@@ -432,6 +446,11 @@ const sidebarThumbnailSizeModel = computed({
 const dateFormatModel = computed({
   get: () => props.dateFormat ?? "locale",
   set: (value) => emit("update:date-format", value ?? "locale"),
+});
+
+const themeModeModel = computed({
+  get: () => props.themeMode ?? "light",
+  set: (value) => emit("update:theme-mode", value ?? "light"),
 });
 
 const sidebarThumbnailSizeLarge = computed(
@@ -1350,6 +1369,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
     v-model:open="settingsDialogOpen"
     v-model:sidebar-thumbnail-size="sidebarThumbnailSizeModel"
     v-model:date-format="dateFormatModel"
+    v-model:theme-mode="themeModeModel"
     @update:hidden-tags="(value) => emit('update:hidden-tags', value)"
     @update:apply-tag-filter="(value) => emit('update:apply-tag-filter', value)"
   />
@@ -1846,7 +1866,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   min-height: 32px;
   height: 32px;
   font-size: 1em;
-  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.2);
+  box-shadow: 2px 2px 6px rgba(var(--v-theme-shadow), 0.2);
   margin-left: 6px;
   box-sizing: border-box;
   padding-left: 8px;
@@ -1902,7 +1922,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   max-height: 100%;
   overflow-x: visible;
   overflow-y: auto;
-  scrollbar-color: rgb(var(--v-theme-accent)) rgba(0, 0, 0, 0.15);
+  scrollbar-color: rgb(var(--v-theme-accent)) rgba(var(--v-theme-shadow), 0.15);
   box-sizing: border-box;
 }
 
@@ -1953,7 +1973,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 .sidebar-brand-title {
   font-family: "PressStart2P", monospace;
   font-size: 0.95em;
-  color: rgb(var(--v-theme-on-primary));
+  color: rgb(var(--v-theme-sidebar-text));
 }
 
 .sidebar-brand-toggle {
@@ -1999,7 +2019,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   justify-content: center;
   border-radius: 8px;
   cursor: pointer;
-  color: rgb(var(--v-theme-on-surface));
+  color: rgb(var(--v-theme-sidebar-text));
 }
 
 .sidebar-collapsed-item.active {
@@ -2010,6 +2030,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 
 .sidebar-collapsed-item.droppable {
   background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
   box-shadow: inset 0 0 0 3px rgb(var(--v-theme-primary));
 }
 
@@ -2059,7 +2080,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 }
 
 .sidebar-collapsed-thumb .sidebar-character-thumb {
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(0 2px 6px rgba(var(--v-theme-shadow), 0.35));
 }
 
 .sidebar-collapsed-thumb:focus,
@@ -2129,7 +2150,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 }
 
 .sidebar::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.15);
+  background: rgba(var(--v-theme-shadow), 0.15);
 }
 
 .sidebar-section-header {
@@ -2141,7 +2162,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   padding-right: var(--sidebar-header-action-right-edge) !important;
   display: flex;
   align-items: center;
-  color: rgb(var(--v-theme-on-surface));
+  color: rgb(var(--v-theme-sidebar-text));
 }
 
 .fade-enter-active,
@@ -2167,7 +2188,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   font-size: 0.9em;
   font-weight: 500;
   background: transparent;
-  color: #fff;
+  color: rgb(var(--v-theme-sidebar-text));
   transition:
     background 0.18s,
     color 0.18s;
@@ -2200,7 +2221,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   height: 16px;
   display: block;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--v-theme-sidebar-text), 0.06);
 }
 
 .sidebar-list-item.active {
@@ -2208,6 +2229,11 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   color: rgb(var(--v-theme-on-primary));
   border-right: 0;
   position: relative;
+}
+
+.sidebar-list-item.active .sidebar-list-count,
+.sidebar-list-item.reference-active .sidebar-list-count {
+  color: rgb(var(--v-theme-on-primary));
 }
 
 .sidebar-list-item.reference-active {
@@ -2223,6 +2249,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 .sidebar-list-item.droppable {
   filter: brightness(1.2);
   background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
 }
 
 .sidebar-header-spacer {
@@ -2244,6 +2271,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   min-height: 36px;
   justify-content: center;
   text-align: center;
+  color: rgb(var(--v-theme-sidebar-text));
 }
 
 .sidebar-list-icon {
@@ -2254,6 +2282,12 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   width: var(--sidebar-thumb-size);
   height: var(--sidebar-thumb-size);
   overflow: visible;
+}
+
+.sidebar-list-icon .v-icon,
+.sidebar-collapsed-item .v-icon,
+.sidebar-brand-toggle .v-icon {
+  color: rgb(var(--v-theme-sidebar-text));
 }
 
 .sidebar-list-label {
@@ -2278,7 +2312,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   border-radius: 6px;
   background: transparent;
   display: inline-block;
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(0 2px 6px rgba(var(--v-theme-shadow), 0.35));
 }
 
 .sidebar-set-thumb-image {
@@ -2325,13 +2359,13 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   left: 20px;
   transform: translateY(-50%);
   z-index: 1200;
-  color: #ffffff;
-  background: rgba(140, 20, 20, 0.8);
+  color: rgb(var(--v-theme-on-error));
+  background: rgba(var(--v-theme-error), 0.8);
   padding: 10px 16px;
   border-radius: 14px;
   font-size: 0.9em;
   line-height: 1.3;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 20px rgba(var(--v-theme-shadow), 0.25);
   pointer-events: none;
   max-width: 360px;
   white-space: normal;
@@ -2340,7 +2374,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 
 .sidebar-list-count {
   font-size: 0.9em;
-  color: rgb(var(--v-theme-on-surface));
+  color: rgb(var(--v-theme-sidebar-text));
   min-width: 2.6em;
   width: 2.6em;
   text-align: right;
@@ -2364,7 +2398,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   padding: 2px 2px;
   margin-right: 4px;
   border-radius: 4px;
-  color: #ffffff;
+  color: rgb(var(--v-theme-on-primary));
   background: rgba(var(--v-theme-primary), 0.7);
   position: relative;
   top: -2px;
@@ -2384,7 +2418,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 
 .sidebar-character-toggle {
   cursor: pointer;
-  color: rgb(var(--v-theme-on-surface));
+  color: rgb(var(--v-theme-sidebar-text));
   opacity: 0.8;
   margin-right: 4px;
 }
@@ -2395,7 +2429,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 }
 
 .add-character-inline {
-  color: rgb(var(--v-theme-on-surface)) !important;
+  color: rgb(var(--v-theme-sidebar-text)) !important;
   font-size: 1.4rem;
   cursor: pointer;
   background: transparent;
@@ -2414,7 +2448,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 
 .edit-character-inline,
 .edit-set-inline {
-  color: rgb(var(--v-theme-on-surface)) !important;
+  color: rgb(var(--v-theme-sidebar-text)) !important;
   font-size: 1.2rem;
   cursor: pointer;
   background: transparent;
@@ -2437,7 +2471,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 }
 
 .upload-pictures-inline {
-  color: rgb(var(--v-theme-on-surface)) !important;
+  color: rgb(var(--v-theme-sidebar-text)) !important;
   font-size: 1.2rem;
   cursor: pointer;
   background: transparent;
@@ -2460,7 +2494,7 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 }
 
 .delete-character-inline {
-  color: #fff !important;
+  color: rgb(var(--v-theme-sidebar-text)) !important;
   font-size: 1.1rem;
   cursor: pointer;
   background: transparent;
@@ -2477,7 +2511,8 @@ defineExpose({ refreshSidebar, openSettingsDialog });
 }
 
 .delete-character-inline:hover {
-  background: #ff5252;
+  background: rgb(var(--v-theme-error));
+  color: rgb(var(--v-theme-on-error)) !important;
 }
 
 .sidebar-sort {

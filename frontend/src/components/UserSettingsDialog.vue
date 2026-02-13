@@ -6,12 +6,14 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   sidebarThumbnailSize: { type: Number, default: 48 },
   dateFormat: { type: String, default: "locale" },
+  themeMode: { type: String, default: "light" },
 });
 
 const emit = defineEmits([
   "update:open",
   "update:sidebar-thumbnail-size",
   "update:date-format",
+  "update:theme-mode",
   "update:hidden-tags",
   "update:apply-tag-filter",
 ]);
@@ -37,6 +39,11 @@ const dateFormatModel = computed({
   set: (value) => emit("update:date-format", value ?? "locale"),
 });
 
+const themeModeModel = computed({
+  get: () => props.themeMode ?? "light",
+  set: (value) => emit("update:theme-mode", value ?? "light"),
+});
+
 const dateFormatOptions = [
   { title: "Locale default", value: "locale" },
   { title: "ISO (YYYY-MM-DD)", value: "iso" },
@@ -45,6 +52,11 @@ const dateFormatOptions = [
   { title: "China (YYYY/MM/DD)", value: "ymd-slash" },
   { title: "Korea (YYYY.MM.DD)", value: "ymd-dot" },
   { title: "Japan (YYYY年MM月DD日)", value: "ymd-jp" },
+];
+
+const themeModeOptions = [
+  { title: "Light", value: "light" },
+  { title: "Dark", value: "dark" },
 ];
 
 const settingsTab = ref("preferences");
@@ -602,6 +614,23 @@ watch([smartScoreScrapheapThreshold, smartScoreScrapheapLookback], () => {
                     class="settings-slider"
                   />
                 </div>
+              </div>
+              <v-divider class="settings-section-divider" />
+              <div class="settings-section">
+                <div class="settings-section-title">Theme</div>
+                <div class="settings-section-desc">
+                  Choose a light or dark theme.
+                </div>
+                <v-select
+                  v-model="themeModeModel"
+                  :items="themeModeOptions"
+                  item-title="title"
+                  item-value="value"
+                  density="comfortable"
+                  variant="filled"
+                  class="settings-add-tag-input"
+                  hide-details
+                />
               </div>
               <v-divider class="settings-section-divider" />
               <div class="settings-section">

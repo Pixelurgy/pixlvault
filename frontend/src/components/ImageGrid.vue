@@ -3823,14 +3823,14 @@ function handleEmptyStateReset() {
   transition:
     border-color 0.2s,
     background 0.2s;
-  color: #ffffff;
+  color: rgb(var(--v-theme-on-accent));
   font-size: 3em;
   font-weight: bold;
 }
 
 .drag-overlay-message {
   padding: 6px 14px;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(var(--v-theme-shadow), 0.35);
   border-radius: 12px;
 }
 
@@ -3839,16 +3839,16 @@ function handleEmptyStateReset() {
   top: 10px;
   right: 12px;
   z-index: 120;
-  background: rgba(20, 20, 20, 0.9);
-  color: #fff;
+  background: rgba(var(--v-theme-dark-surface), 0.9);
+  color: rgb(var(--v-theme-on-dark-surface));
   padding: 10px 12px;
   border-radius: 8px;
   min-width: 220px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 14px rgba(var(--v-theme-shadow), 0.3);
 }
 
 .export-progress-error {
-  background: rgba(140, 20, 20, 0.95);
+  background: rgba(var(--v-theme-error), 0.95);
 }
 
 .export-progress-title {
@@ -3859,7 +3859,7 @@ function handleEmptyStateReset() {
 .export-progress-bar {
   width: 100%;
   height: 8px;
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(var(--v-theme-on-dark-surface), 0.15);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -3880,8 +3880,8 @@ function handleEmptyStateReset() {
 .export-progress-abort {
   margin-top: 10px;
   width: 100%;
-  background: #c62828;
-  color: #fff;
+  background: rgb(var(--v-theme-error));
+  color: rgb(var(--v-theme-on-error));
   border: none;
   border-radius: 6px;
   padding: 6px 10px;
@@ -3892,7 +3892,7 @@ function handleEmptyStateReset() {
 }
 
 .export-progress-abort:hover {
-  background: #b71c1c;
+  background: rgba(var(--v-theme-error), 0.85);
 }
 
 .thumbnail-badge {
@@ -3900,7 +3900,7 @@ function handleEmptyStateReset() {
   border: 1px solid rgba(var(--v-theme-on-dark-surface), 0.3);
   border-radius: 6px;
   color: rgb(var(--v-theme-on-dark-surface));
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 6px rgba(var(--v-theme-shadow), 0.3);
   font-size: 0.8em;
   padding: 2px 4px;
   z-index: 20;
@@ -3935,7 +3935,7 @@ function handleEmptyStateReset() {
 }
 .face-bbox-label {
   font-size: 0.7em;
-  background-color: rgba(0, 0, 0, 0.3);
+  background-color: rgba(var(--v-theme-shadow), 0.3);
   color: rgb(var(--v-theme-on-surface));
   text-overflow: ellipsis;
   overflow-y: hidden;
@@ -3974,16 +3974,16 @@ function handleEmptyStateReset() {
   gap: 10px;
   padding: 26px 30px;
   border-radius: 18px;
-  border: 1px dashed rgba(0, 0, 0, 0.25);
-  background: rgba(255, 255, 255, 0.72);
+  border: 1px dashed rgba(var(--v-theme-border), 0.5);
+  background: rgba(var(--v-theme-panel), 0.72);
   color: rgb(var(--v-theme-on-background));
   text-align: center;
   max-width: 420px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 10px 30px rgba(var(--v-theme-shadow), 0.08);
   pointer-events: auto;
 }
 .empty-state-illustration {
-  color: rgba(0, 0, 0, 0.45);
+  color: rgba(var(--v-theme-on-panel), 0.45);
 }
 .empty-state-title {
   font-size: 1.2em;
@@ -4015,7 +4015,7 @@ function handleEmptyStateReset() {
   border-radius: 8px;
 }
 .grid-scroll-wrapper::-webkit-scrollbar-track {
-  background: rgb(var(--v-theme-on-accent));
+  background: rgba(var(--v-theme-shadow), 0.15);
 }
 .image-card {
   min-width: 0;
@@ -4037,7 +4037,7 @@ function handleEmptyStateReset() {
 .selection-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(25, 118, 210, 0.62); /* semi-transparent blue */
+  background: rgba(var(--v-theme-info), 0.62);
   pointer-events: none;
   z-index: 2;
 }
@@ -4075,7 +4075,7 @@ function handleEmptyStateReset() {
   padding: 0 8px;
   white-space: nowrap;
   overflow: hidden;
-  text-shadow: 1px 1px 1px rgba(0, 0, 0, 0.2);
+  text-shadow: 1px 1px 1px rgba(var(--v-theme-shadow), 0.2);
 }
 .thumbnail-container {
   width: 100%;
@@ -4095,14 +4095,14 @@ function handleEmptyStateReset() {
   top: 0;
   left: 0;
   z-index: 1;
-  box-shadow: 1px 2px 3px 3px rgba(0, 0, 0, 0.4);
+  box-shadow: 1px 2px 3px 3px rgba(var(--v-theme-shadow), 0.4);
   transition:
     transform 0.18s cubic-bezier(0.4, 2, 0.6, 1),
     box-shadow 0.18s;
 }
 .thumbnail-container:hover .thumbnail-img,
 .thumbnail-container:focus-within .thumbnail-img {
-  box-shadow: 2px 4px 12px rgba(0, 0, 0, 0.6);
+  box-shadow: 2px 4px 12px rgba(var(--v-theme-shadow), 0.6);
   transform: scale(1.02);
   z-index: 2;
   transition:
