@@ -6,6 +6,7 @@ import re
 import sys
 import uuid
 import zipfile
+from io import BytesIO
 from collections import defaultdict, deque
 from email.utils import formatdate
 
@@ -1736,6 +1737,21 @@ def create_router(server) -> APIRouter:
         logger.debug("Importing pictures to folder: " + str(dest_folder))
         os.makedirs(dest_folder, exist_ok=True)
         uploaded_files = []
+        allowed_exts = {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".gif",
+            ".bmp",
+            ".tiff",
+            ".tif",
+            ".mp4",
+            ".webm",
+            ".mov",
+            ".avi",
+            ".mkv",
+        }
         if file is not None:
             for upload in file:
                 if not upload.filename:
@@ -1744,29 +1760,50 @@ def create_router(server) -> APIRouter:
                 if not contents:
                     continue
                 ext = os.path.splitext(upload.filename)[1].lower()
-                if ext not in {
-                    ".jpg",
-                    ".jpeg",
-                    ".png",
-                    ".webp",
-                    ".gif",
-                    ".bmp",
-                    ".tiff",
-                    ".tif",
-                    ".mp4",
-                    ".webm",
-                    ".mov",
-                    ".avi",
-                    ".mkv",
-                }:
-                    logger.error("Invalid file extension: %s", ext)
-                    raise HTTPException(
-                        status_code=400, detail="Invalid file extension"
-                    )
-                uploaded_files.append((contents, ext))
+                if ext == ".zip":
+                    try:
+                        with zipfile.ZipFile(BytesIO(contents)) as zip_file:
+                            added = 0
+                            for info in zip_file.infolist():
+                                if info.is_dir():
+                                    continue
+                                inner_ext = os.path.splitext(info.filename)[1].lower()
+                                if inner_ext not in allowed_exts:
+                                    continue
+                                with zip_file.open(info) as handle:
+                                    data = handle.read()
+                                if not data:
+                                    continue
+                                uploaded_files.append((data, inner_ext))
+                                added += 1
+                            if added == 0:
+                                logger.warning(
+                                    "No valid media files found in zip: %s",
+                                    upload.filename,
+                                )
+                    except zipfile.BadZipFile as exc:
+                        logger.error("Invalid zip file: %s", upload.filename)
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Invalid zip file",
+                        ) from exc
+                else:
+                    if ext not in allowed_exts:
+                        logger.error("Invalid file extension: %s", ext)
+                        raise HTTPException(
+                            status_code=400, detail="Invalid file extension"
+                        )
+                    uploaded_files.append((contents, ext))
         else:
             logger.error("No files provided for import")
             raise HTTPException(status_code=400, detail="No image provided")
+
+        if not uploaded_files:
+            logger.error("No valid media files found for import")
+            raise HTTPException(
+                status_code=400,
+                detail="No valid media files found for import",
+            )
 
         task_id = str(uuid.uuid4())
         server.import_tasks[task_id] = {

@@ -4059,12 +4059,8 @@ function downloadComfyWorkflow(workflow) {
   border-radius: 8px;
   border: 1px dashed rgba(255, 255, 255, 0.2);
   min-height: 26px;
-  max-height: 154px;
-  overflow-y: auto;
-}
-
-.tag-list > .tag-section:first-of-type .tag-drop-zone {
-  max-height: 242px;
+  max-height: none;
+  overflow: visible;
 }
 
 .tag-drop-zone--active {

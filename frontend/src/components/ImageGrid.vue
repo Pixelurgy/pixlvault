@@ -397,9 +397,8 @@ import {
   onUnmounted,
 } from "vue";
 import {
-  isSupportedMediaFile,
+  isSupportedImportFile,
   isSupportedImageFile,
-  dataTransferHasSupportedMedia,
   isSupportedVideoFile,
   MediaFormat,
   PictureId,
@@ -2308,11 +2307,11 @@ function handleGridDrop(e) {
   }
 
   if (!e.dataTransfer || !e.dataTransfer.files) return;
-  const files = Array.from(e.dataTransfer.files).filter(isSupportedMediaFile);
+  const files = Array.from(e.dataTransfer.files).filter(isSupportedImportFile);
   console.debug("[IMPORT] Files dropped:", e.dataTransfer.files);
   console.debug("[IMPORT] Supported files after filter:", files);
   if (!files.length) {
-    alert("No supported image files found.");
+    alert("No supported files found.");
     return;
   }
 
