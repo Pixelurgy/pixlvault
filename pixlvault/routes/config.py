@@ -1,3 +1,7 @@
+import json
+import os
+import subprocess
+import sys
 import time
 from typing import Optional
 
@@ -18,6 +22,46 @@ def create_router(server) -> APIRouter:
 
     def _ensure_secure_when_required(request: Request):
         server.auth.ensure_secure_when_required(request)
+
+    def _load_watch_folders():
+        config_path = getattr(server, "_server_config_path", None)
+        if not config_path or not os.path.exists(config_path):
+            return config_path, []
+        try:
+            with open(config_path, "r") as handle:
+                config = json.load(handle)
+            raw_folders = config.get("watch_folders", []) or []
+        except Exception as exc:
+            logger.warning("Failed to read watch_folders: %s", exc)
+            return config_path, []
+
+        folders = []
+        for entry in raw_folders:
+            if isinstance(entry, str):
+                folder = entry
+            elif isinstance(entry, dict):
+                folder = entry.get("folder")
+            else:
+                folder = None
+            if folder:
+                folders.append(folder)
+        return config_path, folders
+
+    def _open_in_os(path: str) -> bool:
+        if not path or not os.path.exists(path):
+            return False
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(path)
+                return True
+            if sys.platform == "darwin":
+                subprocess.run(["open", path], check=False)
+                return True
+            subprocess.run(["xdg-open", path], check=False)
+            return True
+        except Exception as exc:
+            logger.warning("Failed to open path %s: %s", path, exc)
+            return False
 
     class ChangePasswordRequest(BaseModel):
         current_password: Optional[str] = None
@@ -99,5 +143,24 @@ def create_router(server) -> APIRouter:
         _ensure_secure_when_required(request)
         server.auth.require_user_id(request)
         return {"status": "success", "workers": server.vault.get_worker_progress()}
+
+    @router.get("/server-config/watch-folders")
+    async def get_watch_folders(request: Request):
+        _ensure_secure_when_required(request)
+        server.auth.require_user_id(request)
+        config_path, folders = _load_watch_folders()
+        return {
+            "status": "success",
+            "config_path": config_path,
+            "watch_folders": folders,
+        }
+
+    @router.post("/server-config/open")
+    async def open_server_config(request: Request):
+        _ensure_secure_when_required(request)
+        server.auth.require_user_id(request)
+        config_path = getattr(server, "_server_config_path", None)
+        opened = _open_in_os(config_path)
+        return {"status": "success" if opened else "failed"}
 
     return router

@@ -55,10 +55,10 @@ const emit = defineEmits([
   "update:sort-options",
   "update:hidden-tags",
   "update:apply-tag-filter",
+  "open-import-dialog",
 ]);
 
 const imageImporterRef = ref(null);
-const uploadInputRef = ref(null);
 const sidebarRootRef = ref(null);
 const labelOverflow = ref({});
 const labelRefs = new Map();
@@ -674,17 +674,14 @@ async function handleImportFinished(payload) {
   }
 }
 
-function openUploadDialog() {
-  if (uploadInputRef.value) {
-    uploadInputRef.value.click();
-  }
+function openImportDialog() {
+  emit("open-import-dialog");
 }
 
-function handleUploadInputChange(event) {
-  const files = Array.from(event?.target?.files || []);
-  if (!files.length) return;
-  imageImporterRef.value?.startImport(files);
-  event.target.value = "";
+function startLocalImport(files) {
+  const list = Array.isArray(files) ? files : [];
+  if (!list.length) return;
+  imageImporterRef.value?.startImport(list);
 }
 
 function setLoading(isLoading) {
@@ -1331,7 +1328,7 @@ watch(
   },
 );
 
-defineExpose({ refreshSidebar, openSettingsDialog });
+defineExpose({ refreshSidebar, openSettingsDialog, startLocalImport });
 </script>
 
 <template>
@@ -1342,14 +1339,6 @@ defineExpose({ refreshSidebar, openSettingsDialog });
     :all-pictures-id="props.allPicturesId"
     :unassigned-pictures-id="props.unassignedPicturesId"
     @import-finished="handleImportFinished"
-  />
-  <input
-    ref="uploadInputRef"
-    class="sidebar-upload-input"
-    type="file"
-    accept="image/*,video/*"
-    multiple
-    @change="handleUploadInputChange"
   />
   <CharacterEditor
     :open="characterEditorOpen"
@@ -1518,8 +1507,8 @@ defineExpose({ refreshSidebar, openSettingsDialog });
         <div class="sidebar-header-actions">
           <v-icon
             class="upload-pictures-inline"
-            @click.stop="openUploadDialog"
-            title="Upload pictures"
+            @click.stop="openImportDialog"
+            title="Import photos"
           >
             mdi-cloud-upload-outline
           </v-icon>
@@ -2489,9 +2478,6 @@ defineExpose({ refreshSidebar, openSettingsDialog });
   background: rgb(var(--v-theme-accent));
 }
 
-.sidebar-upload-input {
-  display: none;
-}
 
 .delete-character-inline {
   color: rgb(var(--v-theme-sidebar-text)) !important;

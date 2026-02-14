@@ -13,6 +13,7 @@ import { useTheme } from "vuetify";
 import { apiClient, API_BASE_URL } from "./utils/apiClient";
 
 import SideBar from "./components/SideBar.vue";
+import GooglePhotosImportDialog from "./components/GooglePhotosImportDialog.vue";
 import ImageGrid from "./components/ImageGrid.vue";
 import SearchOverlay from "./components/SearchOverlay.vue";
 import Toolbar from "./components/Toolbar.vue";
@@ -36,7 +37,6 @@ const selectedSort = ref("");
 const selectedDescending = ref(true);
 const stackThreshold = ref(null);
 const sortOptions = ref([]);
-
 // --- Search & Filtering State ---
 const searchQuery = ref("");
 const searchInput = ref("");
@@ -91,6 +91,7 @@ const isAllPicturesActive = computed(
 
 const thumbnailSize = ref(256);
 const sidebarThumbnailSize = ref(48);
+const googlePhotosDialogOpen = ref(false);
 const columns = ref(4); // Default columns
 const MIN_THUMBNAIL_SIZE = 96;
 const MAX_THUMBNAIL_SIZE = 384;
@@ -292,6 +293,16 @@ function refreshSidebar(options = {}) {
 
 function openSettingsDialog() {
   sidebarRef.value?.openSettingsDialog?.();
+}
+
+function openImportDialog() {
+  googlePhotosDialogOpen.value = true;
+}
+
+async function handleLocalImport(files) {
+  googlePhotosDialogOpen.value = false;
+  await nextTick();
+  sidebarRef.value?.startLocalImport?.(files);
 }
 
 function updateIsMobile() {
@@ -1034,6 +1045,7 @@ defineExpose({ sidebarVisible, mediaTypeFilter });
             @toggle-sidebar="sidebarVisible = !sidebarVisible"
             @update:selected-sort="handleUpdateSelectedSort"
             @update:similarity-character="handleUpdateSimilarityCharacter"
+            @open-import-dialog="openImportDialog"
             @update:set-error="error = $event"
             @update:set-loading="loading = $event"
           />
@@ -1043,6 +1055,10 @@ defineExpose({ sidebarVisible, mediaTypeFilter });
           class="sidebar-backdrop"
           @click="sidebarVisible = false"
         ></div>
+        <GooglePhotosImportDialog
+          v-model:open="googlePhotosDialogOpen"
+          @local-import="handleLocalImport"
+        />
         <main class="main-area" ref="mainAreaRef">
           <Toolbar
             ref="toolbarRef"
