@@ -11,6 +11,8 @@ export const PIL_IMAGE_EXTENSIONS = [
 export const VIDEO_EXTENSIONS =
     ['mp4', 'avi', 'mov', 'webm', 'mkv', 'flv', 'wmv', 'm4v'];
 
+export const ARCHIVE_EXTENSIONS = ['zip'];
+
 export function isSupportedImageFile(file) {
   const ext = (file.name || file).split('.').pop().toLowerCase();
   return PIL_IMAGE_EXTENSIONS.includes(ext);
@@ -23,8 +25,18 @@ export function isSupportedVideoFile(file) {
   return VIDEO_EXTENSIONS.includes(ext);
 }
 
+export function isSupportedArchiveFile(file) {
+  const filename = typeof file === 'string' ? file : file.name || '';
+  const ext = filename.split('.').pop().toLowerCase();
+  return ARCHIVE_EXTENSIONS.includes(ext);
+}
+
 export function isSupportedMediaFile(file) {
   return isSupportedImageFile(file) || isSupportedVideoFile(file);
+}
+
+export function isSupportedImportFile(file) {
+  return isSupportedMediaFile(file) || isSupportedArchiveFile(file);
 }
 
 export function dataTransferHasSupportedMedia(dataTransfer) {
@@ -35,12 +47,15 @@ export function dataTransferHasSupportedMedia(dataTransfer) {
     if (!item || item.kind !== 'file') continue;
     const mime = item.type || '';
     if (typeof mime === 'string' &&
-        (mime.startsWith('image/') || mime.startsWith('video/'))) {
+        (mime.startsWith('image/') ||
+          mime.startsWith('video/') ||
+          mime === 'application/zip' ||
+          mime === 'application/x-zip-compressed')) {
       return true;
     }
     if (!mime && typeof item.getAsFile === 'function') {
       const file = item.getAsFile();
-      if (file && isSupportedMediaFile(file)) {
+      if (file && isSupportedImportFile(file)) {
         return true;
       }
     }

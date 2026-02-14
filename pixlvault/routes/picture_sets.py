@@ -155,16 +155,34 @@ def create_router(server) -> APIRouter:
         os.makedirs(cache_dir, exist_ok=True)
         cache_path = os.path.join(cache_dir, f"picture_set_{id}.png")
         meta_path = os.path.join(cache_dir, f"picture_set_{id}.json")
+        hidden_tags = _get_hidden_tags_from_request(request)
+        hidden_key = "|".join(sorted(tag for tag in hidden_tags if tag))
 
-        def fetch_top_picture_ids(session: Session, set_id: int):
-            rows = session.exec(
-                select(Picture.id)
-                .join(PictureSetMember, PictureSetMember.picture_id == Picture.id)
+        def fetch_top_picture_ids(
+            session: Session,
+            set_id: int,
+            active_hidden_tags: list[str],
+        ):
+            member_rows = session.exec(
+                select(PictureSetMember.picture_id)
+                .join(Picture, Picture.id == PictureSetMember.picture_id)
                 .where(
                     PictureSetMember.set_id == set_id,
                     Picture.deleted.is_(False),
                     Picture.imported_at.is_not(None),
                 )
+            ).all()
+            member_ids = [row for row in member_rows if row is not None]
+            filtered_ids = _filter_hidden_picture_ids(
+                session,
+                member_ids,
+                active_hidden_tags,
+            )
+            if not filtered_ids:
+                return []
+            rows = session.exec(
+                select(Picture.id)
+                .where(Picture.id.in_(filtered_ids))
                 .order_by(
                     nullslast(desc(Picture.score)),
                     nullslast(desc(Picture.aesthetic_score)),
@@ -176,7 +194,9 @@ def create_router(server) -> APIRouter:
             return [row for row in rows if row is not None]
 
         top_ids = server.vault.db.run_immediate_read_task(
-            fetch_top_picture_ids, set_id=id
+            fetch_top_picture_ids,
+            set_id=id,
+            active_hidden_tags=hidden_tags,
         )
         if not top_ids:
             raise HTTPException(status_code=404, detail="No pictures found for set")
@@ -188,6 +208,7 @@ def create_router(server) -> APIRouter:
                 if (
                     meta.get("version") == thumbnail_cache_version
                     and meta.get("picture_ids") == top_ids
+                    and meta.get("hidden_key") == hidden_key
                 ):
                     return FileResponse(cache_path, media_type="image/png")
             except Exception:
@@ -332,6 +353,7 @@ def create_router(server) -> APIRouter:
                         {
                             "version": thumbnail_cache_version,
                             "picture_ids": top_ids,
+                            "hidden_key": hidden_key,
                         },
                         handle,
                     )
