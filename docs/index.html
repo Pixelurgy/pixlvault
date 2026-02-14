@@ -1,0 +1,853 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PixlVault — Image Library for Creators</title>
+    <meta
+      name="description"
+      content="PixlVault is an image library for photographers and AI creators with search, tagging, dataset exports, and a clean UI."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #d3d5d7;
+        --bg-2: #d3d5d7;
+        --panel: rgba(255, 255, 255, 0.94);
+        --panel-strong: rgba(225, 229, 235, 0.9);
+        --text: #393f46;
+        --muted: rgba(57, 63, 70, 0.7);
+        --accent: #9fb11f;
+        --accent-2: #7f8f1a;
+        --accent-3: #2f8b5f;
+        --warning: #c4942f;
+        --shadow: rgba(17, 20, 26, 0.18);
+        --toolbar: #696f76;
+        --toolbar-text: #f2f5fa;
+        --mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+        --sans: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+        --radius-lg: 22px;
+        --radius-md: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        color: var(--text);
+        background:
+          radial-gradient(
+            circle at 15% 10%,
+            rgba(159, 177, 31, 0.18),
+            transparent 45%
+          ),
+          radial-gradient(
+            circle at 85% 0%,
+            rgba(47, 139, 95, 0.16),
+            transparent 40%
+          ),
+          linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+        min-height: 100vh;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .shell {
+        max-width: 1320px;
+        margin: 0 auto;
+        padding: 32px 24px 72px;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        background: var(--toolbar);
+        color: var(--toolbar-text);
+        padding: 14px 18px;
+        border-radius: 16px;
+        box-shadow: 0 16px 34px rgba(17, 20, 26, 0.12);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-weight: 600;
+        font-size: 1.1rem;
+        color: var(--toolbar-text);
+      }
+
+      .brand img {
+        width: 64px;
+        height: 64px;
+        object-fit: contain;
+      }
+
+      .brand-name {
+        font-family: "Press Start 2P", monospace;
+        font-size: 1.35rem;
+        letter-spacing: 0.02em;
+        color: var(--toolbar-text);
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 0.95rem;
+        color: var(--toolbar-text);
+      }
+
+      .nav-links a:hover {
+        color: var(--accent);
+      }
+
+      .hero {
+        margin-top: 64px;
+        display: grid;
+        grid-template-columns: minmax(520px, 1.6fr) minmax(320px, 1fr);
+        gap: 32px;
+        align-items: center;
+      }
+
+      .hero h1 {
+        font-size: clamp(2.6rem, 4vw, 4.3rem);
+        margin: 0 0 16px;
+        line-height: 1.02;
+      }
+
+      .hero p {
+        font-size: 1.1rem;
+        color: var(--muted);
+        line-height: 1.6;
+        margin: 0 0 24px;
+      }
+
+      .hero-badges {
+        display: flex;
+        flex-wrap: nowrap;
+        gap: 10px;
+        margin-bottom: 24px;
+        align-items: center;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+      .hero-badges::-webkit-scrollbar {
+        display: none;
+      }
+
+      .badge {
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        background: var(--panel);
+        border: 1px solid rgba(34, 38, 44, 0.12);
+        color: var(--muted);
+        min-width: 140px;
+        text-align: center;
+        white-space: nowrap;
+      }
+
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .btn {
+        padding: 12px 18px;
+        border-radius: 999px;
+        font-weight: 600;
+        font-size: 0.95rem;
+        border: 1px solid transparent;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition:
+          transform 0.2s ease,
+          box-shadow 0.2s ease;
+      }
+
+      .btn-primary {
+        background: linear-gradient(130deg, var(--accent), var(--accent-2));
+        color: #1b1f24;
+        box-shadow: 0 12px 30px rgba(97, 117, 12, 0.25);
+      }
+
+      .btn-secondary {
+        background: rgba(34, 38, 44, 0.06);
+        color: var(--text);
+        border-color: rgba(34, 38, 44, 0.16);
+      }
+
+      .btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 26px rgba(142, 166, 4, 0.28);
+      }
+
+      .hero-panel {
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.9) 0%,
+          rgba(235, 239, 244, 0.7) 100%
+        );
+        border-radius: var(--radius-lg);
+        border: 1px solid rgba(34, 38, 44, 0.12);
+        padding: 24px;
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 28px 60px var(--shadow);
+      }
+
+      .hero-panel::before {
+        content: "";
+        position: absolute;
+        inset: -40% 40% auto -20%;
+        height: 220px;
+        background: radial-gradient(
+          circle,
+          rgba(159, 177, 31, 0.35),
+          transparent 70%
+        );
+        opacity: 0.6;
+      }
+
+      .hero-panel::after {
+        content: "";
+        position: absolute;
+        inset: auto -10% -30% 50%;
+        height: 240px;
+        background: radial-gradient(
+          circle,
+          rgba(47, 139, 95, 0.3),
+          transparent 70%
+        );
+        opacity: 0.6;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        color: var(--muted);
+        margin-bottom: 16px;
+      }
+
+      .panel-title {
+        font-size: 1.2rem;
+        font-weight: 600;
+        margin-bottom: 14px;
+      }
+
+      .panel-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .panel-card {
+        background: rgba(255, 255, 255, 0.85);
+        border-radius: var(--radius-md);
+        padding: 12px;
+        border: 1px solid rgba(34, 38, 44, 0.1);
+      }
+
+      .panel-card h4 {
+        margin: 0 0 8px;
+        font-size: 0.9rem;
+      }
+
+      .panel-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+
+      .section {
+        margin-top: 80px;
+      }
+
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 24px;
+      }
+
+      .section-title {
+        font-size: 2rem;
+        margin: 0;
+      }
+
+      .section-subtitle {
+        color: var(--muted);
+        max-width: 520px;
+        line-height: 1.6;
+      }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 16px;
+      }
+
+      .feature-card {
+        background: var(--panel);
+        border-radius: var(--radius-md);
+        padding: 18px;
+        border: 1px solid rgba(34, 38, 44, 0.1);
+        min-height: 180px;
+      }
+
+      .feature-card h3 {
+        margin: 0 0 8px;
+      }
+
+      .feature-card p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+        font-size: 0.95rem;
+      }
+
+      .use-case-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 16px;
+      }
+
+      .use-case {
+        background: rgba(255, 255, 255, 0.8);
+        border-radius: var(--radius-md);
+        padding: 16px;
+        border: 1px solid rgba(34, 38, 44, 0.1);
+      }
+
+      .use-case h4 {
+        margin: 0 0 6px;
+        font-size: 1rem;
+      }
+
+      .use-case p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+        line-height: 1.5;
+      }
+
+      .shot-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 18px;
+      }
+
+      .shot {
+        border-radius: var(--radius-lg);
+        padding: 18px;
+        border: 1px solid rgba(34, 38, 44, 0.12);
+        background: linear-gradient(
+          135deg,
+          rgba(255, 255, 255, 0.92),
+          rgba(235, 239, 244, 0.7)
+        );
+        position: relative;
+        min-height: 220px;
+        overflow: hidden;
+      }
+
+      .shot img {
+        width: 100%;
+        height: auto;
+        border-radius: 14px;
+        display: block;
+        margin-bottom: 14px;
+        border: 1px solid rgba(34, 38, 44, 0.18);
+        box-shadow: 0 18px 40px rgba(17, 20, 26, 0.2);
+      }
+
+      .shot-image-btn {
+        display: block;
+        width: 100%;
+        border: none;
+        padding: 0;
+        background: transparent;
+        cursor: zoom-in;
+        text-align: left;
+      }
+
+      .lightbox {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(18, 20, 24, 0.72);
+        z-index: 2000;
+        padding: 28px;
+      }
+
+      .lightbox.open {
+        display: flex;
+      }
+
+      .lightbox-image {
+        max-width: min(1200px, 92vw);
+        max-height: 82vh;
+        width: auto;
+        height: auto;
+        border-radius: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        box-shadow: 0 28px 70px rgba(0, 0, 0, 0.45);
+      }
+
+      .lightbox-close {
+        position: absolute;
+        top: 24px;
+        right: 24px;
+        border: none;
+        border-radius: 999px;
+        padding: 8px 14px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        background: rgba(255, 255, 255, 0.9);
+        color: #1b1f24;
+        cursor: pointer;
+      }
+
+      .lightbox-close:hover {
+        background: rgba(255, 255, 255, 1);
+      }
+
+      .shot::after {
+        content: "";
+        position: absolute;
+        width: 140px;
+        height: 140px;
+        right: -40px;
+        bottom: -60px;
+        background: radial-gradient(
+          circle,
+          rgba(159, 177, 31, 0.25),
+          transparent 70%
+        );
+      }
+
+      .shot-label {
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 12px;
+      }
+
+      .shot h4 {
+        margin: 0 0 8px;
+        font-size: 1.1rem;
+      }
+
+      .shot p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.5;
+      }
+
+      .cta-banner {
+        margin-top: 80px;
+        padding: 28px;
+        border-radius: var(--radius-lg);
+        background: linear-gradient(
+          120deg,
+          rgba(159, 177, 31, 0.18),
+          rgba(47, 139, 95, 0.18)
+        );
+        border: 1px solid rgba(34, 38, 44, 0.12);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .cta-banner p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      footer {
+        margin-top: 60px;
+        color: var(--muted);
+        font-size: 0.85rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      @media (max-width: 700px) {
+        .nav {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .hero {
+          margin-top: 40px;
+        }
+
+        .panel-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .cta-banner {
+          padding: 22px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <nav class="nav">
+        <div class="brand">
+          <img src="assets/logo.png" alt="PixlVault logo" />
+          <span class="brand-name">PixlVault</span>
+        </div>
+        <div class="nav-links">
+          <a href="#features">Features</a>
+          <a href="#api">API</a>
+          <a href="#workflows">Use cases</a>
+          <a href="#screens">Screens</a>
+          <a href="https://github.com/Pixelurgy/pixlvault">GitHub</a>
+        </div>
+      </nav>
+
+      <section class="hero">
+        <div>
+          <div class="hero-badges">
+            <span class="badge">Self-hosted</span>
+            <span class="badge">Open Source</span>
+            <span class="badge">Cross-Platform</span>
+            <span class="badge">AI tagging + search</span>
+            <span class="badge">Automatic rejection</span>
+          </div>
+          <h1>PixlVault keeps your image library searchable and organized.</h1>
+          <p>
+            A practical image management platform for photographers and AI
+            creators. PixlVault brings semantic search, face tagging, and
+            dataset workflows into one place.
+          </p>
+          <div class="cta-row">
+            <a
+              class="btn btn-primary"
+              href="https://github.com/Pixelurgy/pixlvault"
+            >
+              View on GitHub
+            </a>
+            <a class="btn btn-secondary" href="#screens">See the UI</a>
+          </div>
+        </div>
+        <div class="hero-panel">
+          <div class="panel-header">
+            <span>HIGHLIGHTS</span>
+            <span>AUTOMATION</span>
+          </div>
+          <div class="panel-title">Search. Score. Stack.</div>
+          <div class="panel-grid">
+            <div class="panel-card">
+              <h4>AI Automation</h4>
+              <p>Use modern AI models to automate tedious tasks.</p>
+            </div>
+            <div class="panel-card">
+              <h4>Likeness Searches</h4>
+              <p>Automatically find similar images and faces.</p>
+            </div>
+            <div class="panel-card">
+              <h4>GPU Support</h4>
+              <p>Leverage your GPU for faster tagging and processing.</p>
+            </div>
+            <div class="panel-card">
+              <h4>Easy Export</h4>
+              <p>Package filtered selections into training-ready zips.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" class="section">
+        <div class="section-header">
+          <h2 class="section-title">Built for fast browsing</h2>
+          <p class="section-subtitle">
+            PixlVault combines automatic tagging, semantic search, and metadata
+            so you can navigate large libraries with fewer steps.
+          </p>
+        </div>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <h3>Semantic search</h3>
+            <p>Search with natural language and fuzzy matching.</p>
+          </div>
+          <div class="feature-card">
+            <h3>AI tagging</h3>
+            <p>Batch-tag images and faces with state-of-the-art models.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Integrate with ComfyUI</h3>
+            <p>Run workflows in ComfyUI directly from PixlVault.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Open source + easy install</h3>
+            <p>Public repo, local-first workflow, and quick setup.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="api" class="section">
+        <div class="section-header">
+          <h2 class="section-title">API features</h2>
+          <p class="section-subtitle">
+            PixlVault exposes a REST API so you can integrate with scripts,
+            pipelines, and external tools.
+          </p>
+        </div>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <h3>Picture management</h3>
+            <p>List, filter, and update image metadata programmatically.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Tags and labels</h3>
+            <p>Add, remove, and audit tags for images and faces.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Sets and exports</h3>
+            <p>Build sets and trigger filtered exports from the API.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Automation hooks</h3>
+            <p>Drive workflows with endpoints for search and scoring.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="workflows" class="section">
+        <div class="section-header">
+          <h2 class="section-title">Designed for creative workflows</h2>
+          <p class="section-subtitle">
+            Whether you shoot or generate, PixlVault helps you organize, review,
+            and share your work.
+          </p>
+        </div>
+        <div class="use-case-grid">
+          <div class="use-case">
+            <h4>Photographers</h4>
+            <p>Curate, rate, and find your strongest shots quicker.</p>
+          </div>
+          <div class="use-case">
+            <h4>AI creators</h4>
+            <p>Tag, group, and export datasets for training and fine-tuning.</p>
+          </div>
+          <div class="use-case">
+            <h4>Hobbyists</h4>
+            <p>
+              Organise your home photos. Detect duplicates and family members.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="screens" class="section">
+        <div class="section-header">
+          <h2 class="section-title">A UI focused on the work</h2>
+        </div>
+        <div class="shot-grid">
+          <div class="shot">
+            <div class="shot-label">Image grid</div>
+            <button class="shot-image-btn" type="button">
+              <img
+                src="assets/ScreenshotGrid.jpg"
+                data-full="assets/ScreenshotGrid.jpg"
+                alt="PixlVault grid view"
+                loading="lazy"
+              />
+            </button>
+            <h4>Scan the grid</h4>
+            <p>
+              Preview stacks, scores, and metadata without leaving the grid.
+            </p>
+          </div>
+          <div class="shot">
+            <div class="shot-label">Dark + smart scoring</div>
+            <button class="shot-image-btn" type="button">
+              <img
+                src="assets/ScreenshotGridDark.jpg"
+                data-full="assets/ScreenshotGridDark.jpg"
+                alt="PixlVault grid in dark mode with smart scoring"
+                loading="lazy"
+              />
+            </button>
+            <h4>Review scores in dark mode</h4>
+            <p>Sort and scan ratings with the smart scoring view.</p>
+          </div>
+          <div class="shot">
+            <div class="shot-label">Similarity sorting</div>
+            <button class="shot-image-btn" type="button">
+              <img
+                src="assets/ScreenshotGridSimilarity.jpg"
+                data-full="assets/ScreenshotGridSimilarity.jpg"
+                alt="PixlVault grid sorted by character similarity"
+                loading="lazy"
+              />
+            </button>
+            <h4>Sort by character similarity</h4>
+            <p>Compare likeness scores without leaving the grid.</p>
+          </div>
+          <div class="shot">
+            <div class="shot-label">Selections + actions</div>
+            <button class="shot-image-btn" type="button">
+              <img
+                src="assets/ScreenshotGridSelection.jpg"
+                data-full="assets/ScreenshotGridSelection.jpg"
+                alt="PixlVault grid selection with set and character actions"
+                loading="lazy"
+              />
+            </button>
+            <h4>Select, add, and delete</h4>
+            <p>
+              Batch select images, assign to sets or characters, and delete.
+            </p>
+          </div>
+          <div class="shot">
+            <div class="shot-label">Task manager</div>
+            <button class="shot-image-btn" type="button">
+              <img
+                src="assets/ScreenshotTaskManager.jpg"
+                data-full="assets/ScreenshotTaskManager.jpg"
+                alt="PixlVault task manager view"
+                loading="lazy"
+              />
+            </button>
+            <h4>Track automation</h4>
+            <p>Monitor background tagging and processing tasks.</p>
+          </div>
+          <div class="shot">
+            <div class="shot-label">Image View</div>
+            <button class="shot-image-btn" type="button">
+              <img
+                src="assets/ScreenshotImageOverlay.jpg"
+                data-full="assets/ScreenshotImageOverlay.jpg"
+                alt="PixlVault image overlay view"
+                loading="lazy"
+              />
+            </button>
+            <h4>Inspect tags and faces</h4>
+            <p>Edit tags, assign characters, and validate detections.</p>
+          </div>
+          <div class="shot">
+            <div class="shot-label">Tags</div>
+            <button class="shot-image-btn" type="button">
+              <img
+                src="assets/ScreenshotImageOverlay2.jpg"
+                data-full="assets/ScreenshotImageOverlay2.jpg"
+                alt="PixlVault image overlay tag management"
+                loading="lazy"
+              />
+            </button>
+            <h4>Anomalies</h4>
+            <p>Review tags, discover anomalies, and keep datasets clean.</p>
+          </div>
+          <div class="shot">
+            <div class="shot-label">Spot the errors</div>
+            <button class="shot-image-btn" type="button">
+              <img
+                src="assets/ScreenshotImageOverlay3.jpg"
+                data-full="assets/ScreenshotImageOverlay3.jpg"
+                alt="PixlVault image overlay with metadata"
+                loading="lazy"
+              />
+            </button>
+            <h4>Detect anomalies</h4>
+            <p>Find the outliers and inconsistencies in your dataset.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta-banner">
+        <div>
+          <h2 class="section-title">Ready to try PixlVault?</h2>
+          <p>Self-host PixlVault and start organizing your work.</p>
+        </div>
+        <div class="cta-row">
+          <a
+            class="btn btn-primary"
+            href="https://github.com/Pixelurgy/pixlvault"
+          >
+            Get PixlVault
+          </a>
+          <a class="btn btn-secondary" href="#features">Explore features</a>
+        </div>
+      </section>
+
+      <footer>
+        <span>PixlVault — Image management for creators.</span>
+        <span>Open source • Easy install • Cross-platform</span>
+      </footer>
+    </div>
+    <div class="lightbox" id="lightbox" aria-hidden="true">
+      <button class="lightbox-close" type="button">Close</button>
+      <img class="lightbox-image" alt="" />
+    </div>
+    <script>
+      const lightbox = document.getElementById("lightbox");
+      const lightboxImage = lightbox.querySelector(".lightbox-image");
+      const lightboxClose = lightbox.querySelector(".lightbox-close");
+
+      function openLightbox(img) {
+        const full = img.dataset.full || img.src;
+        lightboxImage.src = full;
+        lightboxImage.alt = img.alt || "Screenshot";
+        lightbox.classList.add("open");
+        lightbox.setAttribute("aria-hidden", "false");
+      }
+
+      function closeLightbox() {
+        lightbox.classList.remove("open");
+        lightbox.setAttribute("aria-hidden", "true");
+        lightboxImage.src = "";
+      }
+
+      document.querySelectorAll(".shot-image-btn img").forEach((img) => {
+        img.addEventListener("click", () => openLightbox(img));
+      });
+
+      lightboxClose.addEventListener("click", closeLightbox);
+      lightbox.addEventListener("click", (event) => {
+        if (event.target === lightbox) {
+          closeLightbox();
+        }
+      });
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && lightbox.classList.contains("open")) {
+          closeLightbox();
+        }
+      });
+    </script>
+  </body>
+</html>
