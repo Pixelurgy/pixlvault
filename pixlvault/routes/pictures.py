@@ -1208,6 +1208,15 @@ def create_router(server) -> APIRouter:
                 server.export_tasks[task_id]["total"] = total_items
                 server.export_tasks[task_id]["processed"] = 0
 
+                def resize_crop_if_needed(crop, scale):
+                    if scale >= 1.0:
+                        return crop
+                    new_width = max(1, int(round(crop.width * scale)))
+                    new_height = max(1, int(round(crop.height * scale)))
+                    if new_width == crop.width and new_height == crop.height:
+                        return crop
+                    return crop.resize((new_width, new_height), resample=Image.LANCZOS)
+
                 with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
                     for idx, pic in enumerate(pics, start=1):
                         if (
@@ -1378,6 +1387,9 @@ def create_router(server) -> APIRouter:
                                                 if not bbox:
                                                     continue
                                                 crop = img.crop(bbox)
+                                                crop = resize_crop_if_needed(
+                                                    crop, scale_factor
+                                                )
                                                 buffer = BytesIO()
                                                 crop.save(buffer, format="PNG")
                                                 face_index = getattr(
@@ -1413,6 +1425,9 @@ def create_router(server) -> APIRouter:
                                                 if not bbox:
                                                     continue
                                                 crop = img.crop(bbox)
+                                                crop = resize_crop_if_needed(
+                                                    crop, scale_factor
+                                                )
                                                 buffer = BytesIO()
                                                 crop.save(buffer, format="PNG")
                                                 hand_index = getattr(
