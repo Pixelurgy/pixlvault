@@ -38,7 +38,6 @@ from pixlvault.db_models import (
     PictureSetMember,
     SortMechanism,
     Tag,
-    TAG_EMPTY_SENTINEL,
 )
 from pixlvault.event_types import EventType
 from pixlvault.pixl_logging import get_logger
@@ -143,6 +142,7 @@ def _create_picture_imports(server, uploaded_files, dest_folder):
         new_pictures = []
 
     return shas, existing_map, new_pictures
+
 
 def _select_pictures_for_listing(
     *,
