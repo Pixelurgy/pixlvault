@@ -37,6 +37,106 @@
           </span>
         </div>
         <div class="overlay-top-actions">
+          <v-menu
+            v-model="comfyuiMenuOpen"
+            :close-on-content-click="false"
+            location="bottom end"
+            origin="top end"
+            transition="scale-transition"
+          >
+            <template #activator="{ props }">
+              <button
+                v-bind="props"
+                class="overlay-icon-btn overlay-comfy-activator"
+                type="button"
+                title="Run ComfyUI I2I"
+                aria-label="Run ComfyUI I2I"
+                :class="{
+                  hidden: chromeHidden,
+                  'overlay-icon-btn--active': comfyuiMenuOpen,
+                }"
+              >
+                <v-icon size="20">mdi-robot</v-icon>
+                <span class="overlay-comfy-activator-label">I2I</span>
+              </button>
+            </template>
+            <div class="overlay-comfy-panel">
+              <div class="overlay-comfy-header">ComfyUI I2I</div>
+              <div v-if="comfyuiWorkflowLoading" class="overlay-comfy-status">
+                Loading workflows...
+              </div>
+              <div v-else class="overlay-comfy-body">
+                <div v-if="comfyuiWorkflowError" class="overlay-comfy-error">
+                  {{ comfyuiWorkflowError }}
+                </div>
+                <div
+                  v-if="!validComfyWorkflows.length"
+                  class="overlay-comfy-warning"
+                >
+                  No valid workflows found in comfyui-workflows/ (needs
+                  {{ imagePlaceholderLabel }} and
+                  {{ captionPlaceholderLabel }}).
+                </div>
+                <label class="overlay-comfy-field-label">Workflow</label>
+                <select
+                  v-model="comfyuiSelectedWorkflow"
+                  class="overlay-comfy-select"
+                  :disabled="!validComfyWorkflows.length"
+                >
+                  <option
+                    v-for="workflow in validComfyWorkflows"
+                    :key="workflow.name"
+                    :value="workflow.name"
+                  >
+                    {{ workflow.display_name || workflow.name }}
+                  </option>
+                </select>
+                <div
+                  v-if="invalidComfyWorkflows.length"
+                  class="overlay-comfy-note"
+                >
+                  {{ invalidComfyWorkflows.length }} workflow(s) missing
+                  placeholders.
+                </div>
+                <label class="overlay-comfy-field-label">Caption</label>
+                <div class="overlay-comfy-textarea-wrap">
+                  <div v-if="showComfyuiCaptionHelp" class="overlay-comfy-help">
+                    Add edit caption here
+                  </div>
+                  <textarea
+                    v-model="comfyuiCaption"
+                    class="overlay-comfy-textarea"
+                    rows="4"
+                    @input="comfyuiCaptionTouched = true"
+                    @focus="comfyuiCaptionFocused = true"
+                    @blur="comfyuiCaptionFocused = false"
+                  ></textarea>
+                </div>
+                <div class="overlay-comfy-actions">
+                  <button
+                    class="overlay-comfy-run"
+                    type="button"
+                    :disabled="!canRunComfyWorkflow"
+                    @click.stop="runComfyWorkflow"
+                  >
+                    <v-icon
+                      size="16"
+                      :class="{ 'mdi-spin': comfyuiRunLoading }"
+                    >
+                      {{ comfyuiRunLoading ? "mdi-loading" : "mdi-play" }}
+                    </v-icon>
+                    <span>{{ comfyuiRunLoading ? "Running" : "Run" }}</span>
+                  </button>
+                </div>
+                <div v-if="comfyuiRunError" class="overlay-comfy-error">
+                  {{ comfyuiRunError }}
+                </div>
+                <div v-if="comfyuiRunSuccess" class="overlay-comfy-success">
+                  {{ comfyuiRunSuccess }}
+                </div>
+              </div>
+            </div>
+          </v-menu>
           <AddToSetControl
             v-if="image"
             :key="addToSetControlKey"
@@ -845,6 +945,8 @@ const descriptionDraft = ref("");
 const descriptionEditorRef = ref(null);
 const descriptionCopyState = ref("idle");
 const overlayCopyState = ref("idle");
+const imagePlaceholderLabel = "{{image_path}}";
+const captionPlaceholderLabel = "{{caption}}";
 const canCopyDescription = computed(() => {
   const source = isEditingDescription.value
     ? descriptionDraft.value
@@ -868,15 +970,67 @@ const penalisedTags = ref(new Set());
 const penalisedTagsLoading = ref(false);
 const lastTagUpdateKey = ref(0);
 const addToSetControlKey = ref(0);
+const comfyuiMenuOpen = ref(false);
+const comfyuiWorkflows = ref([]);
+const comfyuiWorkflowLoading = ref(false);
+const comfyuiWorkflowError = ref("");
+const comfyuiSelectedWorkflow = ref("");
+const comfyuiCaption = ref("");
+const comfyuiCaptionTouched = ref(false);
+const comfyuiCaptionFocused = ref(false);
+const comfyuiRunLoading = ref(false);
+const comfyuiRunError = ref("");
+const comfyuiRunSuccess = ref("");
+
+const validComfyWorkflows = computed(() =>
+  (comfyuiWorkflows.value || []).filter((workflow) => workflow?.valid),
+);
+const invalidComfyWorkflows = computed(() =>
+  (comfyuiWorkflows.value || []).filter((workflow) => !workflow?.valid),
+);
+const canRunComfyWorkflow = computed(() => {
+  return (
+    !!image.value?.id &&
+    !!comfyuiSelectedWorkflow.value &&
+    !comfyuiRunLoading.value
+  );
+});
+const showComfyuiCaptionHelp = computed(() => {
+  return !comfyuiCaptionFocused.value && !comfyuiCaption.value;
+});
 
 watch(open, (value) => {
   if (!value) {
     resetTagInput();
     chromeHidden.value = false;
     addToSetControlKey.value += 1;
+    resetComfyState();
   } else {
     fetchCharacters();
     fetchPenalisedTags();
+    fetchComfyWorkflows();
+  }
+});
+
+watch(validComfyWorkflows, (workflows) => {
+  const list = Array.isArray(workflows) ? workflows : [];
+  if (!list.length) {
+    comfyuiSelectedWorkflow.value = "";
+    return;
+  }
+  const hasSelection = list.some(
+    (workflow) => workflow?.name === comfyuiSelectedWorkflow.value,
+  );
+  if (!hasSelection) {
+    comfyuiSelectedWorkflow.value = list[0].name;
+  }
+});
+
+watch(comfyuiMenuOpen, (value) => {
+  if (value) {
+    comfyuiRunError.value = "";
+    comfyuiRunSuccess.value = "";
+    comfyuiCaptionFocused.value = false;
   }
 });
 
@@ -909,6 +1063,53 @@ async function fetchPenalisedTags() {
   }
 }
 
+async function fetchComfyWorkflows() {
+  if (comfyuiWorkflowLoading.value) return;
+  if (!backendUrl.value) return;
+  comfyuiWorkflowLoading.value = true;
+  comfyuiWorkflowError.value = "";
+  try {
+    const res = await apiClient.get(`${backendUrl.value}/comfyui/workflows`);
+    const workflows = res.data?.workflows;
+    comfyuiWorkflows.value = Array.isArray(workflows) ? workflows : [];
+  } catch (err) {
+    comfyuiWorkflowError.value =
+      err?.response?.data?.detail || err?.message || String(err);
+    comfyuiWorkflows.value = [];
+  } finally {
+    comfyuiWorkflowLoading.value = false;
+  }
+}
+
+async function runComfyWorkflow() {
+  if (!canRunComfyWorkflow.value) return;
+  comfyuiRunLoading.value = true;
+  comfyuiRunError.value = "";
+  comfyuiRunSuccess.value = "";
+  try {
+    const payload = {
+      picture_id: image.value.id,
+      workflow_name: comfyuiSelectedWorkflow.value,
+      caption: comfyuiCaption.value || "",
+    };
+    const res = await apiClient.post(
+      `${backendUrl.value}/comfyui/run_i2i`,
+      payload,
+    );
+    const promptCount = Array.isArray(res.data?.prompts)
+      ? res.data.prompts.length
+      : 0;
+    comfyuiRunSuccess.value = promptCount
+      ? `Queued ${promptCount} run(s) in ComfyUI.`
+      : "Queued in ComfyUI.";
+  } catch (err) {
+    comfyuiRunError.value =
+      err?.response?.data?.detail || err?.message || String(err);
+  } finally {
+    comfyuiRunLoading.value = false;
+  }
+}
+
 function isPenalisedTag(tag) {
   const key = tagLabel(tag).trim().toLowerCase();
   if (!key) return false;
@@ -930,6 +1131,8 @@ function getFilmstripThumbSrc(target) {
 watch(image, () => {
   resetTagInput();
   syncDescriptionDraft();
+  comfyuiCaptionTouched.value = false;
+  comfyuiCaption.value = "";
   resetOverlayCopyState();
   nextTick(updateDescriptionScrollState);
 });
@@ -951,6 +1154,15 @@ function resetTagInput() {
 
 function syncDescriptionDraft() {
   descriptionDraft.value = image.value?.description || "";
+}
+
+function resetComfyState() {
+  comfyuiMenuOpen.value = false;
+  comfyuiRunLoading.value = false;
+  comfyuiRunError.value = "";
+  comfyuiRunSuccess.value = "";
+  comfyuiCaptionTouched.value = false;
+  comfyuiCaption.value = "";
 }
 
 function beginAddTag() {
@@ -3413,6 +3625,133 @@ function downloadComfyWorkflow(workflow) {
 .overlay-icon-btn--active {
   background: rgba(var(--v-theme-primary), 0.25);
   color: rgb(var(--v-theme-primary));
+}
+
+.overlay-comfy-activator {
+  gap: 6px;
+}
+
+.overlay-comfy-activator-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.overlay-comfy-panel {
+  padding: 12px;
+  min-width: 320px;
+  background: rgba(var(--v-theme-dark-surface), 0.96);
+  color: rgb(var(--v-theme-on-dark-surface));
+  border-radius: 10px;
+  box-shadow: 2px 2px 12px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.overlay-comfy-header {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.overlay-comfy-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.overlay-comfy-field-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(var(--v-theme-on-dark-surface), 0.6);
+}
+
+.overlay-comfy-select,
+.overlay-comfy-textarea {
+  width: 100%;
+  background: rgba(var(--v-theme-shadow), 0.45);
+  border: 1px solid rgba(var(--v-theme-on-dark-surface), 0.18);
+  color: rgb(var(--v-theme-on-dark-surface));
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.8rem;
+}
+
+.overlay-comfy-textarea-wrap {
+  position: relative;
+}
+
+.overlay-comfy-help {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  font-size: 0.78rem;
+  color: rgba(var(--v-theme-on-dark-surface), 0.5);
+  pointer-events: none;
+}
+
+.overlay-comfy-textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+
+.overlay-comfy-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.overlay-comfy-run {
+  border: none;
+  background: rgba(var(--v-theme-primary), 0.8);
+  color: rgb(var(--v-theme-on-primary));
+  padding: 6px 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.overlay-comfy-run:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.overlay-comfy-warning {
+  background: rgba(var(--v-theme-warning), 0.2);
+  color: rgb(var(--v-theme-on-warning));
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.78rem;
+}
+
+.overlay-comfy-note {
+  font-size: 0.74rem;
+  color: rgba(var(--v-theme-on-dark-surface), 0.65);
+}
+
+.overlay-comfy-status {
+  font-size: 0.8rem;
+  color: rgba(var(--v-theme-on-dark-surface), 0.75);
+}
+
+.overlay-comfy-error {
+  background: rgba(var(--v-theme-error), 0.2);
+  color: rgb(var(--v-theme-on-error));
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.78rem;
+}
+
+.overlay-comfy-success {
+  background: rgba(var(--v-theme-primary), 0.18);
+  color: rgb(var(--v-theme-on-dark-surface));
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.78rem;
 }
 
 .zoom-btn {

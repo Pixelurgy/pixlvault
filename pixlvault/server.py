@@ -39,6 +39,7 @@ from pixlvault.routes.characters import create_router as create_characters_route
 from pixlvault.routes.picture_sets import create_router as create_picture_sets_router
 from pixlvault.routes.tags import create_router as create_tags_router
 from pixlvault.routes.pictures import create_router as create_pictures_router
+from pixlvault.routes.comfyui import create_router as create_comfyui_router
 from pixlvault.picture_utils import PictureUtils
 
 
@@ -587,6 +588,7 @@ class Server:
         self.api.include_router(create_picture_sets_router(self))
         self.api.include_router(create_tags_router(self))
         self.api.include_router(create_pictures_router(self))
+        self.api.include_router(create_comfyui_router(self))
 
         ###############################
         # Config endpoints            #
