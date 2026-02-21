@@ -54,7 +54,9 @@ class PictureServiceUtils:
                     resample=Image.LANCZOS,
                 )
             arcname = f"{base_name}_{feature_type}_{(index + 1):03d}.png"
-            PictureServiceUtils._write_image_to_zip(crop, arcname, zip_file, ext=".png", scale=1.0)
+            PictureServiceUtils._write_image_to_zip(
+                crop, arcname, zip_file, ext=".png", scale=1.0
+            )
             tags = tags_by_feature.get(feature.id, [])
             if tags:
                 zip_file.writestr(
@@ -62,9 +64,10 @@ class PictureServiceUtils:
                     ", ".join(tags) + "\n",
                 )
 
-
     @staticmethod
-    def _write_image_to_zip(img, arcname, zip_file, ext=None, scale=1.0, save_kwargs=None):
+    def _write_image_to_zip(
+        img, arcname, zip_file, ext=None, scale=1.0, save_kwargs=None
+    ):
         """Resize and write an image to a zip file, preserving metadata if possible."""
         from io import BytesIO
 
@@ -100,7 +103,9 @@ class PictureServiceUtils:
             caption_mode_d = "description"
 
         include_character_name = background_data.get("include_character_name", False)
-        include_character_name_enabled = bool(include_character_name) and caption_mode_d != "none"
+        include_character_name_enabled = (
+            bool(include_character_name) and caption_mode_d != "none"
+        )
 
         if export_type_d != Picture.ExportType.FULL:
             caption_mode_d = "tags"
@@ -399,12 +404,18 @@ class PictureServiceUtils:
                             if caption_mode_d == "description":
                                 caption_text = pic.description or ""
                                 if not caption_text:
-                                    caption_text = PictureServiceUtils._build_tag_caption(pic)
+                                    caption_text = (
+                                        PictureServiceUtils._build_tag_caption(pic)
+                                    )
                             elif caption_mode_d == "tags":
-                                caption_text = PictureServiceUtils._build_tag_caption(pic)
+                                caption_text = PictureServiceUtils._build_tag_caption(
+                                    pic
+                                )
 
                             if include_character_name_enabled:
-                                character_names = PictureServiceUtils._build_character_caption(pic)
+                                character_names = (
+                                    PictureServiceUtils._build_character_caption(pic)
+                                )
                                 if character_names:
                                     if caption_mode_d == "tags":
                                         caption_text = (
