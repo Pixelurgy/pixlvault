@@ -79,6 +79,7 @@ def serialize_user_config(user) -> dict:
         "show_problem_icon",
         "date_format",
         "theme_mode",
+        "comfyui_url",
         "similarity_character",
         "stack_strictness",
         "apply_tag_filter",
@@ -131,6 +132,7 @@ def apply_user_config_patch(user, patch_data) -> bool:
         "show_problem_icon",
         "date_format",
         "theme_mode",
+        "comfyui_url",
         "similarity_character",
         "stack_strictness",
         "smart_score_penalised_tags",
@@ -165,6 +167,15 @@ def apply_user_config_patch(user, patch_data) -> bool:
                 new_value = value
             if user.similarity_character != new_value:
                 user.similarity_character = new_value
+                updated = True
+            continue
+        if key == "comfyui_url":
+            if value in ("", None, "null"):
+                new_value = None
+            else:
+                new_value = str(value).strip()
+            if user.comfyui_url != new_value:
+                user.comfyui_url = new_value
                 updated = True
             continue
         if key == "smart_score_penalised_tags":
