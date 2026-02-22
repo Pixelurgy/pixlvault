@@ -291,6 +291,14 @@
               thumb-color="primary"
               @end="commitColumns"
             />
+            <v-switch
+              v-model="showStacksModel"
+              label="Show stacks"
+              color="primary"
+              density="compact"
+              hide-details
+              style="margin-top: 6px"
+            />
           </div>
         </v-menu>
         <v-menu
@@ -557,6 +565,7 @@ const props = defineProps({
   showFormat: { type: Boolean, default: true },
   showResolution: { type: Boolean, default: true },
   showProblemIcon: { type: Boolean, default: true },
+  showStacks: { type: Boolean, default: true },
   exportCount: { type: Number, default: 0 },
   exportType: { type: String, default: "full" },
   exportCaptionMode: { type: String, default: "description" },
@@ -588,6 +597,7 @@ const emit = defineEmits([
   "update:showFormat",
   "update:showResolution",
   "update:showProblemIcon",
+  "update:showStacks",
   "update:exportType",
   "update:exportCaptionMode",
   "update:exportResolution",
@@ -687,6 +697,11 @@ const showResolutionModel = computed({
 const showProblemIconModel = computed({
   get: () => props.showProblemIcon,
   set: (value) => emit("update:showProblemIcon", value),
+});
+
+const showStacksModel = computed({
+  get: () => props.showStacks,
+  set: (value) => emit("update:showStacks", value),
 });
 
 const exportTypeModel = computed({

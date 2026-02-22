@@ -9,6 +9,10 @@ from sqlmodel import select
 
 from pixlvault.db_models import Picture
 from pixlvault.picture_utils import PictureUtils
+from pixlvault.stacking import (
+    build_stack_filename_prefix,
+    get_or_create_stack_for_picture,
+)
 from pixlvault.pixl_logging import get_logger
 
 logger = get_logger(__name__)
@@ -63,6 +67,22 @@ def _replace_placeholders(value, replacements: dict[str, str]):
     if isinstance(value, dict):
         return {key: _replace_placeholders(val, replacements) for key, val in value.items()}
     return value
+
+
+def _apply_filename_prefix(workflow: dict, prefix: str) -> bool:
+    updated = False
+    for node in workflow.values():
+        if not isinstance(node, dict):
+            continue
+        if node.get("class_type") != "SaveImage":
+            continue
+        inputs = node.get("inputs") or {}
+        if not isinstance(inputs, dict):
+            inputs = {}
+        inputs["filename_prefix"] = prefix
+        node["inputs"] = inputs
+        updated = True
+    return updated
 
 
 def _upload_image_to_comfyui(base_url: str, file_path: str) -> str:
@@ -265,6 +285,28 @@ def create_router(server) -> APIRouter:
             workflow_instance = _replace_placeholders(
                 deepcopy(workflow_payload), replacements
             )
+            stack_id = server.vault.db.run_task(
+                get_or_create_stack_for_picture,
+                pic_id,
+            )
+            prefix_seed = ""
+            for node in workflow_instance.values():
+                if not isinstance(node, dict):
+                    continue
+                if node.get("class_type") != "SaveImage":
+                    continue
+                inputs = node.get("inputs") or {}
+                prefix_seed = str(inputs.get("filename_prefix") or "")
+                break
+            if stack_id:
+                prefix_value = build_stack_filename_prefix(
+                    prefix_seed, stack_id, pic_id
+                )
+                if not _apply_filename_prefix(workflow_instance, prefix_value):
+                    logger.warning(
+                        "ComfyUI workflow has no SaveImage node to tag for stack %s",
+                        stack_id,
+                    )
             response_payload = _submit_comfyui_prompt(comfyui_url, workflow_instance)
             prompt_id = response_payload.get("prompt_id") or response_payload.get("id")
             prompts.append(

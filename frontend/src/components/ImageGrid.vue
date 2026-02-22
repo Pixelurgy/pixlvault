@@ -44,6 +44,7 @@
       @remove-from-group="removeFromGroup"
       @delete-selected="deleteSelected"
       @add-to-character="handleAddToCharacter"
+      @create-stack="createStackFromSelection"
     />
     <EmptyScrapHeap
       v-if="showScrapheapBar"
@@ -146,7 +147,10 @@
           v-for="(img, idx) in gridImagesToRender"
           :key="img.id ? `img-${img.id}-${img.idx}` : `placeholder-${img.idx}`"
           :style="getStackCardStyle(img)"
-          class="image-card"
+          :class="[
+            'image-card',
+            { 'image-card-stack-expanded': isStackExpandedForImage(img) },
+          ]"
           @click="handleImageCardClick(img, img.idx, $event)"
           @mouseenter="handleImageMouseEnter(img)"
           @mouseleave="handleImageMouseLeave(img)"
@@ -178,6 +182,25 @@
                 <v-icon size="18" color="error"
                   >mdi-emoticon-sad-outline</v-icon
                 >
+              </div>
+              <div
+                v-if="
+                  shouldShowStackBadge(img) &&
+                  isThumbnailReady(img.id) &&
+                  img.thumbnail
+                "
+                :class="[
+                  'stack-indicator',
+                  'thumbnail-badge',
+                  hasPenalisedTags(img)
+                    ? 'thumbnail-badge--top-left-stack'
+                    : 'thumbnail-badge--top-left',
+                ]"
+                :title="stackBadgeTitle(img)"
+                @click.stop="toggleStackExpand(img)"
+                @mouseenter.stop="prefetchStackMembers(img)"
+              >
+                <v-icon size="18">mdi-layers</v-icon>
               </div>
               <!-- Resolution overlay -->
               <div
@@ -454,6 +477,7 @@ const props = defineProps({
   showFormat: Boolean,
   showResolution: Boolean,
   showProblemIcon: Boolean,
+  showStacks: { type: Boolean, default: true },
   dateFormat: { type: String, default: "locale" },
   allPicturesId: String,
   unassignedPicturesId: String,
@@ -1102,6 +1126,9 @@ function getThumbnailInfoItems(img) {
     selectedSort === STACKS_SORT_KEY &&
     (typeof img.stackIndex === "number" || typeof img.stack_index === "number")
   ) {
+    if (!props.showStacks) {
+      return items;
+    }
     const stackIndex =
       typeof img.stackIndex === "number" ? img.stackIndex : img.stack_index;
     items.push({
@@ -1909,6 +1936,23 @@ function handleOverlayChange(payload) {
   refreshGridImage(imageId);
 }
 
+async function createStackFromSelection() {
+  const ids = Array.isArray(selectedImageIds.value)
+    ? selectedImageIds.value
+    : [];
+  if (!ids.length) return;
+  try {
+    await apiClient.post(`${props.backendUrl}/stacks`, {
+      picture_ids: ids,
+    });
+    clearSelection();
+    preserveScrollOnNextFetch.value = true;
+    debouncedFetchAllGridImages();
+  } catch (e) {
+    console.error("Failed to create stack from selection:", e);
+  }
+}
+
 async function openOverlay(img) {
   if (!img || !img.id) return;
   overlayImageId.value = img.id;
@@ -2396,6 +2440,7 @@ function buildGridFetchKey() {
 
 function getStackCardStyle(img) {
   if (!img) return {};
+  if (!props.showStacks) return {};
   const rawIndex =
     typeof img.stackIndex === "number"
       ? img.stackIndex
@@ -2499,6 +2544,434 @@ function buildStackQueryParams() {
   }
 
   return params.toString();
+}
+
+function getPictureStackId(img) {
+  const stackId = img?.stack_id ?? img?.stackId ?? null;
+  if (stackId === null || stackId === undefined) return null;
+  return String(stackId);
+}
+
+function collapseStackImages(images) {
+  if (!props.showStacks) return images;
+  if (props.selectedSort === STACKS_SORT_KEY) return images;
+  if (!Array.isArray(images) || images.length === 0) return [];
+  const counts = new Map();
+  for (const img of images) {
+    const stackId = getPictureStackId(img);
+    if (!stackId) continue;
+    counts.set(stackId, (counts.get(stackId) || 0) + 1);
+  }
+  if (!counts.size) return images;
+  const seen = new Set();
+  const collapsed = [];
+  for (const img of images) {
+    const stackId = getPictureStackId(img);
+    if (!stackId) {
+      collapsed.push(img);
+      continue;
+    }
+    if (seen.has(stackId)) continue;
+    seen.add(stackId);
+    const stackCount = counts.get(stackId) || 1;
+    if (expandedStackIds.value.has(stackId)) {
+      const expanded = buildExpandedStackImages(stackId, img, stackCount);
+      if (expanded.length) {
+        collapsed.push(...expanded);
+        continue;
+      }
+    }
+    collapsed.push({
+      ...img,
+      stackCount,
+    });
+  }
+  return collapsed;
+}
+
+function mapGridImages(images) {
+  const existingById = new Map(
+    allGridImages.value
+      .filter((img) => img && img.id != null)
+      .map((img) => [PictureId(img.id), img]),
+  );
+  const uniqueImages = Array.isArray(images)
+    ? (() => {
+        const seen = new Set();
+        return images.filter((img) => {
+          const id = PictureId(img?.id);
+          if (id == null) return true;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+      })()
+    : [];
+  return uniqueImages.map((img, i) => {
+    return hydrateGridImage(img, i, existingById);
+  });
+}
+
+function hydrateGridImage(img, idx, existingById) {
+  const existing = img?.id ? existingById.get(PictureId(img.id)) : null;
+  return {
+    ...img,
+    idx,
+    thumbnail: existing?.thumbnail ?? null,
+    penalised_tags: Array.isArray(existing?.penalised_tags)
+      ? existing.penalised_tags
+      : [],
+    faces: Array.isArray(existing?.faces) ? existing.faces : [],
+    hands: Array.isArray(existing?.hands) ? existing.hands : [],
+    thumbnail_width: existing?.thumbnail_width ?? img?.thumbnail_width,
+    thumbnail_height: existing?.thumbnail_height ?? img?.thumbnail_height,
+  };
+}
+
+function setGridIndices(items) {
+  for (let i = 0; i < items.length; i += 1) {
+    items[i].idx = i;
+  }
+}
+
+function shiftRangesForDelta(ranges, start, delta, end = null) {
+  if (!Array.isArray(ranges) || !ranges.length || delta === 0) return ranges;
+  const result = [];
+  const useEnd = typeof end === "number";
+  for (const [rangeStart, rangeEnd] of ranges) {
+    if (useEnd) {
+      if (rangeEnd <= start) {
+        result.push([rangeStart, rangeEnd]);
+        continue;
+      }
+      if (rangeStart >= end) {
+        result.push([rangeStart + delta, rangeEnd + delta]);
+        continue;
+      }
+      continue;
+    }
+    if (rangeEnd <= start) {
+      result.push([rangeStart, rangeEnd]);
+      continue;
+    }
+    if (rangeStart >= start) {
+      result.push([rangeStart + delta, rangeEnd + delta]);
+      continue;
+    }
+  }
+  return result;
+}
+
+function adjustScrollWindowForDelta(changeIndex, delta, totalLength) {
+  if (!Number.isFinite(delta) || delta === 0) return;
+  if (changeIndex < visibleStart.value) {
+    visibleStart.value = Math.max(0, visibleStart.value + delta);
+  }
+  if (changeIndex < visibleEnd.value) {
+    visibleEnd.value = Math.max(0, visibleEnd.value + delta);
+  }
+  const maxEnd = Math.max(0, totalLength);
+  if (visibleEnd.value > maxEnd) visibleEnd.value = maxEnd;
+  if (visibleStart.value > visibleEnd.value) {
+    visibleStart.value = Math.max(0, visibleEnd.value - 1);
+  }
+}
+
+function maybeRefreshThumbnailsForRange(start, end) {
+  const renderStartValue = renderStart.value;
+  const renderEndValue = renderEnd.value;
+  if (end <= renderStartValue || start >= renderEndValue) return;
+  updateVisibleThumbnails();
+}
+
+function rebuildGridImagesFromLastFetch() {
+  const source = Array.isArray(lastFetchedGridImages.value)
+    ? lastFetchedGridImages.value
+    : [];
+  const collapsed = collapseStackImages(source);
+  const newImages = mapGridImages(collapsed);
+  allGridImages.value = newImages;
+  if (visibleStart.value >= newImages.length) {
+    const cols = Math.max(1, props.columns || 1);
+    const windowCount = Math.max(cols, divisibleViewWindow.value || cols);
+    visibleStart.value = 0;
+    visibleEnd.value = Math.min(newImages.length, windowCount);
+  } else if (visibleEnd.value > newImages.length) {
+    visibleEnd.value = newImages.length;
+  }
+  invalidateVisibleThumbnailRanges();
+  updateVisibleThumbnails();
+}
+
+function getLocalStackMembers(stackId) {
+  if (!stackId) return [];
+  const source = Array.isArray(lastFetchedGridImages.value)
+    ? lastFetchedGridImages.value
+    : [];
+  if (!source.length) return [];
+  return source.filter((img) => getPictureStackId(img) === stackId);
+}
+
+function cacheExpandedStackMembers(stackId, members) {
+  if (!stackId || !Array.isArray(members) || members.length === 0) return false;
+  const ordered = members
+    .filter((img) => img && img.id != null)
+    .map((img) =>
+      img.stack_id !== undefined || img.stackId !== undefined
+        ? img
+        : { ...img, stack_id: normalizeStackIdValue(stackId) },
+    );
+  if (!ordered.length) return false;
+  const nextMembers = new Map(expandedStackMembers.value);
+  nextMembers.set(stackId, {
+    ids: ordered.map((img) => String(img.id)),
+    images: ordered,
+  });
+  expandedStackMembers.value = nextMembers;
+  return true;
+}
+
+function getExpandedStackCount(stackId, fallbackCount) {
+  const entry = expandedStackMembers.value.get(stackId);
+  const ids = Array.isArray(entry?.ids) ? entry.ids : [];
+  if (ids.length) return ids.length;
+  const images = Array.isArray(entry?.images) ? entry.images : [];
+  if (images.length) return images.length;
+  const fallback = Number(fallbackCount ?? 0);
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : 1;
+}
+
+function normalizeStackIdValue(stackId) {
+  if (stackId === null || stackId === undefined) return null;
+  const asNumber = Number(stackId);
+  if (Number.isNaN(asNumber)) return String(stackId);
+  return asNumber;
+}
+
+function buildExpandedStackImages(stackId, fallbackImg, stackCount) {
+  const entry = expandedStackMembers.value.get(stackId);
+  const ids = Array.isArray(entry?.ids) ? entry.ids : [];
+  const images = Array.isArray(entry?.images) ? entry.images : [];
+  const imageById = new Map(
+    images
+      .filter((img) => img && img.id != null)
+      .map((img) => [String(img.id), img]),
+  );
+  const ordered = [];
+  const seen = new Set();
+  const stackValue = normalizeStackIdValue(stackId);
+  const addImage = (img) => {
+    if (!img || img.id == null) return;
+    const key = String(img.id);
+    if (seen.has(key)) return;
+    seen.add(key);
+    const withStack =
+      img.stack_id !== undefined || img.stackId !== undefined
+        ? img
+        : { ...img, stack_id: stackValue };
+    ordered.push(withStack);
+  };
+
+  if (ids.length) {
+    for (const id of ids) {
+      addImage(imageById.get(String(id)));
+    }
+  } else {
+    for (const img of images) {
+      addImage(img);
+    }
+  }
+
+  if (fallbackImg?.id != null && !seen.has(String(fallbackImg.id))) {
+    addImage(fallbackImg);
+  }
+
+  if (ordered.length) {
+    ordered[0] = { ...ordered[0], stackCount };
+  }
+  return ordered;
+}
+
+function insertExpandedStackMembers(stackId, fallbackCount) {
+  if (!stackId) return;
+  const items = allGridImages.value.slice();
+  if (!items.length) return;
+  const headerIndex = items.findIndex(
+    (item) => getPictureStackId(item) === stackId,
+  );
+  if (headerIndex === -1) return;
+  const header = items[headerIndex];
+  const stackCount = getExpandedStackCount(stackId, fallbackCount ?? header?.stackCount);
+  const expanded = buildExpandedStackImages(stackId, header, stackCount);
+  if (!expanded.length) return;
+  const headerId = header?.id != null ? String(header.id) : null;
+  const filtered = items.filter((item) => {
+    if (getPictureStackId(item) !== stackId) return true;
+    if (headerId && item?.id != null) {
+      return String(item.id) === headerId;
+    }
+    return false;
+  });
+  const filteredHeaderIndex = filtered.findIndex(
+    (item) => getPictureStackId(item) === stackId,
+  );
+  if (filteredHeaderIndex === -1) return;
+  const existingById = new Map(
+    allGridImages.value
+      .filter((img) => img && img.id != null)
+      .map((img) => [PictureId(img.id), img]),
+  );
+  const expandedHeader = expanded[0];
+  const mergedHeader = hydrateGridImage(
+    { ...header, ...expandedHeader, stackCount },
+    0,
+    existingById,
+  );
+  const insertItems = expanded
+    .filter((img) => img && img.id != null)
+    .filter((img) => String(img.id) !== headerId)
+    .map((img) => hydrateGridImage(img, 0, existingById));
+  const insertIndex = filteredHeaderIndex + 1;
+  const before = filtered.slice(0, filteredHeaderIndex);
+  const after = filtered.slice(filteredHeaderIndex + 1);
+  const result = [...before, mergedHeader, ...insertItems, ...after];
+  setGridIndices(result);
+  allGridImages.value = result;
+  const insertCount = insertItems.length;
+  if (insertCount > 0) {
+    loadedRanges.value = shiftRangesForDelta(
+      loadedRanges.value,
+      insertIndex,
+      insertCount,
+    );
+    pendingRanges = shiftRangesForDelta(
+      pendingRanges,
+      insertIndex,
+      insertCount,
+    );
+    adjustScrollWindowForDelta(insertIndex, insertCount, result.length);
+    maybeRefreshThumbnailsForRange(insertIndex, insertIndex + insertCount + 1);
+  }
+}
+
+function removeExpandedStackMembers(stackId) {
+  if (!stackId) return;
+  const items = allGridImages.value.slice();
+  if (!items.length) return;
+  const headerIndex = items.findIndex(
+    (item) => getPictureStackId(item) === stackId,
+  );
+  if (headerIndex === -1) return;
+  let removedCount = 0;
+  let keptHeader = false;
+  const filtered = items.filter((item) => {
+    if (getPictureStackId(item) !== stackId) return true;
+    if (!keptHeader) {
+      keptHeader = true;
+      return true;
+    }
+    removedCount += 1;
+    return false;
+  });
+  if (filtered.length === items.length) return;
+  setGridIndices(filtered);
+  allGridImages.value = filtered;
+  if (removedCount > 0) {
+    const removeStart = headerIndex + 1;
+    const removeEnd = headerIndex + 1 + removedCount;
+    loadedRanges.value = shiftRangesForDelta(
+      loadedRanges.value,
+      removeStart,
+      -removedCount,
+      removeEnd,
+    );
+    pendingRanges = shiftRangesForDelta(
+      pendingRanges,
+      removeStart,
+      -removedCount,
+      removeEnd,
+    );
+    adjustScrollWindowForDelta(removeStart, -removedCount, filtered.length);
+    maybeRefreshThumbnailsForRange(removeStart, removeStart + 1);
+  }
+}
+
+function isStackExpandedForImage(img) {
+  const stackId = getPictureStackId(img);
+  if (!stackId) return false;
+  return expandedStackIds.value.has(stackId);
+}
+
+async function ensureStackMembersLoaded(stackId) {
+  if (!stackId) return false;
+  const localMembers = getLocalStackMembers(stackId);
+  if (localMembers.length) {
+    cacheExpandedStackMembers(stackId, localMembers);
+    return true;
+  }
+  const existing = expandedStackMembers.value.get(stackId);
+  if (existing && Array.isArray(existing.images) && existing.images.length) {
+    return true;
+  }
+  if (expandedStackLoading.value.has(stackId)) return false;
+  const nextLoading = new Set(expandedStackLoading.value);
+  nextLoading.add(stackId);
+  expandedStackLoading.value = nextLoading;
+  try {
+    const picsRes = await apiClient.get(
+      `${props.backendUrl}/stacks/${stackId}/pictures?fields=grid`,
+    );
+    const picsData = await picsRes.data;
+    const pics = Array.isArray(picsData) ? picsData : [];
+    const ordered = pics
+      .filter((img) => img && img.id != null)
+      .map((img) =>
+        img.stack_id !== undefined || img.stackId !== undefined
+          ? img
+          : { ...img, stack_id: normalizeStackIdValue(stackId) },
+      );
+    const pictureIds = ordered.map((img) => String(img.id));
+    const nextMembers = new Map(expandedStackMembers.value);
+    nextMembers.set(stackId, {
+      ids: pictureIds,
+      images: ordered,
+    });
+    expandedStackMembers.value = nextMembers;
+    return true;
+  } catch (e) {
+    console.error("Failed to load stack members:", e);
+    return false;
+  } finally {
+    const cleared = new Set(expandedStackLoading.value);
+    cleared.delete(stackId);
+    expandedStackLoading.value = cleared;
+  }
+}
+
+async function toggleStackExpand(img) {
+  const stackId = getPictureStackId(img);
+  if (!stackId) return;
+  if (expandedStackIds.value.has(stackId)) {
+    const nextIds = new Set(expandedStackIds.value);
+    nextIds.delete(stackId);
+    expandedStackIds.value = nextIds;
+    removeExpandedStackMembers(stackId);
+    return;
+  }
+  const nextIds = new Set(expandedStackIds.value);
+  nextIds.add(stackId);
+  expandedStackIds.value = nextIds;
+  const stackCount = getStackBadgeCount(img);
+  const loaded = await ensureStackMembersLoaded(stackId);
+  if (loaded !== false) {
+    insertExpandedStackMembers(stackId, stackCount);
+  }
+}
+
+function prefetchStackMembers(img) {
+  const stackId = getPictureStackId(img);
+  if (!stackId) return;
+  void ensureStackMembersLoaded(stackId);
 }
 
 // Fetch total image count for current filters
@@ -2683,6 +3156,8 @@ async function fetchAllGridImages() {
         totalMs: (parseEnd - requestStart).toFixed(1),
       });
     }
+    lastFetchedGridImages.value = Array.isArray(images) ? images.slice() : [];
+    images = collapseStackImages(images);
     const shouldHighlight = highlightNextFetch.value && hasLoadedOnce.value;
     const nextIdSet = new Set(
       Array.isArray(images)
@@ -2705,38 +3180,7 @@ async function fetchAllGridImages() {
     highlightNextFetch.value = false;
     hasLoadedOnce.value = true;
     const mapStart = performance.now();
-    const existingById = new Map(
-      allGridImages.value
-        .filter((img) => img && img.id != null)
-        .map((img) => [PictureId(img.id), img]),
-    );
-    const uniqueImages = Array.isArray(images)
-      ? (() => {
-          const seen = new Set();
-          return images.filter((img) => {
-            const id = PictureId(img?.id);
-            if (id == null) return true;
-            if (seen.has(id)) return false;
-            seen.add(id);
-            return true;
-          });
-        })()
-      : [];
-    const newImages = uniqueImages.map((img, i) => {
-      const existing = img?.id ? existingById.get(PictureId(img.id)) : null;
-      return {
-        ...img,
-        idx: i,
-        thumbnail: existing?.thumbnail ?? null,
-        penalised_tags: Array.isArray(existing?.penalised_tags)
-          ? existing.penalised_tags
-          : [],
-        faces: Array.isArray(existing?.faces) ? existing.faces : [],
-        hands: Array.isArray(existing?.hands) ? existing.hands : [],
-        thumbnail_width: existing?.thumbnail_width ?? img?.thumbnail_width,
-        thumbnail_height: existing?.thumbnail_height ?? img?.thumbnail_height,
-      };
-    });
+    const newImages = mapGridImages(images);
     const mapEnd = performance.now();
     console.log("Updating allGridImages with fetched images:", {
       count: newImages.length,
@@ -2831,6 +3275,10 @@ watch(
     emptyStateDelayPassed.value = false;
     resetThumbnailState();
     allGridImages.value = [];
+    lastFetchedGridImages.value = [];
+    expandedStackIds.value = new Set();
+    expandedStackMembers.value = new Map();
+    expandedStackLoading.value = new Set();
     selectedImageIds.value = [];
     lastSelectedImageId = null;
     initialRender.value = true;
@@ -2852,6 +3300,10 @@ watch([() => props.mediaTypeFilter], () => {
   visibleStart.value = 0;
   visibleEnd.value = 0;
   allGridImages.value = [];
+  lastFetchedGridImages.value = [];
+  expandedStackIds.value = new Set();
+  expandedStackMembers.value = new Map();
+  expandedStackLoading.value = new Set();
   initialRender.value = true;
   fetchAllGridImages().then(() => {
     updateVisibleThumbnails();
@@ -2977,6 +3429,10 @@ const bottomSpacerHeight = computed(() => {
 
 // Compute grid images (id, idx, thumbnail)
 const allGridImages = ref([]);
+const lastFetchedGridImages = ref([]);
+const expandedStackIds = ref(new Set());
+const expandedStackMembers = ref(new Map());
+const expandedStackLoading = ref(new Set());
 
 watch(
   [
@@ -3276,6 +3732,21 @@ function updateVisibleThumbnails() {
 
 function hasPenalisedTags(img) {
   return Array.isArray(img?.penalised_tags) && img.penalised_tags.length > 0;
+}
+
+function getStackBadgeCount(img) {
+  const count = Number(img?.stackCount ?? img?.stack_count ?? 0);
+  return Number.isFinite(count) ? count : 0;
+}
+
+function shouldShowStackBadge(img) {
+  return props.showStacks && getStackBadgeCount(img) > 1;
+}
+
+function stackBadgeTitle(img) {
+  const count = getStackBadgeCount(img);
+  if (count <= 1) return "";
+  return `Stack of ${count} images`;
 }
 
 function penalisedTagsTitle(img) {
@@ -4177,6 +4648,27 @@ function handleEmptyStateReset() {
   z-index: 30;
   pointer-events: auto;
   padding: 2px;
+}
+
+.stack-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+  pointer-events: auto;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.thumbnail-badge--top-left-stack {
+  position: absolute;
+  top: 24px;
+  left: 2px;
+}
+
+.image-card-stack-expanded .thumbnail-card {
+  box-shadow: 0 0 0 2px rgba(var(--v-theme-accent), 0.65);
+  border-radius: 12px;
 }
 
 .thumbnail-placeholder {

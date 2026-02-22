@@ -10,6 +10,11 @@ from pixlvault.database import DBPriority
 from pixlvault.event_types import EventType
 from pixlvault.pixl_logging import get_logger
 from pixlvault.picture_utils import PictureUtils
+from pixlvault.stacking import (
+    assign_picture_to_stack,
+    get_or_create_stack_for_picture,
+    parse_stack_tags_from_filename,
+)
 from pixlvault.worker_registry import BaseWorker, WorkerType
 from pixlvault.db_models.picture import Picture
 
@@ -83,6 +88,7 @@ class WatchFolderWorker(BaseWorker):
                     continue
 
                 new_pictures = []
+                stack_assignments = []
                 delete_paths = []
                 updated = False
                 now_ts = time.time()
@@ -154,6 +160,11 @@ class WatchFolderWorker(BaseWorker):
                                 pixel_sha=pixel_sha,
                             )
                             new_pictures.append(pic)
+                            stack_id, source_id = parse_stack_tags_from_filename(
+                                file_path
+                            )
+                            if stack_id or source_id:
+                                stack_assignments.append((pic, stack_id, source_id))
                             if delete_after_import:
                                 delete_paths.append(file_path)
                         except Exception as exc:
@@ -178,6 +189,31 @@ class WatchFolderWorker(BaseWorker):
                         new_pictures,
                         priority=DBPriority.IMMEDIATE,
                     )
+                    if stack_assignments:
+
+                        def apply_stack_assignments(session: Session, assignments):
+                            for pic, stack_id, source_id in assignments:
+                                if pic.id is None:
+                                    continue
+                                if stack_id:
+                                    assign_picture_to_stack(
+                                        session, pic.id, stack_id
+                                    )
+                                    continue
+                                if source_id:
+                                    resolved_stack_id = get_or_create_stack_for_picture(
+                                        session, source_id
+                                    )
+                                    if resolved_stack_id:
+                                        assign_picture_to_stack(
+                                            session, pic.id, resolved_stack_id
+                                        )
+
+                        self._db.run_task(
+                            apply_stack_assignments,
+                            stack_assignments,
+                            priority=DBPriority.IMMEDIATE,
+                        )
                     logger.info(
                         "Added %d new pictures from watch folders.", len(new_pictures)
                     )
