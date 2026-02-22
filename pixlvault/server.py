@@ -38,6 +38,7 @@ from pixlvault.routes.config import create_router as create_config_router
 from pixlvault.routes.characters import create_router as create_characters_router
 from pixlvault.routes.picture_sets import create_router as create_picture_sets_router
 from pixlvault.routes.tags import create_router as create_tags_router
+from pixlvault.routes.stacks import create_router as create_stacks_router
 from pixlvault.routes.pictures import create_router as create_pictures_router
 from pixlvault.routes.comfyui import create_router as create_comfyui_router
 from pixlvault.picture_utils import PictureUtils
@@ -45,6 +46,38 @@ from pixlvault.picture_utils import PictureUtils
 
 # Logging will be set up after config is loaded
 logger = get_logger(__name__)
+
+
+API_OPENAPI_TAGS = [
+    {
+        "name": "config",
+        "description": "User configuration, auth helpers, worker progress and server config utilities.",
+    },
+    {
+        "name": "characters",
+        "description": "Character CRUD, summaries, reference pictures and face assignment endpoints.",
+    },
+    {
+        "name": "picture_sets",
+        "description": "Picture set CRUD and picture membership management.",
+    },
+    {
+        "name": "tags",
+        "description": "Tag management for pictures, faces and hands.",
+    },
+    {
+        "name": "stacks",
+        "description": "Stack creation, ordering and membership operations.",
+    },
+    {
+        "name": "pictures",
+        "description": "Picture listing, metadata, thumbnails, import/export and media operations.",
+    },
+    {
+        "name": "comfyui",
+        "description": "ComfyUI workflow management and image-to-image execution.",
+    },
+]
 
 
 class Server:
@@ -112,7 +145,16 @@ class Server:
             getattr(self._user, "keep_models_in_memory", True)
         )
 
-        self.api = FastAPI(lifespan=self.lifespan)
+        self.api = FastAPI(
+            title="PixlVault API",
+            version=self._get_version(),
+            description=(
+                "PixlVault backend API for picture management, tagging, stacks, "
+                "sets, character workflows and ComfyUI integration."
+            ),
+            openapi_tags=API_OPENAPI_TAGS,
+            lifespan=self.lifespan,
+        )
         # Enable CORS for any origin (credentials require explicit origin echo)
         self.allow_origins = []
         self.allow_origin_regex = r".*"
@@ -296,7 +338,11 @@ class Server:
             print(
                 f"[SSL] Running with SSL: keyfile={self._server_config.get('ssl_keyfile')}, certfile={self._server_config.get('ssl_certfile')}"
             )
-        uvicorn.run(self.api, **uvicorn_kwargs)
+        try:
+            uvicorn.run(self.api, **uvicorn_kwargs)
+        finally:
+            if hasattr(self, "vault"):
+                self.vault.close()
 
     @asynccontextmanager
     async def lifespan(self, app):
@@ -583,12 +629,13 @@ class Server:
                     if client in self._ws_clients:
                         self._ws_clients.remove(client)
 
-        self.api.include_router(create_config_router(self))
-        self.api.include_router(create_characters_router(self))
-        self.api.include_router(create_picture_sets_router(self))
-        self.api.include_router(create_tags_router(self))
-        self.api.include_router(create_pictures_router(self))
-        self.api.include_router(create_comfyui_router(self))
+        self.api.include_router(create_config_router(self), tags=["config"])
+        self.api.include_router(create_characters_router(self), tags=["characters"])
+        self.api.include_router(create_picture_sets_router(self), tags=["picture_sets"])
+        self.api.include_router(create_tags_router(self), tags=["tags"])
+        self.api.include_router(create_stacks_router(self), tags=["stacks"])
+        self.api.include_router(create_pictures_router(self), tags=["pictures"])
+        self.api.include_router(create_comfyui_router(self), tags=["comfyui"])
 
         ###############################
         # Config endpoints            #

@@ -119,8 +119,10 @@ const workflowImportError = ref("");
 const workflowImportName = ref("");
 const workflowImportPayload = ref(null);
 const workflowImportInputs = ref([]);
+const workflowImportOutputs = ref([]);
 const workflowImportImageTarget = ref("");
 const workflowImportCaptionTarget = ref("");
+const workflowImportOutputTargets = ref([]);
 const workflowImportSaving = ref(false);
 const workflowList = ref([]);
 const workflowListLoading = ref(false);
@@ -205,8 +207,10 @@ function resetSettingsForm() {
   workflowImportName.value = "";
   workflowImportPayload.value = null;
   workflowImportInputs.value = [];
+  workflowImportOutputs.value = [];
   workflowImportImageTarget.value = "";
   workflowImportCaptionTarget.value = "";
+  workflowImportOutputTargets.value = [];
   workflowImportSaving.value = false;
   workflowListError.value = "";
   if (comfyuiSaveTimer) {
@@ -450,22 +454,32 @@ async function handleWorkflowFileChange(event) {
   workflowImportError.value = "";
   workflowImportPayload.value = null;
   workflowImportInputs.value = [];
+  workflowImportOutputs.value = [];
   workflowImportImageTarget.value = "";
   workflowImportCaptionTarget.value = "";
+  workflowImportOutputTargets.value = [];
   workflowImportName.value = file.name.replace(/\.json$/i, "");
   try {
     const text = await file.text();
     const payload = JSON.parse(text);
     const inputs = extractWorkflowInputs(payload);
+    const outputs = extractWorkflowOutputs(payload);
     workflowImportPayload.value = payload;
     workflowImportInputs.value = inputs;
+    workflowImportOutputs.value = outputs;
     if (!inputs.length) {
       workflowImportError.value =
         "No inputs found. This workflow may not be in prompt format.";
     }
     const { imageTarget, captionTarget } = guessWorkflowTargets(inputs);
     workflowImportImageTarget.value = imageTarget || "";
-    workflowImportCaptionTarget.value = captionTarget || "";
+    workflowImportCaptionTarget.value = hasCaptionInputs(inputs)
+      ? captionTarget || ""
+      : "";
+    workflowImportOutputTargets.value = guessWorkflowOutputTargets(
+      payload,
+      outputs,
+    );
     workflowImportDialogOpen.value = true;
   } catch (e) {
     workflowImportError.value = "Failed to parse workflow JSON.";
@@ -585,6 +599,84 @@ function extractWorkflowInputs(payload) {
   return entries;
 }
 
+function extractWorkflowOutputs(payload) {
+  const entries = [];
+  if (!payload || typeof payload !== "object") return entries;
+
+  const isNodeDisabled = (node) => {
+    if (!node || typeof node !== "object") return false;
+    if (node.disabled === true || node.is_disabled === true) return true;
+    if (node.flags && typeof node.flags === "object") {
+      if (node.flags.disabled === true) return true;
+    }
+    return false;
+  };
+
+  const prompt =
+    payload.prompt && typeof payload.prompt === "object"
+      ? payload.prompt
+      : null;
+  if (prompt) {
+    Object.entries(prompt).forEach(([nodeId, node]) => {
+      if (isNodeDisabled(node)) return;
+      const nodeType = node?.class_type || node?.type || "Node";
+      if (nodeType !== "SaveImage") return;
+      entries.push({
+        id: String(nodeId),
+        label: `${nodeType} · ${nodeId}`,
+        type: "prompt",
+        nodeId,
+        nodeType,
+      });
+    });
+  }
+
+  if (!prompt && !Array.isArray(payload.nodes)) {
+    const values = Object.values(payload);
+    const looksLikeGraph =
+      values.length > 0 &&
+      values.every(
+        (node) =>
+          node &&
+          typeof node === "object" &&
+          node.inputs &&
+          typeof node.inputs === "object" &&
+          (node.class_type || node.type),
+      );
+    if (looksLikeGraph) {
+      Object.entries(payload).forEach(([nodeId, node]) => {
+        if (isNodeDisabled(node)) return;
+        const nodeType = node?.class_type || node?.type || "Node";
+        if (nodeType !== "SaveImage") return;
+        entries.push({
+          id: String(nodeId),
+          label: `${nodeType} · ${nodeId}`,
+          type: "graph",
+          nodeId,
+          nodeType,
+        });
+      });
+    }
+  }
+
+  if (Array.isArray(payload.nodes)) {
+    payload.nodes.forEach((node, nodeIndex) => {
+      if (isNodeDisabled(node)) return;
+      const nodeType = node?.type || node?.class_type || "Node";
+      if (nodeType !== "SaveImage") return;
+      entries.push({
+        id: String(nodeIndex),
+        label: `${nodeType} · ${nodeIndex + 1}`,
+        type: "node",
+        nodeIndex,
+        nodeType,
+      });
+    });
+  }
+
+  return entries;
+}
+
 function guessWorkflowTargets(entries) {
   const loadImageTarget = entries.find((entry) =>
     /loadimage/i.test(entry.nodeType || ""),
@@ -603,6 +695,34 @@ function guessWorkflowTargets(entries) {
     imageTarget: imageTarget?.id || "",
     captionTarget: captionTarget?.id || "",
   };
+}
+
+function hasCaptionInputs(entries) {
+  return entries.some((entry) =>
+    /cliptextencode|prompt|text|caption/i.test(
+      entry.nodeType || entry.inputKey || entry.label || "",
+    ),
+  );
+}
+
+function guessWorkflowOutputTargets(payload, outputs) {
+  const rawTargets =
+    payload?.pixlvault_output_nodes ??
+    payload?.pixlvault_output_node ??
+    payload?.output_node_ids ??
+    payload?.output_node_id ??
+    null;
+  const available = new Set((outputs || []).map((entry) => entry.id));
+  const normalizeTargets = (value) => {
+    if (value == null) return [];
+    const list = Array.isArray(value) ? value : [value];
+    return list
+      .map((item) => String(item))
+      .filter((item) => !available.size || available.has(item));
+  };
+  const explicit = normalizeTargets(rawTargets);
+  if (explicit.length) return explicit;
+  return (outputs || []).map((entry) => entry.id);
 }
 
 function getWorkflowInputPreview(payload, targetId) {
@@ -631,10 +751,10 @@ function getWorkflowInputPreview(payload, targetId) {
 
 function applyWorkflowPlaceholders(payload, imageTargetId, captionTargetId) {
   const cloned = JSON.parse(JSON.stringify(payload));
-  const replacements = [
-    { id: imageTargetId, value: "{{image_path}}" },
-    { id: captionTargetId, value: "{{caption}}" },
-  ];
+  const replacements = [{ id: imageTargetId, value: "{{image_path}}" }];
+  if (captionTargetId) {
+    replacements.push({ id: captionTargetId, value: "{{caption}}" });
+  }
   replacements.forEach(({ id, value }) => {
     const entry = workflowImportInputs.value.find((item) => item.id === id);
     if (!entry) return;
@@ -665,10 +785,31 @@ function applyWorkflowPlaceholders(payload, imageTargetId, captionTargetId) {
   return cloned;
 }
 
+function applyWorkflowOutputTargets(payload, outputTargets) {
+  if (!payload || typeof payload !== "object") return payload;
+  const targets = Array.isArray(outputTargets)
+    ? outputTargets.filter(Boolean).map((value) => String(value))
+    : [];
+  if (targets.length) {
+    payload.pixlvault_output_nodes = targets;
+    if (payload.pixlvault_output_node != null) {
+      delete payload.pixlvault_output_node;
+    }
+  } else {
+    if (payload.pixlvault_output_nodes != null) {
+      delete payload.pixlvault_output_nodes;
+    }
+    if (payload.pixlvault_output_node != null) {
+      delete payload.pixlvault_output_node;
+    }
+  }
+  return payload;
+}
+
 async function confirmWorkflowImport() {
   if (!workflowImportPayload.value) return;
-  if (!workflowImportImageTarget.value || !workflowImportCaptionTarget.value) {
-    workflowImportError.value = "Select both image and caption inputs.";
+  if (!workflowImportImageTarget.value) {
+    workflowImportError.value = "Select an image input.";
     return;
   }
   const name = String(workflowImportName.value || "").trim();
@@ -701,9 +842,16 @@ async function confirmWorkflowImport() {
       workflowImportImageTarget.value,
       workflowImportCaptionTarget.value,
     );
+    const outputTargets = Array.isArray(workflowImportOutputTargets.value)
+      ? workflowImportOutputTargets.value
+      : [];
+    const updatedWithOutputs = applyWorkflowOutputTargets(
+      updated,
+      outputTargets,
+    );
     await apiClient.post("/comfyui/workflows/import", {
       name,
-      workflow: updated,
+      workflow: updatedWithOutputs,
       overwrite,
     });
     workflowImportDialogOpen.value = false;
@@ -1015,8 +1163,20 @@ watch([comfyuiHost, comfyuiPort], () => {
   scheduleComfyuiSave();
 });
 
-const workflowInputOptions = computed(() =>
+const workflowImageInputOptions = computed(() =>
   (workflowImportInputs.value || []).map((entry) => ({
+    title: entry.label,
+    value: entry.id,
+  })),
+);
+
+const workflowCaptionInputOptions = computed(() => [
+  { title: "No caption", value: "" },
+  ...workflowImageInputOptions.value,
+]);
+
+const workflowOutputNodeOptions = computed(() =>
+  (workflowImportOutputs.value || []).map((entry) => ({
     title: entry.label,
     value: entry.id,
   })),
@@ -1485,6 +1645,7 @@ const workflowImportCaptionPreview = computed(() => {
                         {{ workflow.valid ? "valid" : "invalid" }}
                       </span>
                       <v-btn
+                        v-if="workflow.source !== 'built-in'"
                         icon
                         variant="text"
                         class="settings-tag-delete"
@@ -1710,7 +1871,7 @@ const workflowImportCaptionPreview = computed(() => {
         />
         <v-select
           v-model="workflowImportImageTarget"
-          :items="workflowInputOptions"
+          :items="workflowImageInputOptions"
           item-title="title"
           item-value="value"
           label="Image input"
@@ -1722,7 +1883,7 @@ const workflowImportCaptionPreview = computed(() => {
         </div>
         <v-select
           v-model="workflowImportCaptionTarget"
-          :items="workflowInputOptions"
+          :items="workflowCaptionInputOptions"
           item-title="title"
           item-value="value"
           label="Caption input"
@@ -1731,6 +1892,26 @@ const workflowImportCaptionPreview = computed(() => {
         />
         <div v-if="workflowImportCaptionPreview" class="settings-token-warning">
           Current value: {{ workflowImportCaptionPreview }}
+        </div>
+        <v-select
+          v-model="workflowImportOutputTargets"
+          :items="workflowOutputNodeOptions"
+          item-title="title"
+          item-value="value"
+          label="SaveImage outputs"
+          multiple
+          density="comfortable"
+          variant="filled"
+          :disabled="!workflowOutputNodeOptions.length"
+        />
+        <div
+          v-if="!workflowOutputNodeOptions.length"
+          class="settings-token-warning"
+        >
+          No SaveImage nodes detected. Outputs will be auto-detected.
+        </div>
+        <div v-else class="settings-success">
+          Leave empty to use all SaveImage nodes.
         </div>
         <div v-if="workflowImportError" class="settings-error">
           {{ workflowImportError }}

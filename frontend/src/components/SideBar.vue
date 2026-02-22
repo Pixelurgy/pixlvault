@@ -1825,10 +1825,7 @@ defineExpose({ refreshSidebar, openSettingsDialog, startLocalImport });
           @click="taskManagerOpen = true"
         >
           <span class="sidebar-list-icon">
-            <canvas
-              ref="taskIndicatorCanvasRef"
-              class="sidebar-task-indicator-canvas"
-            ></canvas>
+            <v-icon>mdi-timeline-clock-outline</v-icon>
           </span>
           <span class="sidebar-list-label">Task Manager</span>
         </div>

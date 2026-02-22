@@ -6,10 +6,36 @@
       </v-btn>
       <v-card class="task-manager-card">
         <div class="task-manager-header">
-          <div class="task-manager-title">Worker Task Manager</div>
-        </div>
-        <div class="task-manager-subtitle">
-          Last {{ windowSeconds / 60 }} minutes. Rates are pictures per second.
+          <div class="task-manager-header-main">
+            <div class="task-manager-title">Worker Task Manager</div>
+            <div class="task-manager-subtitle">
+              Last {{ windowSeconds / 60 }} minutes. Rates are pictures per
+              second.
+            </div>
+          </div>
+          <div v-if="systemItems.length" class="task-manager-header-system">
+            <div
+              v-for="item in systemItems"
+              :key="item.label"
+              class="task-manager-system-item"
+            >
+              <span class="task-manager-system-label">{{ item.label }}</span>
+              <span class="task-manager-system-value">
+                <template
+                  v-for="(part, idx) in splitPercentSegments(item.value)"
+                  :key="`${item.label}-${idx}`"
+                >
+                  <span
+                    :class="{
+                      'task-manager-system-value--emphasis': part.bold,
+                    }"
+                  >
+                    {{ part.text }}
+                  </span>
+                </template>
+              </span>
+            </div>
+          </div>
         </div>
         <div v-if="loading" class="task-manager-loading">Loading...</div>
         <div v-else class="task-manager-tabs">
@@ -113,23 +139,6 @@
                     <span class="task-manager-status-text">
                       {{ combinedSnapshot.running ? "running" : "idle" }}
                     </span>
-                  </div>
-                </div>
-              </div>
-              <div v-if="systemItems.length" class="task-manager-system">
-                <div class="task-manager-system-header">PixlVault usage</div>
-                <div class="task-manager-system-items">
-                  <div
-                    v-for="item in systemItems"
-                    :key="item.label"
-                    class="task-manager-system-item"
-                  >
-                    <span class="task-manager-system-label">{{
-                      item.label
-                    }}</span>
-                    <span class="task-manager-system-value">{{
-                      item.value
-                    }}</span>
                   </div>
                 </div>
               </div>
@@ -394,10 +403,18 @@ const combinedSnapshot = computed(() => {
 const systemItems = computed(() => {
   const usage = systemUsage.value || {};
   const items = [];
-  if (Number.isFinite(usage.cpu_percent)) {
+  const cpuAllCores = Number.isFinite(usage.cpu_percent_all_cores)
+    ? usage.cpu_percent_all_cores
+    : usage.cpu_percent;
+  const cpuOneCore = Number.isFinite(usage.cpu_percent_one_core)
+    ? usage.cpu_percent_one_core
+    : null;
+  if (Number.isFinite(cpuAllCores)) {
     items.push({
       label: "CPU",
-      value: formatPercent(usage.cpu_percent),
+      value: Number.isFinite(cpuOneCore)
+        ? `${formatPercent(cpuAllCores)} all cores (${formatPercent(cpuOneCore)} one core)`
+        : formatPercent(cpuAllCores),
     });
   }
   if (Number.isFinite(usage.ram_used_gb)) {
@@ -410,16 +427,13 @@ const systemItems = computed(() => {
       ),
     });
   }
-  if (Number.isFinite(usage.vram_used_gb)) {
-    items.push({
-      label: "VRAM",
-      value: formatUsage(
-        usage.vram_used_gb,
-        usage.vram_total_gb,
-        usage.vram_percent,
-      ),
-    });
-  }
+  const vramValue = Number.isFinite(usage.vram_used_gb)
+    ? formatUsage(usage.vram_used_gb, usage.vram_total_gb, usage.vram_percent)
+    : "n/a";
+  items.push({
+    label: "VRAM",
+    value: vramValue,
+  });
   return items;
 });
 
@@ -821,6 +835,29 @@ function formatUsage(used, total, percent) {
   return usedLabel;
 }
 
+function splitPercentSegments(value) {
+  const text = String(value ?? "");
+  const regex = /\d+(?:\.\d+)?%/g;
+  const segments = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(regex)) {
+    const start = match.index ?? 0;
+    const matchedText = match[0] || "";
+    if (start > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, start), bold: false });
+    }
+    segments.push({ text: matchedText, bold: true });
+    lastIndex = start + matchedText.length;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex), bold: false });
+  }
+
+  return segments.length ? segments : [{ text, bold: false }];
+}
+
 function getMaxRate(key) {
   const samples = series.value[key] || [];
   if (!samples.length) return 0;
@@ -875,7 +912,10 @@ onBeforeUnmount(() => {
   color: rgb(var(--v-theme-on-background));
   padding: 16px 18px 20px 18px;
   border-radius: 16px;
-  width: 60vw;
+  width: min(92vw, 1600px);
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .task-manager-shell {
@@ -886,14 +926,29 @@ onBeforeUnmount(() => {
 
 .task-manager-window {
   position: relative;
-  display: inline-block;
+  display: block;
+  width: 100%;
 }
 
 .task-manager-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.task-manager-header-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.task-manager-header-system {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  max-width: 52%;
 }
 
 .task-manager-title {
@@ -902,28 +957,8 @@ onBeforeUnmount(() => {
 }
 
 .task-manager-subtitle {
-  margin-top: 4px;
   color: rgba(var(--v-theme-on-surface), 0.65);
   font-size: 0.9rem;
-}
-
-.task-manager-system {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.task-manager-system-header {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: rgba(var(--v-theme-on-surface), 0.8);
-}
-
-.task-manager-system-items {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
 }
 
 .task-manager-system-item {
@@ -944,6 +979,11 @@ onBeforeUnmount(() => {
 
 .task-manager-system-value {
   color: rgba(var(--v-theme-on-surface), 0.65);
+}
+
+.task-manager-system-value--emphasis {
+  font-weight: 700;
+  color: rgba(var(--v-theme-on-surface), 0.9);
 }
 
 .task-manager-loading {
@@ -980,8 +1020,8 @@ onBeforeUnmount(() => {
 
 .task-manager-tab-window {
   margin-top: 12px;
-  height: 55vh;
-  min-height: 500px;
+  height: auto;
+  min-height: 0;
 }
 
 .task-manager-tab-window :deep(.v-window__container) {
@@ -999,8 +1039,28 @@ onBeforeUnmount(() => {
 .task-manager-grid {
   margin-top: 16px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  width: 100%;
+  max-width: 100%;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+@media (max-width: 1700px) {
+  .task-manager-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1280px) {
+  .task-manager-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .task-manager-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .task-manager-panel {
@@ -1021,7 +1081,8 @@ onBeforeUnmount(() => {
 .task-manager-graph {
   position: relative;
   width: 100%;
-  height: 100%;
+  height: 55vh;
+  min-height: 500px;
   border-radius: 14px;
   background: rgba(var(--v-theme-shadow), 0.12);
   border: 1px solid rgba(var(--v-theme-border), 0.4);
@@ -1099,10 +1160,11 @@ onBeforeUnmount(() => {
   font-size: 0.85rem;
   color: rgba(var(--v-theme-on-surface), 0.7);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
   min-height: 1.2em;
   line-height: 1.2;
+  flex-shrink: 0;
 }
 
 .task-manager-panel-subheader {

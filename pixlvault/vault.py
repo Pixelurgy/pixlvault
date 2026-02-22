@@ -1,4 +1,6 @@
 import concurrent
+import ctypes
+import platform
 
 import datetime
 import os
@@ -36,7 +38,8 @@ logger = get_logger(__name__)
 
 
 class Vault:
-    AGGRESSIVE_UNLOAD_INTERVAL = 300
+    AGGRESSIVE_UNLOAD_INTERVAL = 180
+    MODEL_STATUS_LOG_INTERVAL = 60
     # Map event type to list of worker types
     _event_worker_map = {
         EventType.CHANGED_PICTURES: [
@@ -106,6 +109,7 @@ class Vault:
 
         self._picture_tagger = None
         self._last_aggressive_unload_at = 0.0
+        self._last_model_status_log_at = 0.0
         self._keep_models_in_memory = True
 
         self._workers = {}
@@ -205,7 +209,21 @@ class Vault:
             self.db = None
 
     def set_keep_models_in_memory(self, keep_models_in_memory: bool):
+        previous = self._keep_models_in_memory
         self._keep_models_in_memory = bool(keep_models_in_memory)
+
+        if self._picture_tagger and hasattr(
+            self._picture_tagger, "set_keep_models_in_memory"
+        ):
+            self._picture_tagger.set_keep_models_in_memory(self._keep_models_in_memory)
+
+        if previous and not self._keep_models_in_memory:
+            logger.info(
+                "keep_models_in_memory disabled; attempting immediate model unload."
+            )
+            self._last_aggressive_unload_at = 0.0
+            progress = self._build_worker_progress_snapshot()
+            self._maybe_aggressive_unload(progress)
 
     def generate_text_embedding(self, query: str) -> Optional[np.ndarray]:
         """
@@ -278,6 +296,7 @@ class Vault:
         """
         if not self._picture_tagger:
             self._picture_tagger = PictureTagger(image_root=self.image_root)
+            self._picture_tagger.set_keep_models_in_memory(self._keep_models_in_memory)
 
         if worker_type not in self._workers:
             worker_instance = WorkerRegistry.create_worker(
@@ -313,7 +332,7 @@ class Vault:
         worker = self._workers.get(worker_type)
         return worker is not None and worker.is_alive()
 
-    def get_worker_progress(self) -> dict:
+    def _build_worker_progress_snapshot(self) -> dict:
         progress = {}
         for worker_type in WorkerType.all():
             worker = self._workers.get(worker_type)
@@ -331,18 +350,56 @@ class Vault:
                     "running": False,
                 }
             progress[worker_type.value] = snapshot
-        self._maybe_aggressive_unload(progress)
         return progress
+
+    def get_worker_progress(self) -> dict:
+        progress = self._build_worker_progress_snapshot()
+        self._maybe_aggressive_unload(progress)
+        self._maybe_log_model_status(progress)
+        return progress
+
+    def _maybe_log_model_status(self, progress: dict):
+        now = time.time()
+        if now - self._last_model_status_log_at < self.MODEL_STATUS_LOG_INTERVAL:
+            return
+
+        worker_busy = 0
+        for snapshot in (progress or {}).values():
+            status = snapshot.get("status")
+            current = int(snapshot.get("current") or 0)
+            total = int(snapshot.get("total") or 0)
+            remaining = snapshot.get("remaining")
+            if remaining is None:
+                remaining = max(0, total - current)
+            else:
+                remaining = max(0, int(remaining))
+            if status not in ("idle", "stopped", "uninitialized") and (
+                remaining > 0 or (total > 0 and current < total)
+            ):
+                worker_busy += 1
+
+        model_state = {}
+        if self._picture_tagger and hasattr(self._picture_tagger, "loaded_model_state"):
+            try:
+                model_state = self._picture_tagger.loaded_model_state()
+            except Exception as exc:
+                model_state = {"error": f"failed_to_collect_tagger_state:{exc}"}
+
+        model_state["insightface_loaded"] = bool(
+            getattr(FeatureExtractionWorker, "_global_insightface_app", None)
+            is not None
+        )
+        model_state["hand_detector_loaded"] = bool(
+            getattr(FeatureExtractionWorker, "_hand_model", None) is not None
+        )
+        model_state["workers_busy"] = worker_busy
+        logger.info("Model residency status: %s", model_state)
+        self._last_model_status_log_at = now
 
     def _maybe_aggressive_unload(self, progress: dict):
         if self._keep_models_in_memory:
             return
         if not self._picture_tagger:
-            return
-        if self._picture_tagger.is_captioning_initialized():
-            logger.debug(
-                "Skipping aggressive unload because Florence captioning is initialized."
-            )
             return
         now = time.time()
         if now - self._last_aggressive_unload_at < self.AGGRESSIVE_UNLOAD_INTERVAL:
@@ -352,7 +409,21 @@ class Vault:
         for snapshot in progress.values():
             status = snapshot.get("status")
             running = bool(snapshot.get("running"))
-            if running and status not in ("idle", "stopped", "uninitialized"):
+            if not running:
+                continue
+            if status in ("idle", "stopped", "uninitialized"):
+                continue
+
+            current = int(snapshot.get("current") or 0)
+            total = int(snapshot.get("total") or 0)
+            remaining = snapshot.get("remaining")
+            if remaining is None:
+                remaining = max(0, total - current)
+            else:
+                remaining = max(0, int(remaining))
+
+            has_pending_work = remaining > 0 or (total > 0 and current < total)
+            if has_pending_work:
                 any_busy = True
                 break
         if any_busy:
@@ -370,6 +441,11 @@ class Vault:
                 logger.warning(
                     "Aggressive unload failed for %s: %s", worker.name(), exc
                 )
+        if platform.system().lower().startswith("linux"):
+            try:
+                ctypes.CDLL("libc.so.6").malloc_trim(0)
+            except Exception:
+                pass
         self._last_aggressive_unload_at = now
 
     def import_default_data(self, add_tagger_test_images: bool = False):

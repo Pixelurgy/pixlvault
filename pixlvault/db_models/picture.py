@@ -27,6 +27,7 @@ from pixlvault.db_models.hand_tag import HandTag
 from .face import Face
 from .hand import Hand
 from .picture_set import PictureSet, PictureSetMember
+from .picture_stack import PictureStack
 from .quality import Quality
 from .tag import Tag
 
@@ -70,7 +71,7 @@ class SortMechanism:
         },
         Keys.PICTURE_STACKS: {
             "field": "id",
-            "description": "Stacks",
+            "description": "Likeness Groups",
         },
         Keys.IMAGE_SIZE: {
             "field": None,  # Special case, not a direct field
@@ -181,6 +182,10 @@ class Picture(SQLModel, table=True):
     aesthetic_score: Optional[float] = None
     pixel_sha: Optional[str] = Field(default=None, index=True)
     deleted: bool = Field(default=False, index=True)
+    stack_id: Optional[int] = Field(
+        default=None, foreign_key="picturestack.id", index=True
+    )
+    stack_position: Optional[int] = Field(default=None, index=True)
 
     # Relationships
     quality: Optional["Quality"] = Relationship(back_populates="picture")
@@ -215,6 +220,7 @@ class Picture(SQLModel, table=True):
     picture_sets: List["PictureSet"] = Relationship(
         back_populates="members", link_model=PictureSetMember
     )
+    stack: Optional["PictureStack"] = Relationship(back_populates="pictures")
 
     likeness_a: List["PictureLikeness"] = Relationship(
         back_populates="picture_a",
@@ -571,6 +577,8 @@ class Picture(SQLModel, table=True):
             "format",
             "score",
             "created_at",
+            "stack_id",
+            "stack_position",
         }
 
     @classmethod

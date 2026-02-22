@@ -206,7 +206,7 @@
               v-if="sortModel === STACKS_SORT_KEY"
               class="toolbar-sort-similarity-row"
             >
-              <span>Stack strictness</span>
+              <span>Group strictness</span>
               <div class="toolbar-similarity-scroll">
                 <v-btn-toggle
                   v-model="stackThresholdModel"
@@ -249,7 +249,7 @@
               :color="
                 props['aria-expanded'] === 'true' ? 'primary' : 'undefined'
               "
-              title="Set grid columns"
+              title="Grid View Options"
               class="toolbar-action-btn"
             >
               <v-icon>mdi-view-grid</v-icon>
@@ -277,20 +277,53 @@
                 font-weight: 500;
                 letter-spacing: 0.02em;
               "
-              >Columns: {{ pendingColumns }}</span
+              >Grid View Options</span
             >
             <v-slider
+              class="toolbar-columns-slider"
               v-model="pendingColumns"
               :min="minColumns"
               :max="maxColumns"
               :step="1"
               vertical
-              style="height: 40px; width: 80%; margin-bottom: 0"
+              density="compact"
+              style="
+                height: 40px;
+                width: 100%;
+                margin-bottom: 0;
+                color: rgb(var(--v-theme-on-background));
+              "
               hide-details
               track-color="#888"
               thumb-color="primary"
+              label="Columns"
               @end="commitColumns"
             />
+            <div class="toolbar-stacks-controls">
+              <div class="toolbar-stacks-title">Stacks</div>
+              <div class="toolbar-stacks-buttons">
+                <v-btn
+                  class="toolbar-stack-toggle-btn"
+                  color="primary"
+                  variant="flat"
+                  size="small"
+                  :disabled="expandAllStacksDisabled"
+                  @click="emit('expand-all-stacks')"
+                >
+                  Expand all
+                </v-btn>
+                <v-btn
+                  class="toolbar-stack-toggle-btn"
+                  color="primary"
+                  variant="flat"
+                  size="small"
+                  :disabled="collapseAllStacksDisabled"
+                  @click="emit('collapse-all-stacks')"
+                >
+                  Collapse all
+                </v-btn>
+              </div>
+            </div>
           </div>
         </v-menu>
         <v-menu
@@ -557,6 +590,9 @@ const props = defineProps({
   showFormat: { type: Boolean, default: true },
   showResolution: { type: Boolean, default: true },
   showProblemIcon: { type: Boolean, default: true },
+  showStacks: { type: Boolean, default: true },
+  stackExpandedCount: { type: Number, default: 0 },
+  stackTotalCount: { type: Number, default: 0 },
   exportCount: { type: Number, default: 0 },
   exportType: { type: String, default: "full" },
   exportCaptionMode: { type: String, default: "description" },
@@ -588,6 +624,9 @@ const emit = defineEmits([
   "update:showFormat",
   "update:showResolution",
   "update:showProblemIcon",
+  "update:showStacks",
+  "expand-all-stacks",
+  "collapse-all-stacks",
   "update:exportType",
   "update:exportCaptionMode",
   "update:exportResolution",
@@ -688,6 +727,16 @@ const showProblemIconModel = computed({
   get: () => props.showProblemIcon,
   set: (value) => emit("update:showProblemIcon", value),
 });
+
+const expandAllStacksDisabled = computed(() => {
+  const total = Number(props.stackTotalCount || 0);
+  const expanded = Number(props.stackExpandedCount || 0);
+  return total <= 0 || expanded >= total;
+});
+
+const collapseAllStacksDisabled = computed(
+  () => Number(props.stackExpandedCount || 0) <= 0,
+);
 
 const exportTypeModel = computed({
   get: () => props.exportType,
@@ -790,8 +839,8 @@ const sortButtonLabel = computed(() => {
   }
   if (sortModel.value === STACKS_SORT_KEY) {
     return selectedStackThresholdOption.value?.label
-      ? `Stacks: ${selectedStackThresholdOption.value.label}`
-      : "Stacks";
+      ? `Groups: ${selectedStackThresholdOption.value.label}`
+      : "Groups";
   }
   return selectedSortOption.value?.label || "Sort";
 });
@@ -1076,6 +1125,46 @@ defineExpose({ blurSearchInput });
   padding: 6px 8px;
   border-radius: 6px;
   background: rgba(var(--v-theme-surface), 0.2);
+}
+
+.toolbar-stacks-controls {
+  width: 100%;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.toolbar-stacks-title {
+  font-size: 0.85em;
+  color: rgba(var(--v-theme-on-background), 0.7);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  width: 100%;
+  text-align: left;
+}
+
+.toolbar-stacks-buttons {
+  width: 100%;
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+}
+
+.toolbar-columns-slider :deep(.v-label) {
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.toolbar-stack-toggle-btn {
+  flex: 1 1 0;
+  text-transform: none;
+  color: rgb(var(--v-theme-on-primary)) !important;
+}
+
+.toolbar-stack-toggle-btn.v-btn--disabled {
+  color: rgba(var(--v-theme-on-primary), 0.45) !important;
+  filter: saturate(0.15) brightness(0.9);
 }
 
 .toolbar-search-field {

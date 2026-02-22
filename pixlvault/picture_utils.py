@@ -539,10 +539,53 @@ class PictureUtils:
                             date_str = val.decode() if isinstance(val, bytes) else val
                             break
                     if date_str:
+
+                        def _read_exif_offset() -> Optional[str]:
+                            try:
+                                exif_ifd = exif_dict.get("Exif") or {}
+                                offset_tag_ids = [
+                                    getattr(piexif.ExifIFD, "OffsetTimeOriginal", None),
+                                    getattr(piexif.ExifIFD, "OffsetTime", None),
+                                    getattr(
+                                        piexif.ExifIFD, "OffsetTimeDigitized", None
+                                    ),
+                                    36880,
+                                    36881,
+                                    36882,
+                                ]
+                                for tag_id in offset_tag_ids:
+                                    if tag_id is None:
+                                        continue
+                                    raw_val = exif_ifd.get(tag_id)
+                                    if not raw_val:
+                                        continue
+                                    text = (
+                                        raw_val.decode(errors="replace")
+                                        if isinstance(raw_val, bytes)
+                                        else str(raw_val)
+                                    ).strip()
+                                    if text:
+                                        return text
+                            except Exception:
+                                return None
+                            return None
+
                         # EXIF format: 'YYYY:MM:DD HH:MM:SS'
                         try:
+                            offset_text = _read_exif_offset()
+                            if offset_text:
+                                normalized_offset = offset_text.replace(" ", "")
+                                dt = datetime.strptime(
+                                    f"{date_str} {normalized_offset}",
+                                    "%Y:%m:%d %H:%M:%S %z",
+                                )
+                                return dt.astimezone(timezone.utc)
+
                             dt = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
-                            return dt.replace(tzinfo=timezone.utc)
+                            local_tz = (
+                                datetime.now().astimezone().tzinfo or timezone.utc
+                            )
+                            return dt.replace(tzinfo=local_tz).astimezone(timezone.utc)
                         except Exception:
                             pass
         except Exception:

@@ -1,5 +1,28 @@
-1. Package better (pyinstaller and pypi)
-2. Clean up code
+PixlVault 1.0 Hardening Plan
+
+Phase 1: Cleanup and consistency
+1. Remove dead/obsolete frontend code paths and old debug hooks.
+2. Standardize naming and file organization (routes/workers/utils).
+3. Reduce noisy logs; keep actionable warnings/errors only.
+4. Add/refresh docstrings on core workers and routes.
+
+Phase 2: Speed and memory
+5. Profile image grid loading and thumbnail rendering bottlenecks.
+6. Profile worker throughput (tagging/quality/likeness) and batch sizes.
+7. Eliminate obvious N+1 DB queries in hot endpoints.
+8. Add caches where safe (config, workflow lists, derived metadata).
+
+Phase 3: Reliability
+9. Add startup self-checks (models, paths, DB schema/version).
+10. Add stronger API timeout/retry handling for external integrations.
+11. Improve error handling to avoid partial state updates.
+12. Add regression tests for stacking, overlay refresh, workflow import/delete.
+
+Phase 4: Packaging and release
+13. PyInstaller packaging: single-command build, smoke test script.
+14. PyPI packaging: verify metadata, extras, wheel/sdist pipeline.
+15. Add release checklist (version bump, migration test, changelog, tagged build).
+16. Add install/run docs for Linux/Windows/macOS.
 
 Eventually:
 * Multi-user

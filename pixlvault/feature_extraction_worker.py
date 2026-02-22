@@ -1,6 +1,7 @@
 from typing import List
 import cv2
 import os
+import platform
 import urllib.request
 from insightface.app import FaceAnalysis
 
@@ -44,7 +45,41 @@ class FeatureExtractionWorker(BaseWorker):
 
     def __init__(self, database, picture_tagger, event_callback):
         super().__init__(database, picture_tagger, event_callback)
-        self._init_insightface_app()
+
+    def _should_keep_models_in_memory(self) -> bool:
+        return bool(getattr(self._picture_tagger, "keep_models_in_memory", True))
+
+    def _release_detection_models(self):
+        if hasattr(self, "_insightface_app"):
+            self._insightface_app = None
+        FeatureExtractionWorker._global_insightface_app = None
+        FeatureExtractionWorker._hand_model = None
+
+        import gc
+
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        self._trim_process_memory()
+
+    @staticmethod
+    def _trim_process_memory():
+        if not platform.system().lower().startswith("linux"):
+            return
+        try:
+            import ctypes
+
+            libc = ctypes.CDLL("libc.so.6")
+            trim = getattr(libc, "malloc_trim", None)
+            if trim is not None:
+                trim(0)
+        except Exception:
+            pass
 
     def _run(self):
         logger.info("FeatureExtractionWorker: Worker thread started and running.")
@@ -73,6 +108,8 @@ class FeatureExtractionWorker(BaseWorker):
                     ],
                 )
                 if not pics_needing_face_bboxes:
+                    if not self._should_keep_models_in_memory():
+                        self._release_detection_models()
                     self._wait()
                     continue
                 updates = self._extract_features(pics_needing_face_bboxes)
@@ -94,6 +131,8 @@ class FeatureExtractionWorker(BaseWorker):
                     logger.debug(
                         "FeatureExtractionWorker: Done with iteration but no pictures were processed."
                     )
+                    if not self._should_keep_models_in_memory():
+                        self._release_detection_models()
                     self._wait()
             except Exception as e:
                 import traceback
@@ -239,22 +278,7 @@ class FeatureExtractionWorker(BaseWorker):
         """
         Clean up resources held by the worker.
         """
-        if hasattr(self, "_insightface_app"):
-            # With singleton pattern, we just unlink the instance ref.
-            # We do NOT delete the global app so it can be reused.
-            self._insightface_app = None
-
-        import gc
-
-        gc.collect()
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            # torch is an optional dependency; skip GPU cache cleanup if unavailable.
-            pass
+        self._release_detection_models()
 
     def _extract_features(self, pics) -> List[tuple]:
         self._init_insightface_app()

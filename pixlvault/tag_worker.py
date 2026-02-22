@@ -190,6 +190,9 @@ class DescriptionWorker(BaseWorker):
             batch_ids,
         )
 
+        if not batch:
+            return []
+
         descriptions_generated = []
         try:
             generate_start = time.time()
@@ -208,6 +211,12 @@ class DescriptionWorker(BaseWorker):
                 e,
                 traceback.format_exc(),
             )
+            batch_results = None
+
+        if not batch_results:
+            for pic in batch:
+                pic.description = ""
+                descriptions_generated.append(pic)
             return descriptions_generated
 
         for pic in batch:
@@ -218,6 +227,8 @@ class DescriptionWorker(BaseWorker):
                 descriptions_generated.append(pic)
             else:
                 logger.error("Failed to generate description for picture %s", pic.id)
+                pic.description = ""
+                descriptions_generated.append(pic)
         return descriptions_generated
 
 
