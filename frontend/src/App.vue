@@ -61,6 +61,7 @@ const showHandBboxes = ref(false);
 const showFormat = ref(true);
 const showResolution = ref(true);
 const showProblemIcon = ref(true);
+const showStacks = ref(true);
 const dateFormat = ref("locale");
 const themeMode = ref("light");
 const theme = useTheme();
@@ -279,6 +280,7 @@ const config = reactive({
   show_format: true,
   show_resolution: true,
   show_problem_icon: true,
+  show_stacks: true,
   date_format: "locale",
   theme_mode: "light",
   stack_strictness: 0.92,
@@ -540,6 +542,9 @@ async function fetchConfig() {
     if (typeof res.data.show_problem_icon === "boolean") {
       showProblemIcon.value = res.data.show_problem_icon;
     }
+    if (typeof res.data.show_stacks === "boolean") {
+      showStacks.value = res.data.show_stacks;
+    }
     if (typeof res.data.date_format === "string" && res.data.date_format) {
       dateFormat.value = res.data.date_format;
     }
@@ -589,6 +594,10 @@ async function fetchConfig() {
       typeof res.data.show_problem_icon === "boolean"
         ? res.data.show_problem_icon
         : showProblemIcon.value;
+    config.show_stacks =
+      typeof res.data.show_stacks === "boolean"
+        ? res.data.show_stacks
+        : showStacks.value;
     config.date_format = dateFormat.value;
     config.theme_mode = themeMode.value;
     config.stack_strictness =
@@ -618,6 +627,7 @@ async function fetchConfig() {
       show_format: showFormat.value,
       show_resolution: showResolution.value,
       show_problem_icon: showProblemIcon.value,
+      show_stacks: showStacks.value,
       date_format: dateFormat.value,
       theme_mode: themeMode.value,
       similarity_character: selectedSimilarityCharacter.value,
@@ -670,6 +680,9 @@ async function patchConfigUIOptions() {
   }
   if (typeof showProblemIcon.value === "boolean") {
     patch.show_problem_icon = showProblemIcon.value;
+  }
+  if (typeof showStacks.value === "boolean") {
+    patch.show_stacks = showStacks.value;
   }
   if (typeof dateFormat.value === "string" && dateFormat.value) {
     patch.date_format = dateFormat.value;
@@ -909,21 +922,36 @@ watch(showStars, () => {
 });
 
 watch(
-  [showFaceBboxes, showHandBboxes, showFormat, showResolution, showProblemIcon],
+  [
+    showFaceBboxes,
+    showHandBboxes,
+    showFormat,
+    showResolution,
+    showProblemIcon,
+    showStacks,
+  ],
   () => {
     patchConfigUIOptions();
   },
 );
 
 watch(
-  [showFaceBboxes, showHandBboxes, showFormat, showResolution, showProblemIcon],
-  ([face, hand, format, resolution, problem]) => {
+  [
+    showFaceBboxes,
+    showHandBboxes,
+    showFormat,
+    showResolution,
+    showProblemIcon,
+    showStacks,
+  ],
+  ([face, hand, format, resolution, problem, stacks]) => {
     console.debug("[Config] Overlay settings changed", {
       showFaceBboxes: face,
       showHandBboxes: hand,
       showFormat: format,
       showResolution: resolution,
       showProblemIcon: problem,
+      showStacks: stacks,
     });
   },
   { immediate: true },
@@ -1092,6 +1120,7 @@ defineExpose({ sidebarVisible, mediaTypeFilter });
             v-model:showFormat="showFormat"
             v-model:showResolution="showResolution"
             v-model:showProblemIcon="showProblemIcon"
+            v-model:showStacks="showStacks"
             v-model:exportType="exportType"
             v-model:exportCaptionMode="exportCaptionMode"
             v-model:exportResolution="exportResolution"
@@ -1139,6 +1168,7 @@ defineExpose({ sidebarVisible, mediaTypeFilter });
               :showFormat="showFormat"
               :showResolution="showResolution"
               :showProblemIcon="showProblemIcon"
+              :showStacks="showStacks"
               :dateFormat="dateFormat"
               :hiddenTags="hiddenTags"
               :applyTagFilter="applyTagFilter"

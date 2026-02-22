@@ -36,6 +36,16 @@
           @added="$emit('add-to-character', $event)"
         />
         <button
+          v-if="selectedCount > 1 && !isScrapheapView"
+          class="stack-btn"
+          type="button"
+          title="Create a stack from the selected images"
+          @click="$emit('create-stack')"
+        >
+          <v-icon size="16">mdi-layers</v-icon>
+          <span>Create Stack</span>
+        </button>
+        <button
           v-if="showRemoveButton"
           class="remove-btn"
           @click="$emit('remove-from-group')"
@@ -182,5 +192,19 @@ const deleteButtonLabel = computed(() => {
 }
 .delete-btn:hover {
   filter: brightness(1.3);
+}
+.stack-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(var(--v-theme-primary), 0.15);
+  color: rgb(var(--v-theme-on-background));
+  border: 1px solid rgba(var(--v-theme-primary), 0.4);
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.stack-btn:hover {
+  filter: brightness(1.2);
 }
 </style>
