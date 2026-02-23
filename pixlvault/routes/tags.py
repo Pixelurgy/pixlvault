@@ -400,41 +400,4 @@ def create_router(server) -> APIRouter:
         server.vault.notify(EventType.CHANGED_TAGS)
         return {"status": "success", "tags": tags}
 
-    @router.post("/pictures/clear_tags")
-    async def clear_tags_for_pictures(payload: dict = Body(...)):
-        picture_ids = payload.get("picture_ids")
-        if not isinstance(picture_ids, list):
-            raise HTTPException(status_code=400, detail="picture_ids must be a list")
-        if not picture_ids:
-            return {"status": "success", "picture_ids": []}
-
-        logger.info(f"Clearing tags for pictures: {picture_ids}")
-
-        def clear_tags(session: Session, ids: list[str]):
-            session.exec(
-                delete(Tag).where(
-                    Tag.picture_id.in_(ids),
-                )
-            )
-            session.commit()
-            return ids
-
-        cleared = server.vault.db.run_task(
-            clear_tags, picture_ids, priority=DBPriority.IMMEDIATE
-        )
-
-        def check_tags(session: Session, ids: list[str]):
-            remaining = session.exec(select(Tag).where(Tag.picture_id.in_(ids))).all()
-            return len(remaining) == 0
-
-        all_cleared = server.vault.db.run_task(
-            check_tags, picture_ids, priority=DBPriority.IMMEDIATE
-        )
-        if not all_cleared:
-            logger.error(f"Failed to clear all tags for pictures: {picture_ids}")
-            raise HTTPException(status_code=500, detail="Failed to clear all tags")
-
-        server.vault.notify(EventType.CLEARED_TAGS, picture_ids)
-        return {"status": "success", "picture_ids": cleared}
-
     return router

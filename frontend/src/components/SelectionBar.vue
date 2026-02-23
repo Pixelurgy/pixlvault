@@ -13,16 +13,6 @@
         </span>
       </div>
       <div class="selection-bar-actions">
-        <button
-          v-if="selectedCount > 0 && !isScrapheapView"
-          class="refresh-btn"
-          type="button"
-          title="Refresh tags for selected images"
-          @click="$emit('refresh-tags')"
-        >
-          <v-icon size="16">mdi-refresh</v-icon>
-          <span>Refresh Tags</span>
-        </button>
         <AddToSetControl
           v-if="selectedCount > 0 && !isScrapheapView"
           :backend-url="backendUrl"
@@ -179,20 +169,6 @@ const showRemoveStackButton = computed(() => {
   align-items: center;
   gap: 16px;
   margin-left: auto;
-}
-.refresh-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background-color: rgba(var(--v-theme-dark-surface), 0.6);
-  color: rgba(var(--v-theme-on-dark-surface), 1);
-  border: none;
-  padding: 6px 12px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.refresh-btn:hover {
-  filter: brightness(1.75);
 }
 .clear-btn {
   background: rgb(var(--v-theme-primary));

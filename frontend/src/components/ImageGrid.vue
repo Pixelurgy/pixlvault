@@ -47,7 +47,6 @@
       :show-remove-from-stack="showRemoveFromStack"
       :visible="showSelectionBar"
       @clear-selection="clearSelection"
-      @refresh-tags="refreshTagsForSelection"
       @added-to-set="handleSelectionAddedToSet"
       @remove-from-group="removeFromGroup"
       @delete-selected="deleteSelected"
@@ -1948,28 +1947,6 @@ function clearSelection() {
   lastSelectedImageId = null;
 }
 
-async function refreshTagsForSelection() {
-  if (!selectedImageIds.value.length) return;
-  const ids = selectedImageIds.value.slice();
-  const dIds = new Set(ids.map((id) => PictureId(id)));
-  try {
-    await apiClient.post(`${props.backendUrl}/pictures/clear_tags`, {
-      picture_ids: ids,
-    });
-    allGridImages.value = allGridImages.value.map((img) => {
-      if (!img || !dIds.has(PictureId(img.id))) {
-        return img;
-      }
-      return { ...img, tags: [] };
-    });
-    for (const id of ids) {
-      refreshGridImage(id);
-    }
-  } catch (err) {
-    alert(`Failed to refresh tags: ${err?.message || err}`);
-  }
-}
-
 // Video refs for hover play/pause in grid
 const videoRefs = {};
 function setVideoRef(id, el) {
@@ -2186,8 +2163,10 @@ async function deleteSelected() {
   const backendUrl = props.backendUrl;
   try {
     if (isScrapheapSelection) {
-      await apiClient.post(`${backendUrl}/pictures/scrapheap/delete`, {
-        picture_ids: idsToRemove,
+      await apiClient.delete(`${backendUrl}/pictures/scrapheap`, {
+        data: {
+          picture_ids: idsToRemove,
+        },
       });
     } else {
       await Promise.all(
@@ -2296,7 +2275,7 @@ async function confirmEmptyScrapheap() {
   if (!confirmed) return;
   scrapheapEmptying.value = true;
   try {
-    await apiClient.post(`${props.backendUrl}/pictures/scrapheap/empty`);
+    await apiClient.delete(`${props.backendUrl}/pictures/scrapheap`);
     allGridImages.value = [];
     selectedImageIds.value = [];
     selectedFaceIds.value = [];

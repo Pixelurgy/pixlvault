@@ -2198,65 +2198,6 @@ def create_router(server) -> APIRouter:
 
         return {"status": "success", "picture": safe_model_dict(pic)}
 
-    @router.post("/pictures/scrapheap/empty")
-    async def empty_scrapheap(background_tasks: BackgroundTasks):
-        def fetch_deleted(session: Session):
-            rows = session.exec(
-                select(Picture.id, Picture.file_path).where(Picture.deleted.is_(True))
-            ).all()
-            return rows
-
-        rows = server.vault.db.run_task(fetch_deleted, priority=DBPriority.IMMEDIATE)
-        if not rows:
-            return {"status": "success", "deleted_count": 0}
-
-        picture_ids = [row[0] for row in rows if row[0] is not None]
-        file_paths = [row[1] for row in rows if row[1]]
-
-        def delete_files(image_root: str, paths: list[str]):
-            for rel_path in paths:
-                file_path = PictureUtils.resolve_picture_path(image_root, rel_path)
-                if file_path and os.path.isfile(file_path):
-                    try:
-                        os.remove(file_path)
-                    except Exception as e:
-                        logger.error(
-                            "Failed to delete picture file %s: %s",
-                            file_path,
-                            e,
-                        )
-                thumb_path = PictureUtils.get_thumbnail_path(image_root, rel_path)
-                if thumb_path and os.path.isfile(thumb_path):
-                    try:
-                        os.remove(thumb_path)
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to delete thumbnail %s: %s",
-                            thumb_path,
-                            e,
-                        )
-
-        background_tasks.add_task(
-            delete_files,
-            server.vault.image_root,
-            file_paths,
-        )
-
-        def delete_rows(session: Session, ids: list[int]):
-            if not ids:
-                return 0
-            session.exec(delete(Picture).where(Picture.id.in_(ids)))
-            session.commit()
-            return len(ids)
-
-        deleted_count = server.vault.db.run_task(
-            delete_rows,
-            picture_ids,
-            priority=DBPriority.IMMEDIATE,
-        )
-        server.vault.notify(EventType.CHANGED_PICTURES)
-        return {"status": "success", "deleted_count": deleted_count}
-
     @router.post("/pictures/scrapheap/restore")
     async def restore_scrapheap(payload: dict | None = Body(None)):
         picture_ids = None
@@ -2291,39 +2232,35 @@ def create_router(server) -> APIRouter:
         server.vault.notify(EventType.CHANGED_PICTURES)
         return {"status": "success", "restored_count": restored_count}
 
-    @router.post("/pictures/scrapheap/delete")
+    @router.delete("/pictures/scrapheap")
     async def delete_scrapheap_selection(
         background_tasks: BackgroundTasks,
-        payload: dict = Body(...),
+        payload: dict | None = Body(None),
     ):
-        ids = payload.get("picture_ids") if isinstance(payload, dict) else None
-        if not isinstance(ids, list) or not ids:
-            raise HTTPException(
-                status_code=400,
-                detail="picture_ids must be a non-empty list",
-            )
-        try:
-            ids = [int(pid) for pid in ids]
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=400,
-                detail="picture_ids must contain valid integers",
-            )
+        ids = None
+        if payload is not None:
+            maybe_ids = payload.get("picture_ids") if isinstance(payload, dict) else None
+            if maybe_ids is not None:
+                if not isinstance(maybe_ids, list) or not maybe_ids:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="picture_ids must be a non-empty list",
+                    )
+                try:
+                    ids = [int(pid) for pid in maybe_ids]
+                except (TypeError, ValueError):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="picture_ids must contain valid integers",
+                    )
 
-        def fetch_deleted(session: Session, ids: list[int]):
-            rows = session.exec(
-                select(Picture.id, Picture.file_path).where(
-                    Picture.deleted.is_(True),
-                    Picture.id.in_(ids),
-                )
-            ).all()
-            return rows
+        def fetch_deleted(session: Session, ids: list[int] | None):
+            query = select(Picture.id, Picture.file_path).where(Picture.deleted.is_(True))
+            if ids is not None:
+                query = query.where(Picture.id.in_(ids))
+            return session.exec(query).all()
 
-        rows = server.vault.db.run_task(
-            fetch_deleted,
-            ids,
-            priority=DBPriority.IMMEDIATE,
-        )
+        rows = server.vault.db.run_task(fetch_deleted, ids, priority=DBPriority.IMMEDIATE)
         if not rows:
             return {"status": "success", "deleted_count": 0}
 
