@@ -37,6 +37,27 @@ function getSupportedFiles(fileList) {
   return Array.from(fileList || []).filter(isSupportedImportFile);
 }
 
+function getSupportedFilesFromDataTransfer(dataTransfer) {
+  if (!dataTransfer) return [];
+
+  const directFiles = getSupportedFiles(dataTransfer.files);
+  const fromItems = Array.from(dataTransfer.items || [])
+    .filter((item) => item?.kind === "file")
+    .map((item) => item.getAsFile?.())
+    .filter(Boolean)
+    .filter(isSupportedImportFile);
+
+  const unique = new Map();
+  for (const file of [...directFiles, ...fromItems]) {
+    const key = `${file.name}::${file.size}::${file.lastModified}`;
+    if (!unique.has(key)) {
+      unique.set(key, file);
+    }
+  }
+
+  return Array.from(unique.values());
+}
+
 function openLocalPicker() {
   if (localInputRef.value) {
     localInputRef.value.click();
@@ -66,23 +87,34 @@ async function triggerLocalImport(files) {
   clearLocalSelection();
 }
 
-function handleLocalDragEnter() {
+function handleLocalDragEnter(event) {
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
   dragActive.value = true;
 }
 
-function handleLocalDragOver() {
+function handleLocalDragOver(event) {
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  if (event?.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
   dragActive.value = true;
 }
 
 function handleLocalDragLeave(event) {
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
   if (!event?.currentTarget?.contains(event.relatedTarget)) {
     dragActive.value = false;
   }
 }
 
 function handleLocalDrop(event) {
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
   dragActive.value = false;
-  const files = getSupportedFiles(event?.dataTransfer?.files);
+  const files = getSupportedFilesFromDataTransfer(event?.dataTransfer);
   if (!files.length) return;
   triggerLocalImport(files);
 }
@@ -168,10 +200,10 @@ watch(dialogOpen, (isOpen) => {
                 <div
                   class="local-import-dropzone"
                   :class="{ 'is-dragging': dragActive }"
-                  @dragenter.prevent="handleLocalDragEnter"
-                  @dragover.prevent="handleLocalDragOver"
-                  @dragleave="handleLocalDragLeave"
-                  @drop.prevent="handleLocalDrop"
+                  @dragenter.stop.prevent="handleLocalDragEnter"
+                  @dragover.stop.prevent="handleLocalDragOver"
+                  @dragleave.stop.prevent="handleLocalDragLeave"
+                  @drop.stop.prevent="handleLocalDrop"
                 >
                   <div class="local-import-dropzone-text">
                     {{ dropMessage }}

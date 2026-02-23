@@ -190,6 +190,9 @@ class DescriptionWorker(BaseWorker):
             batch_ids,
         )
 
+        if not batch:
+            return []
+
         descriptions_generated = []
         try:
             generate_start = time.time()
