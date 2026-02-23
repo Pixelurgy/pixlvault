@@ -642,15 +642,6 @@
               <span class="section-meta-group">
                 <button
                   v-if="image"
-                  class="section-meta-btn section-meta-btn--danger"
-                  type="button"
-                  title="Clear tags (Causes the image to be re-tagged automatically)"
-                  @click.stop="clearTagsForImage"
-                >
-                  <v-icon size="16">mdi-refresh</v-icon>
-                </button>
-                <button
-                  v-if="image"
                   class="section-meta-btn"
                   type="button"
                   title="Add tag"
@@ -1818,27 +1809,6 @@ function confirmAddTag() {
 
 function handleOverlayAddToSet(payload) {
   emit("added-to-set", payload);
-}
-
-async function clearTagsForImage() {
-  if (!image.value?.id || !backendUrl.value) return;
-  isTagsRefreshing.value = true;
-  try {
-    await apiClient.post(`${backendUrl.value}/pictures/clear_tags`, {
-      picture_ids: [image.value.id],
-    });
-    if (Array.isArray(image.value.tags)) {
-      image.value.tags = [];
-    }
-    emit("overlay-change", {
-      imageId: image.value.id,
-      fields: { tags: true, smartScore: true },
-    });
-  } catch (err) {
-    alert(`Failed to clear tags: ${err?.message || err}`);
-  } finally {
-    isTagsRefreshing.value = false;
-  }
 }
 
 function setScore(n) {
