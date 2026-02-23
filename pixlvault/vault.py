@@ -111,13 +111,22 @@ class Vault:
         self._workers = {}
         self._event_listeners = []
         self._event_listeners_lock = threading.Lock()
+        self._closed = False
 
     def stop_workers(self, workers_to_stop: set[WorkerType] = WorkerType.all()):
         logger.debug("Stopping background workers...")
+        remaining = []
         for worker in self._workers.values():
             if worker.worker_type() in workers_to_stop:
                 logger.debug(f"Stopping worker: {worker.worker_type()}")
                 worker.stop()
+                if worker.is_alive():
+                    remaining.append(worker.name())
+        if remaining:
+            logger.warning(
+                "Workers still running after stop request: %s",
+                ", ".join(sorted(remaining)),
+            )
 
     def start_workers(self, workers_to_start: set[WorkerType] = WorkerType.all()):
         # Initialize all workers
@@ -179,6 +188,9 @@ class Vault:
         """
         Cleanly close the vault, including stopping background workers and closing DB connection.
         """
+        if self._closed:
+            return
+        self._closed = True
         self.stop_workers(WorkerType.all())
         for worker in self._workers.values():
             worker.close()
@@ -326,6 +338,11 @@ class Vault:
         if self._keep_models_in_memory:
             return
         if not self._picture_tagger:
+            return
+        if self._picture_tagger.is_captioning_initialized():
+            logger.debug(
+                "Skipping aggressive unload because Florence captioning is initialized."
+            )
             return
         now = time.time()
         if now - self._last_aggressive_unload_at < self.AGGRESSIVE_UNLOAD_INTERVAL:
