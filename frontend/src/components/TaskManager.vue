@@ -20,7 +20,20 @@
               class="task-manager-system-item"
             >
               <span class="task-manager-system-label">{{ item.label }}</span>
-              <span class="task-manager-system-value">{{ item.value }}</span>
+              <span class="task-manager-system-value">
+                <template
+                  v-for="(part, idx) in splitPercentSegments(item.value)"
+                  :key="`${item.label}-${idx}`"
+                >
+                  <span
+                    :class="{
+                      'task-manager-system-value--emphasis': part.bold,
+                    }"
+                  >
+                    {{ part.text }}
+                  </span>
+                </template>
+              </span>
             </div>
           </div>
         </div>
@@ -390,10 +403,18 @@ const combinedSnapshot = computed(() => {
 const systemItems = computed(() => {
   const usage = systemUsage.value || {};
   const items = [];
-  if (Number.isFinite(usage.cpu_percent)) {
+  const cpuAllCores = Number.isFinite(usage.cpu_percent_all_cores)
+    ? usage.cpu_percent_all_cores
+    : usage.cpu_percent;
+  const cpuOneCore = Number.isFinite(usage.cpu_percent_one_core)
+    ? usage.cpu_percent_one_core
+    : null;
+  if (Number.isFinite(cpuAllCores)) {
     items.push({
       label: "CPU",
-      value: formatPercent(usage.cpu_percent),
+      value: Number.isFinite(cpuOneCore)
+        ? `${formatPercent(cpuAllCores)} all cores (${formatPercent(cpuOneCore)} one core)`
+        : formatPercent(cpuAllCores),
     });
   }
   if (Number.isFinite(usage.ram_used_gb)) {
@@ -406,16 +427,13 @@ const systemItems = computed(() => {
       ),
     });
   }
-  if (Number.isFinite(usage.vram_used_gb)) {
-    items.push({
-      label: "VRAM",
-      value: formatUsage(
-        usage.vram_used_gb,
-        usage.vram_total_gb,
-        usage.vram_percent,
-      ),
-    });
-  }
+  const vramValue = Number.isFinite(usage.vram_used_gb)
+    ? formatUsage(usage.vram_used_gb, usage.vram_total_gb, usage.vram_percent)
+    : "n/a";
+  items.push({
+    label: "VRAM",
+    value: vramValue,
+  });
   return items;
 });
 
@@ -817,6 +835,29 @@ function formatUsage(used, total, percent) {
   return usedLabel;
 }
 
+function splitPercentSegments(value) {
+  const text = String(value ?? "");
+  const regex = /\d+(?:\.\d+)?%/g;
+  const segments = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(regex)) {
+    const start = match.index ?? 0;
+    const matchedText = match[0] || "";
+    if (start > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, start), bold: false });
+    }
+    segments.push({ text: matchedText, bold: true });
+    lastIndex = start + matchedText.length;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex), bold: false });
+  }
+
+  return segments.length ? segments : [{ text, bold: false }];
+}
+
 function getMaxRate(key) {
   const samples = series.value[key] || [];
   if (!samples.length) return 0;
@@ -938,6 +979,11 @@ onBeforeUnmount(() => {
 
 .task-manager-system-value {
   color: rgba(var(--v-theme-on-surface), 0.65);
+}
+
+.task-manager-system-value--emphasis {
+  font-weight: 700;
+  color: rgba(var(--v-theme-on-surface), 0.9);
 }
 
 .task-manager-loading {

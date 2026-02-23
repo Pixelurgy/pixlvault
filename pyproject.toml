@@ -41,6 +41,7 @@ dependencies = [
     "dotenv",
     "passlib",
     "bcrypt<4.0.0",
+    "nvidia-ml-py",
 ]
 
 [project.optional-dependencies]

@@ -29,6 +29,128 @@ logger = get_logger(__name__)
 
 def create_router(server) -> APIRouter:
     router = APIRouter()
+    process_usage_handle = None
+    process_usage_pid = None
+    last_cpu_sample_at = None
+    last_cpu_seconds = None
+
+    if psutil:
+        try:
+            process_usage_handle = psutil.Process(os.getpid())
+            process_usage_pid = process_usage_handle.pid
+        except Exception as exc:
+            logger.warning("Failed to initialize process usage handle: %s", exc)
+            process_usage_handle = None
+            process_usage_pid = None
+
+    def _get_total_process_cpu_seconds(process):
+        cpu_times = process.cpu_times()
+        total_seconds = float(cpu_times.user + cpu_times.system)
+        try:
+            for child in process.children(recursive=True):
+                child_times = child.cpu_times()
+                total_seconds += float(child_times.user + child_times.system)
+        except Exception:
+            pass
+        return total_seconds
+
+    def _set_vram_payload(payload: dict, used_bytes: int, total_bytes: int) -> bool:
+        try:
+            total = int(total_bytes or 0)
+            if total <= 0:
+                return False
+            used = max(0, int(used_bytes or 0))
+            payload["vram_total_gb"] = round(total / (1024**3), 2)
+            payload["vram_used_gb"] = round(used / (1024**3), 2)
+            payload["vram_percent"] = round((used / total) * 100.0, 1)
+            return True
+        except Exception:
+            return False
+
+    def _collect_vram_from_torch(payload: dict) -> bool:
+        try:
+            import torch
+
+            if not torch.cuda.is_available():
+                return False
+            total_bytes = 0
+            used_bytes = 0
+            device_count = int(torch.cuda.device_count() or 0)
+            if device_count <= 0:
+                return False
+            for index in range(device_count):
+                props = torch.cuda.get_device_properties(index)
+                total_bytes += int(getattr(props, "total_memory", 0) or 0)
+                try:
+                    used_bytes += int(torch.cuda.memory_reserved(index) or 0)
+                except Exception:
+                    pass
+            return _set_vram_payload(payload, used_bytes, total_bytes)
+        except Exception:
+            return False
+
+    def _parse_nvidia_smi_values(command: list[str]) -> list[int]:
+        output = subprocess.check_output(command, stderr=subprocess.DEVNULL, text=True)
+        values = []
+        for line in output.splitlines():
+            value = line.strip().split(",", 1)[0].strip()
+            if not value or value.upper() == "N/A":
+                continue
+            try:
+                values.append(int(float(value)))
+            except Exception:
+                continue
+        return values
+
+    def _collect_vram_from_nvidia_smi(payload: dict) -> bool:
+        try:
+            totals_mib = _parse_nvidia_smi_values(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=memory.total",
+                    "--format=csv,noheader,nounits",
+                ]
+            )
+            if not totals_mib:
+                return False
+            total_bytes = sum(totals_mib) * 1024 * 1024
+
+            pid = os.getpid()
+            used_mib = 0
+            try:
+                process_lines = subprocess.check_output(
+                    [
+                        "nvidia-smi",
+                        "--query-compute-apps=pid,used_gpu_memory",
+                        "--format=csv,noheader,nounits",
+                    ],
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                )
+                for line in process_lines.splitlines():
+                    parts = [part.strip() for part in line.split(",")]
+                    if len(parts) < 2:
+                        continue
+                    try:
+                        entry_pid = int(parts[0])
+                    except Exception:
+                        continue
+                    if entry_pid != pid:
+                        continue
+                    value = parts[1]
+                    if not value or value.upper() == "N/A":
+                        continue
+                    try:
+                        used_mib += int(float(value))
+                    except Exception:
+                        continue
+            except Exception:
+                used_mib = 0
+
+            used_bytes = used_mib * 1024 * 1024
+            return _set_vram_payload(payload, used_bytes, total_bytes)
+        except Exception:
+            return False
 
     def _ensure_secure_when_required(request: Request):
         server.auth.ensure_secure_when_required(request)
@@ -74,8 +196,14 @@ def create_router(server) -> APIRouter:
             return False
 
     def _get_process_usage():
+        nonlocal process_usage_handle
+        nonlocal process_usage_pid
+        nonlocal last_cpu_sample_at
+        nonlocal last_cpu_seconds
         payload = {
             "cpu_percent": None,
+            "cpu_percent_all_cores": None,
+            "cpu_percent_one_core": None,
             "ram_used_gb": None,
             "ram_total_gb": None,
             "ram_percent": None,
@@ -86,14 +214,55 @@ def create_router(server) -> APIRouter:
 
         if psutil:
             try:
-                process = psutil.Process(os.getpid())
-                payload["cpu_percent"] = process.cpu_percent(interval=None)
+                current_pid = os.getpid()
+                process = process_usage_handle
+                if (
+                    process is None
+                    or process_usage_pid != current_pid
+                    or not process.is_running()
+                ):
+                    process = psutil.Process(current_pid)
+                    process_usage_handle = process
+                    process_usage_pid = process.pid
+                    last_cpu_sample_at = None
+                    last_cpu_seconds = None
+
+                now = time.monotonic()
+                cpu_seconds = _get_total_process_cpu_seconds(process)
+                if (
+                    last_cpu_sample_at is not None
+                    and last_cpu_seconds is not None
+                    and now > last_cpu_sample_at
+                ):
+                    elapsed = now - last_cpu_sample_at
+                    used_cpu = max(0.0, cpu_seconds - last_cpu_seconds)
+                    cpu_count = psutil.cpu_count() or 1
+                    cpu_percent_one_core = max(
+                        0.0,
+                        (used_cpu / elapsed) * 100.0,
+                    )
+                    cpu_percent_all_cores = max(
+                        0.0,
+                        min(100.0, cpu_percent_one_core / cpu_count),
+                    )
+                    payload["cpu_percent_one_core"] = cpu_percent_one_core
+                    payload["cpu_percent_all_cores"] = cpu_percent_all_cores
+                    payload["cpu_percent"] = cpu_percent_all_cores
+                else:
+                    payload["cpu_percent"] = 0.0
+                    payload["cpu_percent_all_cores"] = 0.0
+                    payload["cpu_percent_one_core"] = 0.0
+
+                last_cpu_sample_at = now
+                last_cpu_seconds = cpu_seconds
+
                 memory = process.memory_info()
                 payload["ram_used_gb"] = round(memory.rss / (1024**3), 2)
                 payload["ram_percent"] = process.memory_percent()
             except Exception as exc:
                 logger.warning("Failed to read CPU/RAM usage: %s", exc)
 
+        vram_collected = False
         if pynvml:
             try:
                 pynvml.nvmlInit()
@@ -103,6 +272,11 @@ def create_router(server) -> APIRouter:
                 device_count = pynvml.nvmlDeviceGetCount()
                 for index in range(device_count):
                     handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+                    try:
+                        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                        total_bytes += int(getattr(mem_info, "total", 0) or 0)
+                    except Exception:
+                        pass
                     processes = []
                     try:
                         processes = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
@@ -123,15 +297,7 @@ def create_router(server) -> APIRouter:
                         if used_gpu == getattr(pynvml, "NVML_VALUE_NOT_AVAILABLE", -1):
                             continue
                         used_bytes += used_gpu
-                        try:
-                            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                            total_bytes += mem_info.total
-                        except Exception:
-                            pass
-                if total_bytes > 0 and used_bytes >= 0:
-                    payload["vram_total_gb"] = round(total_bytes / (1024**3), 2)
-                    payload["vram_used_gb"] = round(used_bytes / (1024**3), 2)
-                    payload["vram_percent"] = round(used_bytes / total_bytes * 100, 1)
+                vram_collected = _set_vram_payload(payload, used_bytes, total_bytes)
             except Exception as exc:
                 logger.warning("Failed to read VRAM usage: %s", exc)
             finally:
@@ -139,6 +305,12 @@ def create_router(server) -> APIRouter:
                     pynvml.nvmlShutdown()
                 except Exception:
                     pass
+
+        if not vram_collected:
+            vram_collected = _collect_vram_from_torch(payload)
+
+        if not vram_collected:
+            _collect_vram_from_nvidia_smi(payload)
 
         return payload
 

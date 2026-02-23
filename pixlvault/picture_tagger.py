@@ -79,6 +79,7 @@ class PictureTagger:
         self._image_root = image_root
         self._model_init_lock = threading.Lock()
         self._models_ready = True
+        self._keep_models_in_memory = True
 
         # Store device for both CLIP and ONNX
         if PictureTagger.FORCE_CPU:
@@ -110,40 +111,34 @@ class PictureTagger:
         self._custom_device = self._device
 
         self._ensure_model_files(force_download=force_download)
-        self._init_onnx_session()
-        self._load_and_preprocess_tags()
 
-        if self._use_custom_tagger and os.path.isfile(self._custom_tagger_path):
-            logger.info("Using custom tagger checkpoint: %s", self._custom_tagger_path)
-            try:
-                self._init_custom_tagger()
-            except Exception as exc:
-                logger.error("Custom tagger initialization failed: %s", exc)
-                self._use_custom_tagger = False
-        else:
+        # Defer heavy model initialization until first use.
+        self.ort_sess = None
+        self.input_name = None
+        self._rating_tags = None
+        self._general_tags = None
+
+        self._clip_model = None
+        self._clip_preprocess = None
+        self._clip_tokenizer = None
+        self._clip_device = self._device
+
+        self._custom_model = None
+        self._custom_labels = None
+        self._custom_label_to_idx = None
+        self._custom_transform = None
+        self._custom_transform_cache = {}
+        if not os.path.isfile(self._custom_tagger_path):
             logger.warning(
                 "Custom tagger not found at %s, skipping initialization.",
                 self._custom_tagger_path,
             )
             self._use_custom_tagger = False
-        # Load CLIP model at construction for efficiency
-        # Upgraded to ViT-L-14 for better aesthetics and embedding quality
-        self._clip_model, _, self._clip_preprocess = (
-            open_clip.create_model_and_transforms(
-                CLIP_MODEL_NAME, pretrained=CLIP_MODEL_WEIGHTS
-            )
-        )
-
-        self._clip_device = self._device
-        self._clip_model = self._clip_model.to(self._clip_device)
-        if self._clip_device == "cuda":
-            self._clip_model = self._clip_model.half()
-        self._clip_tokenizer = open_clip.get_tokenizer(CLIP_MODEL_NAME)
 
         self._tag_naturaliser = TagNaturaliser()
 
         # Initialize Florence-2 for captioning
-        logger.debug("initialising Florence-2 for captioning...")
+        logger.debug("Florence-2 captioning model is configured for lazy loading.")
         self._florence_model = None
         self._florence_processor = None
 
@@ -156,8 +151,6 @@ class PictureTagger:
             if self._device == "cpu"
             else FLORENCE_BATCH_SIZE_GPU
         )
-
-        self._init_florence_captioning()
 
     def _resolve_picture_path(self, file_path: str) -> str:
         return PictureUtils.resolve_picture_path(self._image_root, file_path)
@@ -235,12 +228,96 @@ class PictureTagger:
 
         torch.cuda.empty_cache()
         gc.collect()
+        self._trim_process_memory()
         self._models_ready = False
         logger.debug("PictureTagger.__exit__ called, all resources released.")
 
     def aggressive_unload(self):
         logger.warning("PictureTagger.aggressive_unload() called, releasing models...")
         self.close()
+
+    def safe_idle_unload(self):
+        """
+        Release non-captioning models during idle periods while keeping Florence loaded.
+
+        This avoids expensive/fragile Florence unload-reload cycles during normal runtime,
+        but still frees a significant amount of CPU/GPU memory from other models.
+        """
+        import gc
+
+        logger.warning(
+            "PictureTagger.safe_idle_unload() called, releasing non-captioning models..."
+        )
+        try:
+            if hasattr(self, "_clip_model"):
+                del self._clip_model
+                self._clip_model = None
+                logger.debug("Deleted _clip_model.")
+            if hasattr(self, "ort_sess"):
+                del self.ort_sess
+                self.ort_sess = None
+                logger.debug("Deleted ort_sess.")
+            if hasattr(self, "_sbert_model"):
+                del self._sbert_model
+                self._sbert_model = None
+                logger.debug("Deleted _sbert_model.")
+            if hasattr(self, "_clip_preprocess"):
+                del self._clip_preprocess
+                self._clip_preprocess = None
+                logger.debug("Deleted _clip_preprocess.")
+            if hasattr(self, "_clip_tokenizer"):
+                del self._clip_tokenizer
+                self._clip_tokenizer = None
+                logger.debug("Deleted _clip_tokenizer.")
+            if hasattr(self, "_custom_model"):
+                del self._custom_model
+                self._custom_model = None
+                logger.debug("Deleted _custom_model.")
+            if hasattr(self, "_custom_labels"):
+                del self._custom_labels
+                self._custom_labels = None
+                logger.debug("Deleted _custom_labels.")
+            if hasattr(self, "_custom_label_to_idx"):
+                del self._custom_label_to_idx
+                self._custom_label_to_idx = None
+                logger.debug("Deleted _custom_label_to_idx.")
+            if hasattr(self, "_custom_transform"):
+                del self._custom_transform
+                self._custom_transform = None
+                logger.debug("Deleted _custom_transform.")
+            if hasattr(self, "_custom_transform_cache"):
+                del self._custom_transform_cache
+                self._custom_transform_cache = None
+                logger.debug("Deleted _custom_transform_cache.")
+        except Exception as cleanup_error:
+            logger.warning(
+                "Exception during PictureTagger safe idle cleanup: %s", cleanup_error
+            )
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        self._trim_process_memory()
+
+        self._models_ready = bool(
+            getattr(self, "_florence_model", None) is not None
+            and getattr(self, "_florence_processor", None) is not None
+        )
+
+    @staticmethod
+    def _trim_process_memory():
+        """Best-effort RSS trim for Linux/glibc allocators."""
+        if not platform.system().lower().startswith("linux"):
+            return
+        try:
+            import ctypes
+
+            libc = ctypes.CDLL("libc.so.6")
+            trim = getattr(libc, "malloc_trim", None)
+            if trim is not None:
+                trim(0)
+        except Exception:
+            pass
 
     def _init_clip_model(self):
         self._clip_model, _, self._clip_preprocess = (
@@ -274,7 +351,10 @@ class PictureTagger:
         with self._model_init_lock:
             if getattr(self, "ort_sess", None) is None:
                 self._init_onnx_session()
-            if not hasattr(self, "_general_tags") or not hasattr(self, "_rating_tags"):
+            if (
+                getattr(self, "_general_tags", None) is None
+                or getattr(self, "_rating_tags", None) is None
+            ):
                 self._load_and_preprocess_tags()
             if self._use_custom_tagger:
                 missing_custom = (
@@ -312,6 +392,30 @@ class PictureTagger:
             getattr(self, "_florence_model", None) is not None
             and getattr(self, "_florence_processor", None) is not None
         )
+
+    @property
+    def keep_models_in_memory(self) -> bool:
+        return bool(getattr(self, "_keep_models_in_memory", True))
+
+    def set_keep_models_in_memory(self, keep_models_in_memory: bool):
+        self._keep_models_in_memory = bool(keep_models_in_memory)
+
+    def loaded_model_state(self) -> dict:
+        return {
+            "florence_loaded": bool(
+                getattr(self, "_florence_model", None) is not None
+                and getattr(self, "_florence_processor", None) is not None
+            ),
+            "clip_loaded": bool(getattr(self, "_clip_model", None) is not None),
+            "wd14_onnx_loaded": bool(getattr(self, "ort_sess", None) is not None),
+            "sbert_loaded": bool(getattr(self, "_sbert_model", None) is not None),
+            "custom_tagger_loaded": bool(
+                getattr(self, "_custom_model", None) is not None
+                and getattr(self, "_custom_labels", None) is not None
+                and getattr(self, "_custom_transform", None) is not None
+            ),
+            "keep_models_in_memory": self.keep_models_in_memory,
+        }
 
     def max_concurrent_images(self):
         if self._device == "cpu":
@@ -1301,9 +1405,9 @@ class PictureTagger:
         return florence_caption
 
     def generate_descriptions_batch(self, pictures: list[Picture]) -> dict[int, str]:
-        self._ensure_captioning_ready()
         if not pictures:
             return {}
+        self._ensure_captioning_ready()
 
         from os import path as os_path
 
