@@ -92,16 +92,6 @@
       "title": "RandomNoise"
     }
   },
-  "75:70": {
-    "inputs": {
-      "unet_name": "flux-2-klein-9b-fp8.safetensors",
-      "weight_dtype": "default"
-    },
-    "class_type": "UNETLoader",
-    "_meta": {
-      "title": "Load Diffusion Model"
-    }
-  },
   "75:71": {
     "inputs": {
       "clip_name": "qwen_3_8b_fp8mixed.safetensors",
@@ -137,21 +127,6 @@
     "class_type": "EmptyFlux2LatentImage",
     "_meta": {
       "title": "Empty Flux 2 Latent"
-    }
-  },
-  "75:80": {
-    "inputs": {
-      "upscale_method": "nearest-exact",
-      "megapixels": 1,
-      "resolution_steps": 1,
-      "image": [
-        "76",
-        0
-      ]
-    },
-    "class_type": "ImageScaleToTotalPixels",
-    "_meta": {
-      "title": "ImageScaleToTotalPixels"
     }
   },
   "75:63": {
@@ -220,7 +195,7 @@
   "75:81": {
     "inputs": {
       "image": [
-        "75:80",
+        "76",
         0
       ]
     },
@@ -248,7 +223,7 @@
   "75:79:78": {
     "inputs": {
       "pixels": [
-        "75:80",
+        "76",
         0
       ],
       "vae": [
@@ -275,6 +250,16 @@
     "class_type": "ReferenceLatent",
     "_meta": {
       "title": "ReferenceLatent"
+    }
+  },
+  "75:70": {
+    "inputs": {
+      "unet_name": "flux-2-klein-9b-fp8.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
     }
   }
 }
