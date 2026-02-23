@@ -11,9 +11,7 @@ SOURCE_TAG_PREFIX = "src_"
 STACK_TAG_SEPARATOR = "__"
 
 
-def build_stack_filename_prefix(
-    base_prefix: str, stack_id: int, source_id: int
-) -> str:
+def build_stack_filename_prefix(base_prefix: str, stack_id: int, source_id: int) -> str:
     parts = []
     if base_prefix:
         parts.append(base_prefix)
@@ -22,7 +20,9 @@ def build_stack_filename_prefix(
     return STACK_TAG_SEPARATOR.join(parts)
 
 
-def parse_stack_tags_from_filename(filename: str) -> Tuple[Optional[int], Optional[int]]:
+def parse_stack_tags_from_filename(
+    filename: str,
+) -> Tuple[Optional[int], Optional[int]]:
     base_name = os.path.basename(filename or "")
     stem = os.path.splitext(base_name)[0]
     if not stem:
@@ -62,15 +62,14 @@ def get_or_create_stack_for_picture(
     session.refresh(stack)
 
     pic.stack_id = stack.id
+    pic.stack_position = 0
     session.add(pic)
     session.commit()
 
     return stack.id
 
 
-def assign_picture_to_stack(
-    session: Session, picture_id: int, stack_id: int
-) -> bool:
+def assign_picture_to_stack(session: Session, picture_id: int, stack_id: int) -> bool:
     if picture_id is None or stack_id is None:
         return False
 
@@ -85,7 +84,20 @@ def assign_picture_to_stack(
     if pic.stack_id == stack_id:
         return True
 
+    next_position = None
+    rows = session.exec(
+        select(Picture.stack_position).where(
+            Picture.stack_id == stack_id,
+            Picture.stack_position.is_not(None),
+        )
+    ).all()
+    existing_positions = [row for row in rows if row is not None]
+    if existing_positions:
+        next_position = max(existing_positions) + 1
+
     pic.stack_id = stack_id
+    if next_position is not None:
+        pic.stack_position = next_position
     stack.updated_at = datetime.utcnow()
     session.add(pic)
     session.add(stack)

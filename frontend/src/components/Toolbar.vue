@@ -206,7 +206,7 @@
               v-if="sortModel === STACKS_SORT_KEY"
               class="toolbar-sort-similarity-row"
             >
-              <span>Stack strictness</span>
+              <span>Group strictness</span>
               <div class="toolbar-similarity-scroll">
                 <v-btn-toggle
                   v-model="stackThresholdModel"
@@ -249,7 +249,7 @@
               :color="
                 props['aria-expanded'] === 'true' ? 'primary' : 'undefined'
               "
-              title="Set grid columns"
+              title="Grid View Options"
               class="toolbar-action-btn"
             >
               <v-icon>mdi-view-grid</v-icon>
@@ -277,7 +277,7 @@
                 font-weight: 500;
                 letter-spacing: 0.02em;
               "
-              >Columns: {{ pendingColumns }}</span
+              >Grid View Options</span
             >
             <v-slider
               v-model="pendingColumns"
@@ -285,10 +285,17 @@
               :max="maxColumns"
               :step="1"
               vertical
-              style="height: 40px; width: 80%; margin-bottom: 0"
+              density="compact"
+              style="
+                height: 40px;
+                width: 80%;
+                margin-bottom: 0;
+                color: rgb(var(--v-theme-on-background));
+              "
               hide-details
               track-color="#888"
               thumb-color="primary"
+              label="Columns"
               @end="commitColumns"
             />
             <v-switch
@@ -297,7 +304,7 @@
               color="primary"
               density="compact"
               hide-details
-              style="margin-top: 6px"
+              style="margin-top: 6px; color: rgb(var(--v-theme-on-background))"
             />
           </div>
         </v-menu>
@@ -805,8 +812,8 @@ const sortButtonLabel = computed(() => {
   }
   if (sortModel.value === STACKS_SORT_KEY) {
     return selectedStackThresholdOption.value?.label
-      ? `Stacks: ${selectedStackThresholdOption.value.label}`
-      : "Stacks";
+      ? `Groups: ${selectedStackThresholdOption.value.label}`
+      : "Groups";
   }
   return selectedSortOption.value?.label || "Sort";
 });
