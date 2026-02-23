@@ -307,6 +307,12 @@ class PictureTagger:
                 self._init_florence_captioning()
                 self._models_ready = True
 
+    def is_captioning_initialized(self) -> bool:
+        return bool(
+            getattr(self, "_florence_model", None) is not None
+            and getattr(self, "_florence_processor", None) is not None
+        )
+
     def max_concurrent_images(self):
         if self._device == "cpu":
             return MAX_CONCURRENT_IMAGES_CPU
