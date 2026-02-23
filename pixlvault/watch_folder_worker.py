@@ -196,9 +196,7 @@ class WatchFolderWorker(BaseWorker):
                                 if pic.id is None:
                                     continue
                                 if stack_id:
-                                    assign_picture_to_stack(
-                                        session, pic.id, stack_id
-                                    )
+                                    assign_picture_to_stack(session, pic.id, stack_id)
                                     continue
                                 if source_id:
                                     resolved_stack_id = get_or_create_stack_for_picture(

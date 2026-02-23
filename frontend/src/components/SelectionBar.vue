@@ -46,6 +46,16 @@
           <span>Create Stack</span>
         </button>
         <button
+          v-if="showGroupStackButton"
+          class="stack-btn"
+          type="button"
+          title="Create stacks from selected likeness groups"
+          @click="$emit('create-stacks-from-groups')"
+        >
+          <v-icon size="16">mdi-layers-plus</v-icon>
+          <span>Create Stacks from Groups</span>
+        </button>
+        <button
           v-if="showRemoveButton"
           class="remove-btn"
           @click="$emit('remove-from-group')"
@@ -74,6 +84,7 @@ const props = defineProps({
   selectedCharacter: String,
   selectedSet: String,
   selectedGroupName: String,
+  selectedSort: { type: String, default: "" },
   visible: Boolean,
   allPicturesId: { type: String, required: true },
   unassignedPicturesId: { type: String, required: true },
@@ -81,6 +92,8 @@ const props = defineProps({
   backendUrl: { type: String, required: true },
   selectedImageIds: { type: Array, default: () => [] },
 });
+
+const STACKS_SORT_KEY = "PICTURE_STACKS";
 
 const isScrapheapView = computed(() => {
   const scrapheapId = String(
@@ -108,6 +121,11 @@ const removeButtonLabel = computed(() => {
 const deleteButtonLabel = computed(() => {
   if (isScrapheapView.value) return "Permanently Delete Pictures";
   return "Delete Pictures";
+});
+
+const showGroupStackButton = computed(() => {
+  if (isScrapheapView.value) return false;
+  return props.selectedCount > 0 && props.selectedSort === STACKS_SORT_KEY;
 });
 </script>
 

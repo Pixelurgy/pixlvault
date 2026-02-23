@@ -8,6 +8,11 @@
     :hiddenTags="props.hiddenTags"
     :applyTagFilter="props.applyTagFilter"
     :dateFormat="props.dateFormat"
+    :showStacks="props.showStacks"
+    :showProblemIcon="props.showProblemIcon"
+    :comfyuiProgress="comfyuiProgress"
+    :comfyuiProgressPercent="comfyuiProgressPercent"
+    :comfyuiClientId="comfyuiClientId"
     @close="closeOverlay"
     @apply-score="applyScore"
     @add-tag="addTagToImage"
@@ -15,6 +20,7 @@
     @update-description="updateDescriptionForImage"
     @overlay-change="handleOverlayChange"
     @added-to-set="handleOverlayAddedToSet"
+    @comfyui-run="handleComfyuiRun"
   />
   <ImageImporter
     ref="imageImporterRef"
@@ -32,6 +38,7 @@
       :selectedCharacter="String(props.selectedCharacter)"
       :selectedSet="String(props.selectedSet)"
       :selectedGroupName="selectedGroupName"
+      :selectedSort="props.selectedSort"
       :allPicturesId="String(props.allPicturesId)"
       :unassignedPicturesId="String(props.unassignedPicturesId)"
       :scrapheapPicturesId="String(props.scrapheapPicturesId)"
@@ -45,6 +52,7 @@
       @delete-selected="deleteSelected"
       @add-to-character="handleAddToCharacter"
       @create-stack="createStackFromSelection"
+      @create-stacks-from-groups="createStacksFromSelectedGroups"
     />
     <EmptyScrapHeap
       v-if="showScrapheapBar"
@@ -83,6 +91,21 @@
       >
         Abort
       </button>
+    </div>
+    <div
+      v-if="comfyuiProgress.visible"
+      class="comfyui-progress"
+      :class="{ 'comfyui-progress-error': comfyuiProgress.status === 'failed' }"
+    >
+      <div class="comfyui-progress-title">
+        {{ comfyuiProgress.message }}
+      </div>
+      <div class="comfyui-progress-bar">
+        <div
+          class="comfyui-progress-fill"
+          :style="{ width: `${comfyuiProgressPercent}%` }"
+        ></div>
+      </div>
     </div>
 
     <div
@@ -149,7 +172,18 @@
           :style="getStackCardStyle(img)"
           :class="[
             'image-card',
-            { 'image-card-stack-expanded': isStackExpandedForImage(img) },
+            {
+              'image-card-stack-expanded': isStackExpandedForImage(img),
+              'image-card-stack-reorder-target': isStackReorderTarget(img),
+              'image-card-stack-reorder-left': isStackReorderTargetSide(
+                img,
+                'left',
+              ),
+              'image-card-stack-reorder-right': isStackReorderTargetSide(
+                img,
+                'right',
+              ),
+            },
           ]"
           @click="handleImageCardClick(img, img.idx, $event)"
           @mouseenter="handleImageMouseEnter(img)"
@@ -163,26 +197,18 @@
             @click.stop="handleThumbnailClick(img, img.idx, $event)"
           >
             <div
-              class="thumbnail-container"
+              :class="[
+                'thumbnail-container',
+                { 'thumbnail-container-drag-source': isDragSourceImage(img) },
+              ]"
               :ref="(el) => setThumbnailContainerRef(img.id, el)"
               draggable="true"
               @dragstart.capture="handleContainerDragStart(img, $event)"
               @dragend.capture="handleContainerDragEnd(img, $event)"
+              @dragover="handleStackReorderDragOver(img, $event)"
+              @drop="handleStackReorderDrop(img, $event)"
+              @dragleave="handleStackReorderDragLeave(img, $event)"
             >
-              <div
-                v-if="
-                  props.showProblemIcon &&
-                  hasPenalisedTags(img) &&
-                  isThumbnailReady(img.id) &&
-                  img.thumbnail
-                "
-                class="penalised-tag-indicator thumbnail-badge thumbnail-badge--top-left"
-                :title="penalisedTagsTitle(img)"
-              >
-                <v-icon size="18" color="error"
-                  >mdi-emoticon-sad-outline</v-icon
-                >
-              </div>
               <div
                 v-if="
                   shouldShowStackBadge(img) &&
@@ -192,15 +218,35 @@
                 :class="[
                   'stack-indicator',
                   'thumbnail-badge',
-                  hasPenalisedTags(img)
-                    ? 'thumbnail-badge--top-left-stack'
-                    : 'thumbnail-badge--top-left',
+                  'thumbnail-badge--top-left',
                 ]"
                 :title="stackBadgeTitle(img)"
                 @click.stop="toggleStackExpand(img)"
                 @mouseenter.stop="prefetchStackMembers(img)"
               >
-                <v-icon size="18">mdi-layers</v-icon>
+                <v-icon size="18" :style="getStackBadgeIconStyle(img)"
+                  >mdi-layers</v-icon
+                >
+              </div>
+              <div
+                v-if="
+                  props.showProblemIcon &&
+                  hasPenalisedTags(img) &&
+                  isThumbnailReady(img.id) &&
+                  img.thumbnail
+                "
+                :class="[
+                  'penalised-tag-indicator',
+                  'thumbnail-badge',
+                  shouldShowStackBadge(img)
+                    ? 'thumbnail-badge--top-left-stack'
+                    : 'thumbnail-badge--top-left',
+                ]"
+                :title="penalisedTagsTitle(img)"
+              >
+                <v-icon size="18" color="error"
+                  >mdi-emoticon-sad-outline</v-icon
+                >
               </div>
               <!-- Resolution overlay -->
               <div
@@ -531,6 +577,58 @@ const exportProgress = reactive({
   cancelRequested: false,
 });
 
+const comfyuiProgress = reactive({
+  visible: false,
+  status: "idle",
+  percent: 0,
+  message: "ComfyUI running...",
+});
+const comfyuiActivePromptIds = ref(new Set());
+const comfyuiCompletedPromptIds = ref(new Set());
+const comfyuiPromptPictureMap = reactive({});
+const comfyuiPromptLastSeen = reactive({});
+const comfyuiLastMessageAt = ref(0);
+const COMFYUI_STALE_MS = 120000;
+const comfyuiPendingOverlayRefresh = ref(false);
+const comfyuiSourcePictureId = ref(null);
+const comfyuiClientId = ref(null);
+const comfyuiRefreshRetryCounts = reactive({});
+const comfyuiWsState = reactive({
+  connecting: false,
+  url: "",
+});
+let comfyuiWs = null;
+let comfyuiHideTimer = null;
+const comfyuiRefreshRetryTimers = new Map();
+
+function isComfyuiDebugEnabled() {
+  return (
+    typeof window !== "undefined" &&
+    window.localStorage?.getItem("pixlvault:comfyuiDebug") === "1"
+  );
+}
+
+function logComfyuiDebug(message, details = {}) {
+  if (!isComfyuiDebugEnabled()) return;
+  const payload = {
+    at: new Date().toISOString(),
+    ...details,
+  };
+  console.debug(`[ComfyUI] ${message}`, payload);
+}
+
+function getComfyuiClientId() {
+  if (!comfyuiClientId.value) {
+    comfyuiClientId.value = `pixlvault-${Math.random().toString(36).slice(2, 10)}`;
+  }
+  return comfyuiClientId.value;
+}
+
+const comfyuiProgressPercent = computed(() => {
+  const percent = Number(comfyuiProgress.percent) || 0;
+  return Math.min(100, Math.max(0, Math.round(percent)));
+});
+
 const exportProgressPercent = computed(() => {
   if (!exportProgress.total) return 0;
   const percent = (exportProgress.processed / exportProgress.total) * 100;
@@ -554,6 +652,598 @@ let gridResizeObserver = null;
 
 function triggerFaceOverlayRedraw() {
   faceOverlayRedrawKey.value++;
+}
+
+function clearComfyuiHideTimer() {
+  if (comfyuiHideTimer) {
+    clearTimeout(comfyuiHideTimer);
+    comfyuiHideTimer = null;
+  }
+}
+
+function scheduleComfyuiHide() {
+  clearComfyuiHideTimer();
+  logComfyuiDebug("schedule-hide", {
+    activeCount: comfyuiActivePromptIds.value.size,
+    percent: comfyuiProgress.percent,
+    status: comfyuiProgress.status,
+  });
+  comfyuiHideTimer = setTimeout(() => {
+    comfyuiProgress.visible = false;
+    comfyuiProgress.status = "idle";
+    comfyuiProgress.percent = 0;
+    comfyuiProgress.message = "ComfyUI running...";
+    logComfyuiDebug("hide-complete");
+  }, 1200);
+}
+
+function finalizeComfyuiProgress({ refresh = true } = {}) {
+  logComfyuiDebug("finalize", {
+    refresh,
+    activeCount: comfyuiActivePromptIds.value.size,
+    percent: comfyuiProgress.percent,
+  });
+  comfyuiProgress.percent = 100;
+  comfyuiProgress.visible = true;
+  comfyuiProgress.status = "completed";
+  comfyuiProgress.message = "ComfyUI complete";
+  if (refresh) {
+    preserveScrollOnNextFetch.value = true;
+    debouncedFetchAllGridImages();
+    emit("refresh-sidebar");
+  }
+  if (comfyuiActivePromptIds.value.size === 0) {
+    scheduleComfyuiHide();
+  }
+}
+
+function clearComfyuiRefreshRetries() {
+  for (const timer of comfyuiRefreshRetryTimers.values()) {
+    clearTimeout(timer);
+  }
+  comfyuiRefreshRetryTimers.clear();
+  Object.keys(comfyuiRefreshRetryCounts).forEach((key) => {
+    delete comfyuiRefreshRetryCounts[key];
+  });
+}
+
+function recordComfyuiActivity(promptKey) {
+  const now = Date.now();
+  comfyuiLastMessageAt.value = now;
+  if (promptKey) {
+    comfyuiPromptLastSeen[promptKey] = now;
+  }
+  return now;
+}
+
+function pruneStaleComfyuiPrompts(now = Date.now()) {
+  const active = comfyuiActivePromptIds.value;
+  if (!active.size) return;
+  const lastAny = comfyuiLastMessageAt.value || now;
+  const stale = [];
+  for (const promptKey of active.values()) {
+    const lastSeen = comfyuiPromptLastSeen[promptKey] || lastAny;
+    if (now - lastSeen > COMFYUI_STALE_MS) {
+      stale.push(promptKey);
+    }
+  }
+  for (const promptKey of stale) {
+    logComfyuiDebug("prompt-stale-timeout", { promptKey });
+    markComfyuiPromptComplete(promptKey, "stale-timeout");
+  }
+}
+
+function scheduleComfyuiRefreshRetry(promptKey, pictureId, attempt = 1) {
+  if (!pictureId) return;
+  if (attempt > 8) {
+    const key = promptKey || `pic:${pictureId}`;
+    if (comfyuiRefreshRetryCounts[key]) {
+      delete comfyuiRefreshRetryCounts[key];
+    }
+    logComfyuiDebug("refresh-retry-abandon", {
+      promptKey: key,
+      pictureId,
+    });
+    if (String(comfyuiSourcePictureId.value || "") === String(pictureId)) {
+      comfyuiPendingOverlayRefresh.value = false;
+    }
+    return;
+  }
+  const key = promptKey || `pic:${pictureId}`;
+  const delay = 2000 * attempt;
+  const existing = comfyuiRefreshRetryTimers.get(key);
+  if (existing) {
+    clearTimeout(existing);
+  }
+  comfyuiRefreshRetryCounts[key] = attempt;
+  const timer = setTimeout(() => {
+    comfyuiRefreshRetryTimers.delete(key);
+    if (!comfyuiPendingOverlayRefresh.value) return;
+    logComfyuiDebug("refresh-retry", {
+      promptKey: key,
+      pictureId,
+      attempt,
+    });
+    preserveScrollOnNextFetch.value = true;
+    comfyuiSourcePictureId.value = pictureId;
+    debouncedFetchAllGridImages();
+    emit("refresh-sidebar");
+    scheduleComfyuiRefreshRetry(promptKey, pictureId, attempt + 1);
+  }, delay);
+  comfyuiRefreshRetryTimers.set(key, timer);
+}
+
+function hasComfyuiRefreshRetry(pictureId) {
+  if (!pictureId) return false;
+  const key = `pic:${pictureId}`;
+  if (comfyuiRefreshRetryCounts[key]) return true;
+  return Object.keys(comfyuiRefreshRetryCounts).length > 0;
+}
+
+async function fetchStackIdForPicture(pictureId) {
+  if (!pictureId || !props.backendUrl) return null;
+  try {
+    const res = await apiClient.get(
+      `${props.backendUrl}/pictures/${pictureId}/metadata`,
+    );
+    const stackId = res.data?.stack_id ?? res.data?.stackId ?? null;
+    return stackId != null ? String(stackId) : null;
+  } catch (err) {
+    logComfyuiDebug("stack-id-fetch-failed", {
+      pictureId,
+      error: err?.message || String(err),
+    });
+    return null;
+  }
+}
+
+async function fetchStackMembersForOverlay(stackId) {
+  if (!stackId || !props.backendUrl) return [];
+  try {
+    const res = await apiClient.get(
+      `${props.backendUrl}/stacks/${stackId}/pictures`,
+      { params: { fields: "grid" } },
+    );
+    return Array.isArray(res.data) ? res.data : [];
+  } catch (err) {
+    logComfyuiDebug("stack-members-fetch-failed", {
+      stackId,
+      error: err?.message || String(err),
+    });
+    return [];
+  }
+}
+
+function markComfyuiPromptComplete(promptKey, reason) {
+  if (!promptKey) return;
+  const completed = comfyuiCompletedPromptIds.value;
+  if (completed.has(promptKey)) return;
+  completed.add(promptKey);
+  comfyuiCompletedPromptIds.value = new Set(completed);
+  const active = comfyuiActivePromptIds.value;
+  if (active.has(promptKey)) {
+    active.delete(promptKey);
+    comfyuiActivePromptIds.value = new Set(active);
+  }
+  const pictureId = comfyuiPromptPictureMap[promptKey] || null;
+  logComfyuiDebug("prompt-complete", {
+    promptKey,
+    reason,
+    pictureId,
+    activeCount: comfyuiActivePromptIds.value.size,
+  });
+  preserveScrollOnNextFetch.value = true;
+  if (pictureId != null) {
+    comfyuiSourcePictureId.value = pictureId;
+    comfyuiPendingOverlayRefresh.value = true;
+  }
+  debouncedFetchAllGridImages();
+  emit("refresh-sidebar");
+  scheduleComfyuiRefreshRetry(promptKey, pictureId, 1);
+  clearComfyuiHideTimer();
+  comfyuiProgress.visible = false;
+  comfyuiProgress.status = "idle";
+  comfyuiProgress.percent = 0;
+  comfyuiProgress.message = "ComfyUI running...";
+  if (comfyuiActivePromptIds.value.size === 0) {
+    finalizeComfyuiProgress({ refresh: false });
+  }
+}
+
+async function fetchComfyuiUrl() {
+  try {
+    const res = await apiClient.get("/users/me/config");
+    const raw = String(res.data?.comfyui_url || "").trim();
+    return raw || "http://127.0.0.1:8188/";
+  } catch (err) {
+    return "http://127.0.0.1:8188/";
+  }
+}
+
+function buildComfyuiWsUrl(baseUrl) {
+  const trimmed = String(baseUrl || "")
+    .trim()
+    .replace(/\/+$/, "");
+  if (!trimmed) return "";
+  const wsBase = trimmed.startsWith("https")
+    ? trimmed.replace(/^https/, "wss")
+    : trimmed.replace(/^http/, "ws");
+  const clientId = getComfyuiClientId();
+  return `${wsBase}/comfyui/ws?clientId=${encodeURIComponent(clientId)}`;
+}
+
+function normalizeComfyuiPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  if (num <= 0) return 0;
+  if (num <= 1) return num * 100;
+  if (num <= 100) return num;
+  return Math.min(100, num);
+}
+
+function percentFromRange(value, max) {
+  const v = Number(value);
+  const m = Number(max);
+  if (!Number.isFinite(v) || !Number.isFinite(m) || m <= 0) return null;
+  return (v / m) * 100;
+}
+
+function extractOverallComfyuiPercent(payload) {
+  const data = payload?.data || {};
+  const status = data?.status || payload?.status || {};
+  const execInfo = status?.exec_info || status?.execInfo || {};
+  const candidates = [
+    payload?.percent,
+    data?.percent,
+    execInfo?.progress,
+    execInfo?.percent,
+    execInfo?.percentage,
+    status?.progress,
+    status?.percent,
+    data?.progress?.percent,
+    data?.progress?.percentage,
+    data?.progress_state?.percent,
+    data?.total_progress,
+    data?.totalProgress,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeComfyuiPercent(candidate);
+    if (normalized != null) return normalized;
+  }
+
+  const rangeCandidates = [
+    [execInfo?.current, execInfo?.total],
+    [execInfo?.completed, execInfo?.total],
+    [status?.current, status?.total],
+    [data?.current, data?.total],
+    [data?.value, data?.max],
+    [data?.progress?.value, data?.progress?.max],
+    [data?.progress?.current, data?.progress?.total],
+    [data?.progress_state?.value, data?.progress_state?.max],
+    [data?.progress_state?.current, data?.progress_state?.total],
+  ];
+  for (const [value, max] of rangeCandidates) {
+    const computed = percentFromRange(value, max);
+    if (computed != null) return computed;
+  }
+  return null;
+}
+
+function parseComfyuiPayload(raw) {
+  try {
+    return JSON.parse(raw || "{}");
+  } catch (err) {
+    logComfyuiDebug("message-parse-error", {
+      raw: String(raw || "").slice(0, 200),
+    });
+    return null;
+  }
+}
+
+function handleComfyuiPayload(payload) {
+  if (!payload || typeof payload !== "object") return;
+  const type = payload?.type;
+  const data = payload?.data || {};
+  const promptId =
+    data?.prompt_id || data?.promptId || payload?.prompt_id || null;
+  const active = comfyuiActivePromptIds.value;
+  const promptKey = promptId != null ? String(promptId) : null;
+  const isRelevant = !promptKey || active.has(promptKey);
+  const now = recordComfyuiActivity(promptKey);
+  logComfyuiDebug("message", {
+    type,
+    promptKey,
+    activeCount: active.size,
+    status: comfyuiProgress.status,
+    percent: comfyuiProgress.percent,
+    relevant: isRelevant,
+  });
+  if (!isRelevant) {
+    pruneStaleComfyuiPrompts(now);
+    return;
+  }
+
+  const overallPercent = extractOverallComfyuiPercent(payload);
+  if (overallPercent != null) {
+    comfyuiProgress.percent = overallPercent;
+    comfyuiProgress.visible = true;
+    comfyuiProgress.status = "running";
+    comfyuiProgress.message = "ComfyUI running...";
+    if (overallPercent >= 100) {
+      if (promptKey) {
+        logComfyuiDebug("finalize-from-percent", {
+          promptKey,
+          overallPercent,
+        });
+        markComfyuiPromptComplete(promptKey, "overall-percent");
+        pruneStaleComfyuiPrompts(now);
+        return;
+      }
+      if (active.size <= 1) {
+        active.clear();
+        comfyuiActivePromptIds.value = new Set(active);
+        finalizeComfyuiProgress({ refresh: true });
+        pruneStaleComfyuiPrompts(now);
+        return;
+      }
+    }
+  }
+
+  if (type === "progress") {
+    const value = Number(data?.value ?? data?.current ?? 0);
+    const max = Number(data?.max ?? data?.total ?? 0);
+    if (max > 0 && overallPercent == null) {
+      comfyuiProgress.percent = (value / max) * 100;
+      comfyuiProgress.visible = true;
+      comfyuiProgress.status = "running";
+      comfyuiProgress.message = "ComfyUI running...";
+      if (promptKey && value >= max) {
+        markComfyuiPromptComplete(promptKey, "progress-max");
+      }
+    }
+    pruneStaleComfyuiPrompts(now);
+    return;
+  }
+
+  if (type === "progress_state") {
+    const value = Number(data?.value ?? data?.current ?? 0);
+    const max = Number(data?.max ?? data?.total ?? 0);
+    if (promptKey && max > 0 && value >= max) {
+      markComfyuiPromptComplete(promptKey, "progress-state-max");
+      pruneStaleComfyuiPrompts(now);
+      return;
+    }
+  }
+
+  if (type === "status" && overallPercent != null) {
+    pruneStaleComfyuiPrompts(now);
+    return;
+  }
+
+  if (type === "executing") {
+    if (data?.node == null) {
+      if (promptKey) {
+        logComfyuiDebug("finalize-from-executing", { promptKey });
+        markComfyuiPromptComplete(promptKey, "executing-null");
+        pruneStaleComfyuiPrompts(now);
+      } else {
+        active.clear();
+        comfyuiActivePromptIds.value = new Set(active);
+        finalizeComfyuiProgress({ refresh: true });
+        pruneStaleComfyuiPrompts(now);
+      }
+    } else {
+      comfyuiProgress.visible = true;
+      comfyuiProgress.status = "running";
+      if (comfyuiProgress.percent <= 0) {
+        comfyuiProgress.percent = 1;
+      }
+    }
+    pruneStaleComfyuiPrompts(now);
+    return;
+  }
+
+  if (type === "execution_success" && promptKey) {
+    markComfyuiPromptComplete(promptKey, "execution-success");
+    pruneStaleComfyuiPrompts(now);
+    return;
+  }
+
+  if (type === "executed" || type === "execution_cached") {
+    comfyuiProgress.visible = true;
+    comfyuiProgress.status = "running";
+    if (comfyuiProgress.percent <= 0) {
+      comfyuiProgress.percent = 1;
+    }
+  }
+  pruneStaleComfyuiPrompts(now);
+}
+
+function handleComfyuiWsMessage(event) {
+  const raw = event?.data;
+  if (raw instanceof Blob) {
+    raw
+      .text()
+      .then((text) => {
+        const payload = parseComfyuiPayload(text);
+        if (payload) handleComfyuiPayload(payload);
+      })
+      .catch(() => {
+        logComfyuiDebug("message-parse-error", { raw: "[blob]" });
+      });
+    return;
+  }
+  if (raw instanceof ArrayBuffer) {
+    const decoder =
+      typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
+    const text = decoder ? decoder.decode(raw) : "";
+    const payload = parseComfyuiPayload(text);
+    if (payload) handleComfyuiPayload(payload);
+    return;
+  }
+  const payload = parseComfyuiPayload(raw);
+  if (payload) handleComfyuiPayload(payload);
+}
+
+async function ensureComfyuiSocket() {
+  if (comfyuiWsState.connecting) return;
+  if (
+    comfyuiWs &&
+    (comfyuiWs.readyState === WebSocket.OPEN ||
+      comfyuiWs.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
+  comfyuiWsState.connecting = true;
+  const wsUrl = buildComfyuiWsUrl(props.backendUrl);
+  comfyuiWsState.url = wsUrl;
+  try {
+    if (!wsUrl) {
+      return;
+    }
+    comfyuiWs = new WebSocket(wsUrl);
+    comfyuiWs.onmessage = handleComfyuiWsMessage;
+    comfyuiWs.onclose = () => {
+      comfyuiWs = null;
+    };
+    comfyuiWs.onerror = () => {
+      comfyuiWs = null;
+    };
+  } catch (err) {
+    comfyuiWs = null;
+  } finally {
+    comfyuiWsState.connecting = false;
+  }
+}
+
+function handleComfyuiRun(payload) {
+  const prompts = Array.isArray(payload?.prompts) ? payload.prompts : [];
+  const ids = prompts
+    .map((entry) => entry?.prompt_id || entry?.promptId)
+    .filter((id) => id != null)
+    .map((id) => String(id));
+  if (!ids.length) return;
+  const next = new Set(comfyuiActivePromptIds.value);
+  for (const id of ids) {
+    next.add(id);
+    const entry = prompts.find(
+      (item) => String(item?.prompt_id || item?.promptId) === id,
+    );
+    const pictureId = entry?.picture_id ?? payload?.pictureId ?? null;
+    if (pictureId != null) {
+      comfyuiPromptPictureMap[id] = pictureId;
+    }
+    comfyuiPromptLastSeen[id] = Date.now();
+  }
+  comfyuiActivePromptIds.value = next;
+  logComfyuiDebug("run-queued", {
+    promptIds: ids,
+    activeCount: next.size,
+    pictureId: payload?.pictureId ?? null,
+  });
+  comfyuiProgress.visible = true;
+  comfyuiProgress.status = "queued";
+  comfyuiProgress.percent = 0;
+  comfyuiProgress.message = "ComfyUI queued...";
+  clearComfyuiHideTimer();
+  comfyuiSourcePictureId.value = payload?.pictureId ?? null;
+  comfyuiPendingOverlayRefresh.value = Boolean(comfyuiSourcePictureId.value);
+  void ensureComfyuiSocket();
+}
+
+function findImageById(imageId, primary, fallback) {
+  if (!imageId) return null;
+  const id = String(imageId);
+  const lists = [primary, fallback].filter(Array.isArray);
+  for (const list of lists) {
+    const found = list.find(
+      (item) => item?.id != null && String(item.id) === id,
+    );
+    if (found) return found;
+  }
+  return null;
+}
+
+async function maybeRefreshOverlayForComfyui() {
+  if (!overlayOpen.value || !comfyuiPendingOverlayRefresh.value) return;
+  const sourceId = comfyuiSourcePictureId.value;
+  if (!sourceId) {
+    if (!hasComfyuiRefreshRetry(sourceId)) {
+      comfyuiPendingOverlayRefresh.value = false;
+    }
+    return;
+  }
+  const source = findImageById(
+    sourceId,
+    lastFetchedGridImages.value,
+    allGridImages.value,
+  );
+  let sourceStackId = getPictureStackId(source);
+  if (!sourceStackId) {
+    sourceStackId = await fetchStackIdForPicture(sourceId);
+  }
+  if (!sourceStackId) {
+    logComfyuiDebug("overlay-refresh-missing-stack", {
+      sourceId,
+    });
+    if (!hasComfyuiRefreshRetry(sourceId)) {
+      comfyuiPendingOverlayRefresh.value = false;
+    }
+    return;
+  }
+  const overlayImage = findImageById(
+    overlayImageId.value,
+    lastFetchedGridImages.value,
+    allGridImages.value,
+  );
+  const overlayStackId = getPictureStackId(overlayImage);
+  if (
+    overlayStackId &&
+    overlayStackId !== sourceStackId &&
+    String(overlayImageId.value || "") !== String(sourceId)
+  ) {
+    logComfyuiDebug("overlay-refresh-skip", {
+      sourceId,
+      sourceStackId,
+      overlayStackId,
+      overlayImageId: overlayImageId.value,
+    });
+    if (!hasComfyuiRefreshRetry(sourceId)) {
+      comfyuiPendingOverlayRefresh.value = false;
+    }
+    return;
+  }
+  let members = Array.isArray(lastFetchedGridImages.value)
+    ? lastFetchedGridImages.value.filter(
+        (item) => getPictureStackId(item) === sourceStackId,
+      )
+    : [];
+  if (!members.length) {
+    members = await fetchStackMembersForOverlay(sourceStackId);
+  }
+  if (!members.length) {
+    logComfyuiDebug("overlay-refresh-no-members", {
+      sourceId,
+      sourceStackId,
+    });
+    if (!hasComfyuiRefreshRetry(sourceId)) {
+      comfyuiPendingOverlayRefresh.value = false;
+      clearComfyuiRefreshRetries();
+    }
+    return;
+  }
+  const newest = selectNewestStackMember(members);
+  logComfyuiDebug("overlay-refresh-apply", {
+    sourceId,
+    sourceStackId,
+    memberCount: members.length,
+    selectedId: newest?.id ?? null,
+  });
+  if (newest?.id != null) {
+    overlayImageId.value = newest.id;
+  }
+  comfyuiPendingOverlayRefresh.value = false;
+  clearComfyuiRefreshRetries();
 }
 
 function buildThumbnailInfoKey(imageId, infoKey) {
@@ -717,6 +1407,11 @@ onUnmounted(() => {
   }
   recentlyAddedTimers.clear();
   recentlyAddedIds.value = {};
+  clearComfyuiHideTimer();
+  if (comfyuiWs) {
+    comfyuiWs.close();
+    comfyuiWs = null;
+  }
 });
 
 watch(
@@ -1133,7 +1828,7 @@ function getThumbnailInfoItems(img) {
       typeof img.stackIndex === "number" ? img.stackIndex : img.stack_index;
     items.push({
       key: "stack_index",
-      text: `Stack ${stackIndex + 1}`,
+      text: `Group ${stackIndex + 1}`,
     });
   }
   return items;
@@ -1706,6 +2401,44 @@ const overlayImageId = ref(null);
 const dragOverlayVisible = ref(false);
 const dragOverlayMessage = ref("Drop files here to import");
 const dragSource = ref(null);
+const dragSourceImageIds = ref(new Set());
+const stackReorderHoverId = ref(null);
+const stackReorderHoverSide = ref(null);
+
+function setDragSourceImageIds(ids) {
+  const next = new Set(
+    Array.isArray(ids) ? ids.map((id) => String(id)).filter(Boolean) : [],
+  );
+  dragSourceImageIds.value = next;
+}
+
+function clearDragSourceImageIds() {
+  dragSourceImageIds.value = new Set();
+}
+
+function isDragSourceImage(img) {
+  if (!img?.id) return false;
+  return dragSourceImageIds.value.has(String(img.id));
+}
+
+function setStackReorderHoverId(value) {
+  stackReorderHoverId.value = value ? String(value) : null;
+}
+
+function setStackReorderHoverSide(value) {
+  stackReorderHoverSide.value =
+    value === "left" || value === "right" ? value : null;
+}
+
+function isStackReorderTarget(img) {
+  if (!img?.id) return false;
+  return stackReorderHoverId.value === String(img.id);
+}
+
+function isStackReorderTargetSide(img, side) {
+  if (!isStackReorderTarget(img)) return false;
+  return stackReorderHoverSide.value === side;
+}
 
 const selectedGroupName = ref("");
 
@@ -1953,6 +2686,104 @@ async function createStackFromSelection() {
   }
 }
 
+function getLikenessGroupId(img) {
+  if (!img) return null;
+  const raw = img.stackIndex ?? img.stack_index ?? null;
+  if (raw === null || raw === undefined) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+async function createStacksFromSelectedGroups() {
+  if (props.selectedSort !== STACKS_SORT_KEY) return;
+  const ids = Array.isArray(selectedImageIds.value)
+    ? selectedImageIds.value
+    : [];
+  if (!ids.length) return;
+
+  const source = Array.isArray(lastFetchedGridImages.value)
+    ? lastFetchedGridImages.value
+    : allGridImages.value;
+  const images = Array.isArray(source) ? source : [];
+  const imageById = new Map(
+    images
+      .filter((img) => img && img.id != null)
+      .map((img) => [String(img.id), img]),
+  );
+
+  const groupIds = new Set();
+  for (const id of ids) {
+    const img = imageById.get(String(id));
+    const groupId = getLikenessGroupId(img);
+    if (groupId != null) {
+      groupIds.add(groupId);
+    }
+  }
+
+  if (!groupIds.size) return;
+
+  const groupsToStack = [];
+  const skippedGroups = [];
+  for (const groupId of groupIds) {
+    const members = images.filter(
+      (img) => getLikenessGroupId(img) === groupId && img?.id != null,
+    );
+    const memberIds = Array.from(
+      new Set(members.map((img) => Number(img.id)).filter(Number.isFinite)),
+    );
+    if (memberIds.length < 2) continue;
+    const membersByStack = new Map();
+    for (const member of members) {
+      const stackId = getPictureStackId(member);
+      if (!stackId) continue;
+      if (!membersByStack.has(stackId)) {
+        membersByStack.set(stackId, []);
+      }
+      membersByStack.get(stackId).push(member);
+    }
+    if (membersByStack.size > 1) {
+      skippedGroups.push(groupId);
+      continue;
+    }
+    if (membersByStack.size === 1) {
+      const [stackId, stackedMembers] = Array.from(membersByStack.entries())[0];
+      const stackedAnchorId = stackedMembers?.[0]?.id;
+      const unstackedIds = memberIds.filter(
+        (id) => !getPictureStackId(imageById.get(String(id))),
+      );
+      if (!unstackedIds.length) continue;
+      const payloadIds = [stackedAnchorId, ...unstackedIds]
+        .filter((id) => id != null)
+        .map((id) => Number(id))
+        .filter(Number.isFinite);
+      if (payloadIds.length < 2) continue;
+      groupsToStack.push(payloadIds);
+      continue;
+    }
+    groupsToStack.push(memberIds);
+  }
+
+  if (!groupsToStack.length) return;
+
+  try {
+    for (const memberIds of groupsToStack) {
+      await apiClient.post(`${props.backendUrl}/stacks`, {
+        picture_ids: memberIds,
+      });
+    }
+    if (skippedGroups.length) {
+      alert(
+        `Skipped ${skippedGroups.length} group(s) containing multiple stacks.`,
+      );
+    }
+    clearSelection();
+    preserveScrollOnNextFetch.value = true;
+    debouncedFetchAllGridImages();
+  } catch (e) {
+    console.error("Failed to create stacks from groups:", e);
+  }
+}
+
 async function openOverlay(img) {
   if (!img || !img.id) return;
   overlayImageId.value = img.id;
@@ -1962,6 +2793,7 @@ async function openOverlay(img) {
 function closeOverlay() {
   overlayOpen.value = false;
   overlayImageId.value = null;
+  comfyuiPendingOverlayRefresh.value = false;
 }
 
 async function setScore(img, n) {
@@ -2441,21 +3273,76 @@ function buildGridFetchKey() {
 function getStackCardStyle(img) {
   if (!img) return {};
   if (!props.showStacks) return {};
-  const rawIndex =
-    typeof img.stackIndex === "number"
-      ? img.stackIndex
-      : typeof img.stack_index === "number"
-        ? img.stack_index
-        : null;
-  if (rawIndex === null) return {};
-  const color = img.stackColor || getStackColor(rawIndex, STACK_COLOR_STEP);
+  if (!isStackExpandedForImage(img) && props.selectedSort !== STACKS_SORT_KEY) {
+    return {};
+  }
+  const color = applyStackBackgroundAlpha(getStackCardColor(img));
+  if (!color) return {};
   return {
     backgroundColor: color,
     padding: "6px",
     borderRadius: "0px",
     boxShadow: "none",
-    border: "1px dashed black",
   };
+}
+
+function getStackCardColor(img) {
+  if (!img) return null;
+  if (!props.showStacks) return null;
+  if (typeof img.stackColor === "string" && img.stackColor) {
+    return img.stackColor;
+  }
+  const stackIndex =
+    typeof img.stackIndex === "number"
+      ? img.stackIndex
+      : typeof img.stack_index === "number"
+        ? img.stack_index
+        : null;
+  if (typeof stackIndex === "number") {
+    return getStackColor(stackIndex, STACK_COLOR_STEP);
+  }
+  const stackId = getPictureStackId(img);
+  const index = getStackColorIndexFromId(stackId);
+  if (index === null) return null;
+  return getStackColor(index, STACK_COLOR_STEP);
+}
+
+function getStackBadgeIconStyle(img) {
+  const color = getStackCardColor(img);
+  if (!color) return {};
+  return {
+    color,
+  };
+}
+
+function applyStackBackgroundAlpha(color) {
+  if (!color || typeof color !== "string") return color;
+  const trimmed = color.trim();
+  if (!trimmed) return color;
+  if (trimmed.startsWith("hsla(") || trimmed.startsWith("rgba(")) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("hsl(")) {
+    const inner = trimmed.slice(4, -1).trim();
+    return `hsla(${inner} / 0.6)`;
+  }
+  if (trimmed.startsWith("rgb(")) {
+    const inner = trimmed.slice(4, -1).trim();
+    return `rgba(${inner} / 0.6)`;
+  }
+  return trimmed;
+}
+
+function getStackColorIndexFromId(stackId) {
+  if (stackId === null || stackId === undefined) return null;
+  const numeric = Number(stackId);
+  if (Number.isFinite(numeric)) return numeric;
+  const raw = String(stackId);
+  let hash = 0;
+  for (let i = 0; i < raw.length; i += 1) {
+    hash = (hash * 31 + raw.charCodeAt(i)) % 2147483647;
+  }
+  return hash || null;
 }
 
 function buildPictureIdsQueryParams() {
@@ -2552,9 +3439,92 @@ function getPictureStackId(img) {
   return String(stackId);
 }
 
+function getStackPositionValue(img) {
+  if (!img) return null;
+  const raw = img.stack_position ?? img.stackPosition ?? null;
+  if (raw === null || raw === undefined) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function getStackSmartScoreValue(img) {
+  const raw = img?.smartScore ?? img?.smart_score ?? null;
+  if (raw === null || raw === undefined) return 0;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getStackCreatedAtTs(img) {
+  if (!img?.created_at) return 0;
+  const ts = new Date(img.created_at).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function compareStackOrder(a, b) {
+  const posA = getStackPositionValue(a);
+  const posB = getStackPositionValue(b);
+  if (posA !== null || posB !== null) {
+    if (posA === null) return 1;
+    if (posB === null) return -1;
+    if (posA !== posB) return posA - posB;
+  }
+  const scoreA = Number(a?.score ?? 0);
+  const scoreB = Number(b?.score ?? 0);
+  if (scoreA !== scoreB) return scoreB - scoreA;
+  const smartA = getStackSmartScoreValue(a);
+  const smartB = getStackSmartScoreValue(b);
+  if (smartA !== smartB) return smartB - smartA;
+  const dateA = getStackCreatedAtTs(a);
+  const dateB = getStackCreatedAtTs(b);
+  if (dateA !== dateB) return dateB - dateA;
+  const idA = Number(a?.id ?? 0);
+  const idB = Number(b?.id ?? 0);
+  return idA - idB;
+}
+
+function sortStackMembers(members) {
+  if (!Array.isArray(members)) return [];
+  return members.slice().sort(compareStackOrder);
+}
+
+function selectNewestStackMember(members) {
+  if (!Array.isArray(members) || members.length === 0) return null;
+  return members.reduce((best, current) => {
+    if (!best) return current;
+    const bestTs = getStackCreatedAtTs(best);
+    const currentTs = getStackCreatedAtTs(current);
+    if (currentTs !== bestTs) {
+      return currentTs > bestTs ? current : best;
+    }
+    const bestId = Number(best?.id ?? 0);
+    const currentId = Number(current?.id ?? 0);
+    return currentId > bestId ? current : best;
+  }, null);
+}
+
+function buildStackLeaderMap(images) {
+  const byStack = new Map();
+  for (const img of images) {
+    const stackId = getPictureStackId(img);
+    if (!stackId || img?.id == null) continue;
+    if (!byStack.has(stackId)) {
+      byStack.set(stackId, []);
+    }
+    byStack.get(stackId).push(img);
+  }
+  const leaders = new Map();
+  for (const [stackId, members] of byStack.entries()) {
+    const ordered = sortStackMembers(members);
+    const leader = ordered[0];
+    if (leader?.id != null) {
+      leaders.set(stackId, String(leader.id));
+    }
+  }
+  return leaders;
+}
+
 function collapseStackImages(images) {
   if (!props.showStacks) return images;
-  if (props.selectedSort === STACKS_SORT_KEY) return images;
   if (!Array.isArray(images) || images.length === 0) return [];
   const counts = new Map();
   for (const img of images) {
@@ -2563,12 +3533,17 @@ function collapseStackImages(images) {
     counts.set(stackId, (counts.get(stackId) || 0) + 1);
   }
   if (!counts.size) return images;
+  const leaders = buildStackLeaderMap(images);
   const seen = new Set();
   const collapsed = [];
   for (const img of images) {
     const stackId = getPictureStackId(img);
     if (!stackId) {
       collapsed.push(img);
+      continue;
+    }
+    const leaderId = leaders.get(stackId);
+    if (leaderId && img?.id != null && String(img.id) !== leaderId) {
       continue;
     }
     if (seen.has(stackId)) continue;
@@ -2703,18 +3678,37 @@ function rebuildGridImagesFromLastFetch() {
   updateVisibleThumbnails();
 }
 
+async function refreshExpandedStacksAfterFetch() {
+  if (!props.showStacks) return;
+  const expanded = Array.from(expandedStackIds.value || []);
+  if (!expanded.length) return;
+  for (const stackId of expanded) {
+    removeExpandedStackMembers(stackId);
+    const header = allGridImages.value.find(
+      (item) => getPictureStackId(item) === stackId,
+    );
+    const fallbackCount = header?.stackCount ?? header?.stack_count ?? null;
+    const loaded = await ensureStackMembersLoaded(stackId);
+    if (loaded !== false) {
+      insertExpandedStackMembers(stackId, fallbackCount);
+    }
+  }
+}
+
 function getLocalStackMembers(stackId) {
   if (!stackId) return [];
   const source = Array.isArray(lastFetchedGridImages.value)
     ? lastFetchedGridImages.value
     : [];
   if (!source.length) return [];
-  return source.filter((img) => getPictureStackId(img) === stackId);
+  const members = source.filter((img) => getPictureStackId(img) === stackId);
+  return sortStackMembers(members);
 }
 
 function cacheExpandedStackMembers(stackId, members) {
   if (!stackId || !Array.isArray(members) || members.length === 0) return false;
-  const ordered = members
+  const sorted = sortStackMembers(members);
+  const ordered = sorted
     .filter((img) => img && img.id != null)
     .map((img) =>
       img.stack_id !== undefined || img.stackId !== undefined
@@ -2752,8 +3746,9 @@ function buildExpandedStackImages(stackId, fallbackImg, stackCount) {
   const entry = expandedStackMembers.value.get(stackId);
   const ids = Array.isArray(entry?.ids) ? entry.ids : [];
   const images = Array.isArray(entry?.images) ? entry.images : [];
+  const sourceImages = ids.length ? images : sortStackMembers(images);
   const imageById = new Map(
-    images
+    sourceImages
       .filter((img) => img && img.id != null)
       .map((img) => [String(img.id), img]),
   );
@@ -2777,7 +3772,7 @@ function buildExpandedStackImages(stackId, fallbackImg, stackCount) {
       addImage(imageById.get(String(id)));
     }
   } else {
-    for (const img of images) {
+    for (const img of sourceImages) {
       addImage(img);
     }
   }
@@ -2801,7 +3796,10 @@ function insertExpandedStackMembers(stackId, fallbackCount) {
   );
   if (headerIndex === -1) return;
   const header = items[headerIndex];
-  const stackCount = getExpandedStackCount(stackId, fallbackCount ?? header?.stackCount);
+  const stackCount = getExpandedStackCount(
+    stackId,
+    fallbackCount ?? header?.stackCount,
+  );
   const expanded = buildExpandedStackImages(stackId, header, stackCount);
   if (!expanded.length) return;
   const headerId = header?.id != null ? String(header.id) : null;
@@ -2923,7 +3921,8 @@ async function ensureStackMembersLoaded(stackId) {
     );
     const picsData = await picsRes.data;
     const pics = Array.isArray(picsData) ? picsData : [];
-    const ordered = pics
+    const sorted = sortStackMembers(pics);
+    const ordered = sorted
       .filter((img) => img && img.id != null)
       .map((img) =>
         img.stack_id !== undefined || img.stackId !== undefined
@@ -2972,6 +3971,210 @@ function prefetchStackMembers(img) {
   const stackId = getPictureStackId(img);
   if (!stackId) return;
   void ensureStackMembersLoaded(stackId);
+}
+
+function getStackReorderCount(stackId, fallbackCount) {
+  if (!stackId) return 0;
+  const entry = expandedStackMembers.value.get(stackId);
+  const ids = Array.isArray(entry?.ids) ? entry.ids : [];
+  if (ids.length) return ids.length;
+  const images = Array.isArray(entry?.images) ? entry.images : [];
+  if (images.length) return images.length;
+  const fallback = Number(fallbackCount ?? 0);
+  return Number.isFinite(fallback) ? fallback : 0;
+}
+
+function getDragImageIdFromEvent(event) {
+  const raw = event?.dataTransfer?.getData("application/json");
+  if (!raw) return null;
+  try {
+    const payload = JSON.parse(raw);
+    if (payload?.type === "image-ids") {
+      const ids = Array.isArray(payload.imageIds) ? payload.imageIds : [];
+      if (ids.length === 1) return String(ids[0]);
+    }
+  } catch (err) {
+    return null;
+  }
+  return null;
+}
+
+function buildStackReorderDragState(sourceId) {
+  if (!props.showStacks) return null;
+  if (!sourceId) return null;
+  const source = allGridImages.value.find(
+    (item) => item?.id != null && String(item.id) === String(sourceId),
+  );
+  if (!source) return null;
+  const stackId = getPictureStackId(source);
+  if (!stackId || !expandedStackIds.value.has(stackId)) return null;
+  const count = getStackReorderCount(stackId, getStackBadgeCount(source));
+  if (count <= 1) return null;
+  return { stackId, imageId: String(sourceId) };
+}
+
+function handleStackReorderDragOver(img, event) {
+  let drag = stackReorderDrag.value;
+  if (!drag) {
+    const sourceId = getDragImageIdFromEvent(event);
+    drag = buildStackReorderDragState(sourceId);
+    if (drag) {
+      stackReorderDrag.value = drag;
+    }
+  }
+  if (!drag || !img?.id) return;
+  const stackId = getPictureStackId(img);
+  if (!stackId || stackId !== drag.stackId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  setStackReorderHoverId(img.id);
+  const bounds = event?.currentTarget?.getBoundingClientRect?.();
+  if (bounds && Number.isFinite(bounds.left) && Number.isFinite(bounds.width)) {
+    const mid = bounds.left + bounds.width / 2;
+    const side = event.clientX <= mid ? "left" : "right";
+    setStackReorderHoverSide(side);
+  }
+  if (event?.dataTransfer) {
+    event.dataTransfer.dropEffect = "move";
+  }
+}
+
+function handleStackReorderDragLeave(img, event) {
+  if (!stackReorderHoverId.value || !img?.id) return;
+  if (String(img.id) !== stackReorderHoverId.value) return;
+  const nextTarget = event?.relatedTarget;
+  if (nextTarget && event?.currentTarget?.contains?.(nextTarget)) return;
+  setStackReorderHoverId(null);
+  setStackReorderHoverSide(null);
+}
+
+function buildStackReorderedMembers(stackItems, orderedIds, stackCount) {
+  const byId = new Map(
+    stackItems
+      .filter((item) => item && item.id != null)
+      .map((item) => [String(item.id), item]),
+  );
+  return orderedIds
+    .map((id, idx) => {
+      const item = byId.get(String(id));
+      if (!item) return null;
+      const next = { ...item, stack_position: idx };
+      if (idx === 0 && stackCount > 0) {
+        next.stackCount = stackCount;
+      } else {
+        if (next.stackCount !== undefined) delete next.stackCount;
+        if (next.stack_count !== undefined) delete next.stack_count;
+      }
+      return next;
+    })
+    .filter(Boolean);
+}
+
+function applyStackOrderToList(source, stackId, orderedMembers) {
+  if (!Array.isArray(source) || !source.length) return source;
+  const result = [];
+  let inserted = false;
+  for (const item of source) {
+    if (getPictureStackId(item) !== stackId) {
+      result.push(item);
+      continue;
+    }
+    if (inserted) continue;
+    result.push(...orderedMembers);
+    inserted = true;
+  }
+  return result;
+}
+
+function applyStackOrderLocal(stackId, orderedIds) {
+  const items = allGridImages.value.slice();
+  const stackItems = items.filter(
+    (item) => getPictureStackId(item) === stackId && item?.id != null,
+  );
+  if (stackItems.length <= 1) return;
+  const stackCount = getStackReorderCount(
+    stackId,
+    getStackBadgeCount(stackItems[0]),
+  );
+  const orderedMembers = buildStackReorderedMembers(
+    stackItems,
+    orderedIds,
+    stackCount,
+  );
+  if (!orderedMembers.length) return;
+  const nextGrid = applyStackOrderToList(items, stackId, orderedMembers);
+  setGridIndices(nextGrid);
+  allGridImages.value = nextGrid;
+
+  const nextMembers = new Map(expandedStackMembers.value);
+  nextMembers.set(stackId, {
+    ids: orderedMembers.map((item) => String(item.id)),
+    images: orderedMembers,
+  });
+  expandedStackMembers.value = nextMembers;
+
+  const nextFetched = applyStackOrderToList(
+    Array.isArray(lastFetchedGridImages.value)
+      ? lastFetchedGridImages.value.slice()
+      : [],
+    stackId,
+    orderedMembers,
+  );
+  lastFetchedGridImages.value = nextFetched;
+}
+
+async function persistStackOrder(stackId, orderedIds, previousIds) {
+  if (!stackId || !orderedIds.length) return;
+  try {
+    await apiClient.patch(`${props.backendUrl}/stacks/${stackId}/order`, {
+      picture_ids: orderedIds.map((id) => Number(id)).filter(Number.isFinite),
+    });
+  } catch (err) {
+    alert(`Failed to save stack order: ${err?.message || err}`);
+    if (Array.isArray(previousIds) && previousIds.length) {
+      applyStackOrderLocal(stackId, previousIds);
+    }
+  }
+}
+
+function handleStackReorderDrop(img, event) {
+  let drag = stackReorderDrag.value;
+  stackReorderDrag.value = null;
+  const hoverSide = stackReorderHoverSide.value;
+  setStackReorderHoverId(null);
+  setStackReorderHoverSide(null);
+  if (!drag) {
+    const sourceId = getDragImageIdFromEvent(event);
+    drag = buildStackReorderDragState(sourceId);
+  }
+  if (!drag || !img?.id) return;
+  const stackId = getPictureStackId(img);
+  if (!stackId || stackId !== drag.stackId) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const sourceId = String(drag.imageId);
+  const targetId = String(img.id);
+  if (sourceId === targetId) return;
+
+  const stackItems = allGridImages.value.filter(
+    (item) => getPictureStackId(item) === stackId && item?.id != null,
+  );
+  const currentIds = stackItems.map((item) => String(item.id));
+  const fromIndex = currentIds.indexOf(sourceId);
+  const toIndex = currentIds.indexOf(targetId);
+  if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return;
+
+  const nextIds = currentIds.slice();
+  const [moved] = nextIds.splice(fromIndex, 1);
+  const targetIndex = nextIds.indexOf(targetId);
+  if (targetIndex === -1) return;
+  let insertIndex = hoverSide === "right" ? targetIndex + 1 : targetIndex;
+  if (insertIndex < 0) insertIndex = 0;
+  if (insertIndex > nextIds.length) insertIndex = nextIds.length;
+  nextIds.splice(insertIndex, 0, moved);
+
+  applyStackOrderLocal(stackId, nextIds);
+  void persistStackOrder(stackId, nextIds, currentIds);
 }
 
 // Fetch total image count for current filters
@@ -3198,6 +4401,8 @@ async function fetchAllGridImages() {
       );
       fetchThumbnailsBatch(visibleStart.value, prefetchEnd);
     }
+    await refreshExpandedStacksAfterFetch();
+    await maybeRefreshOverlayForComfyui();
     const rangeEnd = performance.now();
     const fetchEnd = performance.now();
     console.log("[ImageGrid.vue] fetchAllGridImages total timing", {
@@ -3433,6 +4638,7 @@ const lastFetchedGridImages = ref([]);
 const expandedStackIds = ref(new Set());
 const expandedStackMembers = ref(new Map());
 const expandedStackLoading = ref(new Set());
+const stackReorderDrag = ref(null);
 
 watch(
   [
@@ -3792,15 +4998,75 @@ function onGridScroll(e) {
 const isImageSelected = (id) =>
   selectedImageIds.value && selectedImageIds.value.includes(id);
 
+function buildDragGhostElement(element) {
+  if (typeof document === "undefined" || !element) return null;
+  const rect = element.getBoundingClientRect?.();
+  const width = Math.max(
+    1,
+    Math.round(rect?.width || element.clientWidth || element.width || 160),
+  );
+  const height = Math.max(
+    1,
+    Math.round(rect?.height || element.clientHeight || element.height || 90),
+  );
+  const computed =
+    typeof window !== "undefined" && element instanceof Element
+      ? window.getComputedStyle(element)
+      : null;
+  const radius = computed?.borderRadius || "0px";
+  const ghost = document.createElement("div");
+  ghost.style.width = `${width}px`;
+  ghost.style.height = `${height}px`;
+  ghost.style.borderRadius = radius;
+  ghost.style.overflow = "hidden";
+  ghost.style.backgroundColor = "transparent";
+  ghost.style.opacity = "1";
+  ghost.style.filter = "none";
+  ghost.style.position = "fixed";
+  ghost.style.left = "-9999px";
+  ghost.style.top = "-9999px";
+  ghost.style.pointerEvents = "none";
+  ghost.style.zIndex = "9999";
+
+  if (element instanceof HTMLImageElement) {
+    const clone = element.cloneNode(true);
+    clone.style.width = "100%";
+    clone.style.height = "100%";
+    clone.style.objectFit = "cover";
+    clone.style.borderRadius = "inherit";
+    clone.style.opacity = "1";
+    clone.style.filter = "none";
+    ghost.appendChild(clone);
+  } else if (element instanceof HTMLVideoElement) {
+    const src = element.currentSrc || element.poster || "";
+    ghost.style.background = src
+      ? `url(\"${src}\") center / cover no-repeat`
+      : "transparent";
+  }
+
+  document.body.appendChild(ghost);
+  return { ghost, width, height };
+}
+
 function setDragImageFromElement(event, element) {
   if (!element || !event?.dataTransfer?.setDragImage) return;
-  const width = element.naturalWidth || element.width || 160;
-  const height = element.naturalHeight || element.height || 90;
+  const ghostData = buildDragGhostElement(element);
+  const width = ghostData?.width || element.clientWidth || element.width || 160;
+  const height =
+    ghostData?.height || element.clientHeight || element.height || 90;
+  const dragEl = ghostData?.ghost || element;
   event.dataTransfer.setDragImage(
-    element,
+    dragEl,
     Math.max(1, width / 2),
     Math.max(1, height / 2),
   );
+  if (ghostData?.ghost) {
+    requestAnimationFrame(() => {
+      if (ghostData.ghost?.parentNode) {
+        ghostData.ghost.parentNode.removeChild(ghostData.ghost);
+      }
+    });
+  }
 }
 
 function setDragDataForImageIds(event, imageIds) {
@@ -3818,9 +5084,11 @@ function handleThumbnailNativeDragStart(img, event) {
   dragSource.value = "grid";
   const selectionIds = getDragSelectionIds(img);
   if (selectionIds.length > 1) {
+    setDragSourceImageIds(selectionIds);
     setupMultiExportDrag(event, selectionIds);
     return;
   }
+  setDragSourceImageIds([img.id]);
   const target = event?.target;
   if (target instanceof HTMLImageElement) {
     setDragImageFromElement(event, target);
@@ -3830,6 +5098,10 @@ function handleThumbnailNativeDragStart(img, event) {
 
 function handleThumbnailNativeDragEnd(event) {
   dragSource.value = null;
+  stackReorderDrag.value = null;
+  clearDragSourceImageIds();
+  setStackReorderHoverId(null);
+  setStackReorderHoverSide(null);
 }
 
 function handleContainerDragStart(img, event) {
@@ -3842,9 +5114,11 @@ function handleContainerDragStart(img, event) {
   dragSource.value = "grid";
   const selectionIds = getDragSelectionIds(img);
   if (selectionIds.length > 1) {
+    setDragSourceImageIds(selectionIds);
     setupMultiExportDrag(event, selectionIds);
     return;
   }
+  setDragSourceImageIds([img.id]);
   const thumbEl = thumbnailRefs[img.id];
   if (!isVideo(img) && thumbEl instanceof HTMLImageElement) {
     setDragImageFromElement(event, thumbEl);
@@ -3859,6 +5133,10 @@ function handleContainerDragStart(img, event) {
 function handleContainerDragEnd(img, event) {
   if (dragSource.value !== "grid") return;
   dragSource.value = null;
+  stackReorderDrag.value = null;
+  clearDragSourceImageIds();
+  setStackReorderHoverId(null);
+  setStackReorderHoverSide(null);
 }
 
 // Event handlers: these should emit events or call parent-provided functions
@@ -4118,15 +5396,29 @@ function removeImagesById(imageIds) {
   const dIds = new Set(
     imageIds.map((id) => PictureId(id)).filter((id) => id !== null),
   );
-  allGridImages.value = allGridImages.value.filter(
-    (img) => !dIds.has(PictureId(img?.id)),
-  );
+  const removeId = (img) => dIds.has(PictureId(img?.id));
+  allGridImages.value = allGridImages.value.filter((img) => !removeId(img));
+  if (Array.isArray(lastFetchedGridImages.value)) {
+    lastFetchedGridImages.value = lastFetchedGridImages.value.filter(
+      (img) => !removeId(img),
+    );
+  }
+  const nextMembers = new Map();
+  for (const [stackId, entry] of expandedStackMembers.value.entries()) {
+    const ids = Array.isArray(entry?.ids) ? entry.ids : [];
+    const images = Array.isArray(entry?.images) ? entry.images : [];
+    const nextIds = ids.filter((id) => !dIds.has(PictureId(id)));
+    const nextImages = images.filter((img) => !removeId(img));
+    if (nextIds.length || nextImages.length) {
+      nextMembers.set(stackId, { ids: nextIds, images: nextImages });
+    }
+  }
+  expandedStackMembers.value = nextMembers;
   selectedImageIds.value = selectedImageIds.value.filter(
     (id) => !dIds.has(PictureId(id)),
   );
-  reindexGridImages();
-  resetThumbnailState();
-  updateVisibleThumbnails();
+  rebuildGridImagesFromLastFetch();
+  void refreshExpandedStacksAfterFetch();
 }
 
 function getExportCount() {
@@ -4381,6 +5673,40 @@ function handleEmptyStateReset() {
   background: rgba(var(--v-theme-error), 0.85);
 }
 
+.comfyui-progress {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  z-index: 120;
+  background: rgba(var(--v-theme-dark-surface), 0.75);
+  color: rgb(var(--v-theme-on-dark-surface));
+  padding: 8px 10px;
+  border-radius: 8px;
+  min-width: 180px;
+  box-shadow: 0 4px 12px rgba(var(--v-theme-shadow), 0.25);
+  backdrop-filter: blur(6px);
+}
+
+.comfyui-progress-title {
+  font-size: 0.8em;
+  margin-bottom: 6px;
+}
+
+.comfyui-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(var(--v-theme-on-dark-surface), 0.2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.comfyui-progress-fill {
+  height: 100%;
+  background: rgb(var(--v-theme-accent));
+  width: 0;
+  transition: width 0.2s ease;
+}
+
 .thumbnail-badge {
   background: rgba(var(--v-theme-dark-surface), 0.65);
   border: 1px solid rgba(var(--v-theme-on-dark-surface), 0.3);
@@ -4418,6 +5744,16 @@ function handleEmptyStateReset() {
   position: absolute;
   right: 2px;
   bottom: 2px;
+}
+
+.thumbnail-badge--bottom-right-raised {
+  bottom: 22px;
+}
+
+.likeness-group-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .face-bbox-label {
   font-size: 0.7em;
@@ -4520,6 +5856,29 @@ function handleEmptyStateReset() {
   z-index: 0; /* Ensure stacking context */
   border: 0px solid transparent;
 }
+
+.image-card-stack-reorder-left::after,
+.image-card-stack-reorder-right::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 32px;
+  width: 6px;
+  border-radius: 999px;
+  background: rgba(var(--v-theme-accent), 0.95);
+  box-shadow: 0 2px 8px rgba(var(--v-theme-accent), 0.45);
+  pointer-events: none;
+  z-index: 6;
+}
+
+.image-card-stack-reorder-left::after {
+  left: -3px;
+}
+
+.image-card-stack-reorder-right::after {
+  right: -3px;
+}
+
 .selection-overlay {
   position: absolute;
   inset: 0;
@@ -4569,6 +5928,12 @@ function handleEmptyStateReset() {
   position: relative;
   aspect-ratio: 1 / 1;
 }
+
+.thumbnail-container-drag-source .thumbnail-img,
+.thumbnail-container-drag-source .thumbnail-placeholder {
+  filter: grayscale(1) brightness(0.65);
+  opacity: 0.75;
+}
 .thumbnail-img {
   width: 100%;
   height: 100%;
@@ -4586,14 +5951,10 @@ function handleEmptyStateReset() {
     transform 0.18s cubic-bezier(0.4, 2, 0.6, 1),
     box-shadow 0.18s;
 }
-.thumbnail-container:hover .thumbnail-img,
-.thumbnail-container:focus-within .thumbnail-img {
-  box-shadow: 2px 4px 12px rgba(var(--v-theme-shadow), 0.6);
-  transform: scale(1.02);
+.thumbnail-img:hover {
+  box-shadow: 1px 1px 2px 2px rgba(var(--v-theme-shadow), 0.3);
+  transform: scale(1.03);
   z-index: 2;
-  transition:
-    transform 0.18s cubic-bezier(0.4, 2, 0.6, 1),
-    box-shadow 0.18s;
 }
 .thumbnail-card {
   width: 100%;
@@ -4664,11 +6025,6 @@ function handleEmptyStateReset() {
   position: absolute;
   top: 24px;
   left: 2px;
-}
-
-.image-card-stack-expanded .thumbnail-card {
-  box-shadow: 0 0 0 2px rgba(var(--v-theme-accent), 0.65);
-  border-radius: 12px;
 }
 
 .thumbnail-placeholder {

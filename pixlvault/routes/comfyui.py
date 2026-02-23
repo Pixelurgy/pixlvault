@@ -1,13 +1,24 @@
+import asyncio
 import json
 import mimetypes
 import os
+import threading
+import time
+import uuid
 from copy import deepcopy
+from urllib.parse import quote
 
 import requests
-from fastapi import APIRouter, Body, HTTPException, Request
+import websockets
+from fastapi import APIRouter, Body, HTTPException, Request, WebSocket
+from fastapi.websockets import WebSocketDisconnect
 from sqlmodel import select
 
-from pixlvault.db_models import Picture
+from datetime import datetime
+
+from pixlvault.database import DBPriority
+from pixlvault.db_models import Face, Picture, PictureStack, User
+from pixlvault.event_types import EventType
 from pixlvault.picture_utils import PictureUtils
 from pixlvault.stacking import (
     build_stack_filename_prefix,
@@ -49,10 +60,11 @@ def _save_workflow_json(path: str, payload: dict) -> None:
 def _find_placeholder_usage(payload: dict) -> tuple[bool, list[str]]:
     dump = json.dumps(payload, ensure_ascii=False)
     missing = []
-    for placeholder in (PLACEHOLDER_IMAGE, PLACEHOLDER_CAPTION):
-        if placeholder not in dump:
-            missing.append(placeholder)
-    return len(missing) == 0, missing
+    if PLACEHOLDER_IMAGE not in dump:
+        missing.append(PLACEHOLDER_IMAGE)
+    if PLACEHOLDER_CAPTION not in dump:
+        missing.append(PLACEHOLDER_CAPTION)
+    return PLACEHOLDER_IMAGE not in missing, missing
 
 
 def _replace_placeholders(value, replacements: dict[str, str]):
@@ -65,7 +77,9 @@ def _replace_placeholders(value, replacements: dict[str, str]):
     if isinstance(value, list):
         return [_replace_placeholders(item, replacements) for item in value]
     if isinstance(value, dict):
-        return {key: _replace_placeholders(val, replacements) for key, val in value.items()}
+        return {
+            key: _replace_placeholders(val, replacements) for key, val in value.items()
+        }
     return value
 
 
@@ -132,18 +146,27 @@ def _upload_image_to_comfyui(base_url: str, file_path: str) -> str:
         ) from exc
     name = payload.get("name") or payload.get("filename")
     if not name:
-        raise HTTPException(status_code=502, detail="ComfyUI upload response missing name")
+        raise HTTPException(
+            status_code=502, detail="ComfyUI upload response missing name"
+        )
     subfolder = payload.get("subfolder") or ""
     if subfolder:
         return f"{subfolder}/{name}"
     return name
 
 
-def _submit_comfyui_prompt(base_url: str, workflow: dict) -> dict:
+def _submit_comfyui_prompt(
+    base_url: str,
+    workflow: dict,
+    client_id: str | None = None,
+) -> dict:
+    payload = {"prompt": workflow}
+    if client_id:
+        payload["client_id"] = client_id
     try:
         response = requests.post(
             f"{base_url}/prompt",
-            json={"prompt": workflow},
+            json=payload,
             timeout=30,
         )
     except requests.RequestException as exc:
@@ -174,8 +197,425 @@ def _submit_comfyui_prompt(base_url: str, workflow: dict) -> dict:
         ) from exc
 
 
+def _extract_output_node_ids(workflow: dict, payload: dict) -> list[str]:
+    nodes = []
+    raw_payload_nodes = payload.get("output_node_ids") or payload.get("output_node_id")
+    if raw_payload_nodes is not None:
+        if isinstance(raw_payload_nodes, list):
+            nodes = [str(node) for node in raw_payload_nodes if node is not None]
+        else:
+            nodes = [str(raw_payload_nodes)]
+
+    workflow_nodes = []
+    if isinstance(workflow, dict):
+        raw_workflow_nodes = workflow.get("pixlvault_output_nodes")
+        if raw_workflow_nodes is None:
+            raw_workflow_nodes = workflow.get("pixlvault_output_node")
+        if raw_workflow_nodes is not None:
+            if isinstance(raw_workflow_nodes, list):
+                workflow_nodes = [
+                    str(node) for node in raw_workflow_nodes if node is not None
+                ]
+            else:
+                workflow_nodes = [str(raw_workflow_nodes)]
+
+    if nodes:
+        return nodes
+    if workflow_nodes:
+        return workflow_nodes
+
+    save_nodes = []
+    for node_id, node in workflow.items():
+        if not isinstance(node, dict):
+            continue
+        if node.get("class_type") == "SaveImage":
+            save_nodes.append(str(node_id))
+    return save_nodes
+
+
+def _fetch_comfyui_history(base_url: str, prompt_id: str) -> dict:
+    try:
+        response = requests.get(
+            f"{base_url}/history/{prompt_id}",
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        logger.warning("ComfyUI history request failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="ComfyUI history request failed",
+        ) from exc
+    if response.status_code >= 300:
+        detail = (response.text or "").strip()
+        logger.warning(
+            "ComfyUI history failed: status=%s detail=%s",
+            response.status_code,
+            detail,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"ComfyUI history failed: {response.status_code} {detail}",
+        )
+    try:
+        return response.json()
+    except ValueError as exc:
+        detail = (response.text or "").strip()
+        logger.warning("ComfyUI history invalid JSON: %s", detail)
+        raise HTTPException(
+            status_code=502,
+            detail="ComfyUI history returned invalid JSON",
+        ) from exc
+
+
+def _extract_comfyui_output_images(
+    history_payload: dict,
+    prompt_id: str,
+    output_node_ids: list[str] | None,
+) -> list[dict]:
+    outputs = {}
+    if isinstance(history_payload, dict):
+        if "outputs" in history_payload:
+            outputs = history_payload.get("outputs") or {}
+        elif prompt_id in history_payload:
+            outputs = history_payload.get(prompt_id, {}).get("outputs") or {}
+
+    if not isinstance(outputs, dict):
+        return []
+
+    node_filter = set(output_node_ids or [])
+    images = []
+    for node_id, node_payload in outputs.items():
+        if node_filter and str(node_id) not in node_filter:
+            continue
+        if not isinstance(node_payload, dict):
+            continue
+        for image in node_payload.get("images") or []:
+            if not isinstance(image, dict):
+                continue
+            filename = image.get("filename")
+            if not filename:
+                continue
+            images.append(
+                {
+                    "filename": filename,
+                    "subfolder": image.get("subfolder") or "",
+                    "type": image.get("type") or "output",
+                }
+            )
+    return images
+
+
+def _wait_for_comfyui_outputs(
+    base_url: str,
+    prompt_id: str,
+    output_node_ids: list[str] | None,
+    timeout_s: float = 180.0,
+    poll_s: float = 1.0,
+) -> list[dict]:
+    deadline = time.time() + timeout_s
+    last_images = []
+    while time.time() < deadline:
+        history_payload = _fetch_comfyui_history(base_url, prompt_id)
+        images = _extract_comfyui_output_images(
+            history_payload, prompt_id, output_node_ids
+        )
+        if images:
+            return images
+        last_images = images
+        time.sleep(poll_s)
+    return last_images
+
+
+def _download_comfyui_image(base_url: str, entry: dict) -> tuple[bytes, str]:
+    filename = entry.get("filename")
+    subfolder = entry.get("subfolder") or ""
+    file_type = entry.get("type") or "output"
+    params = {
+        "filename": filename,
+        "subfolder": subfolder,
+        "type": file_type,
+    }
+    try:
+        response = requests.get(
+            f"{base_url}/view",
+            params=params,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        logger.warning("ComfyUI image fetch failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="ComfyUI image fetch failed",
+        ) from exc
+    if response.status_code >= 300:
+        detail = (response.text or "").strip()
+        logger.warning(
+            "ComfyUI image fetch failed: status=%s detail=%s",
+            response.status_code,
+            detail,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"ComfyUI image fetch failed: {response.status_code} {detail}",
+        )
+    ext = os.path.splitext(filename or "")[1].lower() or ".png"
+    return response.content, ext
+
+
+def _import_comfyui_outputs(
+    server,
+    image_entries: list[tuple[bytes, str]],
+) -> tuple[list[int], list[int]]:
+    if not image_entries:
+        return [], []
+
+    shas = [
+        PictureUtils.calculate_hash_from_bytes(img_bytes)
+        for img_bytes, _ in image_entries
+    ]
+
+    existing_pictures = server.vault.db.run_immediate_read_task(
+        lambda session: Picture.find(session, pixel_shas=shas, include_unimported=True)
+    )
+    existing_map = {pic.pixel_sha: pic for pic in existing_pictures}
+
+    new_entries = [
+        (entry, sha)
+        for entry, sha in zip(image_entries, shas)
+        if sha not in existing_map
+    ]
+
+    new_pictures = []
+    for (img_bytes, ext), sha in new_entries:
+        pic_uuid = f"{uuid.uuid4()}{ext}"
+        new_pictures.append(
+            PictureUtils.create_picture_from_bytes(
+                image_root_path=server.vault.image_root,
+                image_bytes=img_bytes,
+                picture_uuid=pic_uuid,
+                pixel_sha=sha,
+            )
+        )
+
+    def import_task(session):
+        if new_pictures:
+            session.add_all(new_pictures)
+            session.commit()
+            for pic in new_pictures:
+                session.refresh(pic)
+        return new_pictures
+
+    if new_pictures:
+        new_pictures = server.vault.db.run_task(import_task)
+
+        def mark_imported(session, ids: list[int]):
+            if not ids:
+                return []
+            now = datetime.utcnow()
+            pics = session.exec(select(Picture).where(Picture.id.in_(ids))).all()
+            updated = []
+            for pic in pics:
+                if pic.imported_at is None:
+                    pic.imported_at = now
+                    session.add(pic)
+                    updated.append(pic.id)
+            session.commit()
+            return updated
+
+        server.vault.db.run_task(mark_imported, [pic.id for pic in new_pictures])
+
+    new_ids = [pic.id for pic in new_pictures if pic.id is not None]
+    duplicate_ids = [
+        pic.id
+        for sha in shas
+        if (pic := existing_map.get(sha)) is not None and pic.id is not None
+    ]
+    return new_ids, duplicate_ids
+
+
+def _assign_outputs_to_stack_top(
+    server,
+    stack_id: int,
+    picture_ids: list[int],
+) -> None:
+    if not stack_id or not picture_ids:
+        return
+
+    def update_stack(session):
+        stack = session.get(PictureStack, stack_id)
+        if stack is None:
+            return
+        pics = session.exec(select(Picture).where(Picture.stack_id == stack_id)).all()
+        has_positions = any(pic.stack_position is not None for pic in pics)
+        shift = len(picture_ids)
+        if has_positions and shift:
+            for pic in pics:
+                if pic.id in picture_ids:
+                    continue
+                if pic.stack_position is not None:
+                    pic.stack_position += shift
+                    session.add(pic)
+
+        for idx, pic_id in enumerate(picture_ids):
+            pic = session.get(Picture, pic_id)
+            if pic is None:
+                continue
+            pic.stack_id = stack_id
+            pic.stack_position = idx
+            session.add(pic)
+
+        stack.updated_at = datetime.utcnow()
+        session.add(stack)
+        session.commit()
+
+    server.vault.db.run_task(update_stack)
+
+
+def _copy_face_assignments(
+    server,
+    source_picture_id: int | None,
+    target_picture_ids: list[int],
+) -> None:
+    if not source_picture_id or not target_picture_ids:
+        return
+
+    def copy_task(session):
+        source_faces = session.exec(
+            select(Face).where(Face.picture_id == source_picture_id)
+        ).all()
+        if not source_faces:
+            return 0
+        target_ids = [pid for pid in target_picture_ids if pid is not None]
+        if not target_ids:
+            return 0
+        existing_targets = session.exec(
+            select(Face.picture_id).where(Face.picture_id.in_(target_ids))
+        ).all()
+        skip_ids = set(existing_targets)
+        new_faces = []
+        for target_id in target_ids:
+            if target_id in skip_ids:
+                continue
+            for face in source_faces:
+                new_faces.append(
+                    Face(
+                        picture_id=target_id,
+                        frame_index=face.frame_index,
+                        face_index=face.face_index,
+                        character_id=face.character_id,
+                        bbox=face.bbox,
+                    )
+                )
+        if new_faces:
+            session.add_all(new_faces)
+            session.commit()
+        return len(new_faces)
+
+    copied = server.vault.db.run_task(copy_task)
+    if copied:
+        logger.info(
+            "Copied %s face assignments to %s picture(s) from %s",
+            copied,
+            len(target_picture_ids),
+            source_picture_id,
+        )
+
+
+def _process_comfyui_outputs(
+    server,
+    base_url: str,
+    prompt_id: str,
+    output_node_ids: list[str] | None,
+    stack_id: int | None,
+    source_picture_id: int | None,
+) -> None:
+    try:
+        images = _wait_for_comfyui_outputs(base_url, prompt_id, output_node_ids)
+        if not images:
+            logger.warning("ComfyUI produced no outputs for prompt %s", prompt_id)
+            return
+        entries = []
+        for entry in images:
+            img_bytes, ext = _download_comfyui_image(base_url, entry)
+            if img_bytes:
+                entries.append((img_bytes, ext))
+
+        new_ids, duplicate_ids = _import_comfyui_outputs(server, entries)
+        all_ids = [pid for pid in new_ids + duplicate_ids if pid is not None]
+        if stack_id and new_ids:
+            _assign_outputs_to_stack_top(server, stack_id, new_ids)
+        if new_ids:
+            _copy_face_assignments(server, source_picture_id, new_ids)
+
+        if new_ids:
+            server.vault.notify(EventType.PICTURE_IMPORTED, new_ids)
+        if all_ids:
+            server.vault.notify(EventType.CHANGED_PICTURES, all_ids)
+    except Exception as exc:
+        logger.warning("Failed to import ComfyUI outputs: %s", exc)
+
+
 def create_router(server) -> APIRouter:
     router = APIRouter()
+
+    @router.websocket("/comfyui/ws")
+    async def comfyui_progress_proxy(websocket: WebSocket):
+        await websocket.accept()
+        session_id = websocket.cookies.get("session_id")
+        user = None
+        if session_id:
+            user_id = server.auth.active_session_ids.get(session_id)
+            if user_id is not None:
+                user = server.vault.db.run_task(
+                    lambda session: session.get(User, user_id),
+                    priority=DBPriority.IMMEDIATE,
+                )
+
+        comfyui_url = getattr(user, "comfyui_url", None) if user else None
+        comfyui_url = (comfyui_url or DEFAULT_COMFYUI_URL).rstrip("/")
+        client_id = (
+            websocket.query_params.get("clientId")
+            or websocket.query_params.get("client_id")
+            or f"pixlvault-{uuid.uuid4().hex[:8]}"
+        )
+        ws_base = (
+            comfyui_url.replace("https://", "wss://")
+            if comfyui_url.startswith("https://")
+            else comfyui_url.replace("http://", "ws://")
+        )
+        ws_url = f"{ws_base}/ws?clientId={quote(client_id)}"
+
+        async def forward_upstream(upstream):
+            try:
+                async for message in upstream:
+                    await websocket.send_text(message)
+            except Exception:
+                pass
+
+        async def forward_downstream(upstream):
+            try:
+                while True:
+                    message = await websocket.receive_text()
+                    if message:
+                        await upstream.send(message)
+            except WebSocketDisconnect:
+                pass
+            except Exception:
+                pass
+
+        try:
+            async with websockets.connect(ws_url, ping_interval=None) as upstream:
+                await asyncio.gather(
+                    forward_upstream(upstream),
+                    forward_downstream(upstream),
+                )
+        except Exception as exc:
+            logger.warning("ComfyUI progress proxy failed: %s", exc)
+        finally:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
     @router.get("/comfyui/workflows")
     async def list_comfyui_workflows():
@@ -242,6 +682,9 @@ def create_router(server) -> APIRouter:
         caption = payload.get("caption") or ""
         if not isinstance(caption, str):
             caption = str(caption)
+        client_id = payload.get("client_id") or payload.get("clientId") or None
+        if client_id is not None:
+            client_id = str(client_id)
 
         workflow_dir = _workflow_dir()
         workflow_path = os.path.join(workflow_dir, workflow_name)
@@ -250,11 +693,12 @@ def create_router(server) -> APIRouter:
 
         workflow_payload = _load_workflow_json(workflow_path)
         valid, missing = _find_placeholder_usage(workflow_payload)
-        if not valid:
+        if not valid and PLACEHOLDER_IMAGE in missing:
             raise HTTPException(
                 status_code=400,
                 detail=f"Workflow missing placeholders: {', '.join(missing)}",
             )
+        output_node_ids = _extract_output_node_ids(workflow_payload, payload)
 
         user = server.auth.get_user_for_request(request)
         comfyui_url = getattr(user, "comfyui_url", None) if user else None
@@ -307,8 +751,26 @@ def create_router(server) -> APIRouter:
                         "ComfyUI workflow has no SaveImage node to tag for stack %s",
                         stack_id,
                     )
-            response_payload = _submit_comfyui_prompt(comfyui_url, workflow_instance)
+            response_payload = _submit_comfyui_prompt(
+                comfyui_url,
+                workflow_instance,
+                client_id,
+            )
             prompt_id = response_payload.get("prompt_id") or response_payload.get("id")
+            if prompt_id:
+                worker = threading.Thread(
+                    target=_process_comfyui_outputs,
+                    args=(
+                        server,
+                        comfyui_url,
+                        str(prompt_id),
+                        output_node_ids,
+                        stack_id,
+                        pic_id,
+                    ),
+                    daemon=True,
+                )
+                worker.start()
             prompts.append(
                 {
                     "picture_id": pic_id,
@@ -326,7 +788,9 @@ def create_router(server) -> APIRouter:
             raise HTTPException(status_code=400, detail="name is required")
         workflow = payload.get("workflow")
         if not isinstance(workflow, dict):
-            raise HTTPException(status_code=400, detail="workflow must be a JSON object")
+            raise HTTPException(
+                status_code=400, detail="workflow must be a JSON object"
+            )
         overwrite = bool(payload.get("overwrite"))
 
         workflow_dir = _workflow_dir()

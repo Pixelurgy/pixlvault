@@ -2,10 +2,17 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Body, HTTPException, Request, Query
+from sqlalchemy import case
 from sqlalchemy.orm import load_only, selectinload
 from sqlmodel import Session, select
 
 from pixlvault.db_models import Picture, PictureStack
+from pixlvault.picture_scoring import (
+    fetch_smart_score_data,
+    get_smart_score_penalised_tags_from_request,
+    prepare_smart_score_inputs,
+)
+from pixlvault.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger
 from pixlvault.utils import safe_model_dict
 
@@ -35,11 +42,109 @@ def create_router(server) -> APIRouter:
         return ids
 
     def _fetch_stack_pictures(session: Session, stack_id: int):
+        stack_position_order = case(
+            (Picture.stack_position.is_(None), 1),
+            else_=0,
+        )
         return session.exec(
             select(Picture)
             .where(Picture.stack_id == stack_id)
-            .order_by(Picture.id)
+            .order_by(stack_position_order, Picture.stack_position, Picture.id)
         ).all()
+
+    def _stack_order_key(pic, smart_score_by_id: dict[int, float]):
+        score = pic.score or 0
+        smart_score = smart_score_by_id.get(pic.id, 0.0)
+        created_at = pic.created_at or datetime.min
+        created_ts = created_at.timestamp() if isinstance(created_at, datetime) else 0.0
+        return (-score, -smart_score, -created_ts, int(pic.id or 0))
+
+    def _compute_smart_score_map(
+        request: Request,
+        picture_ids: list[int],
+    ) -> dict[int, float]:
+        if not picture_ids:
+            return {}
+        try:
+            penalised_tags = get_smart_score_penalised_tags_from_request(
+                server, request
+            )
+            good_anchors, bad_anchors, candidates = fetch_smart_score_data(
+                server,
+                None,
+                candidate_ids=picture_ids,
+                penalised_tags=penalised_tags,
+            )
+            if candidates:
+                good_list, bad_list, cand_list, cand_ids = prepare_smart_score_inputs(
+                    good_anchors,
+                    bad_anchors,
+                    candidates,
+                )
+                if cand_list:
+                    scores = PictureUtils.calculate_smart_score_batch_numpy(
+                        cand_list, good_list, bad_list
+                    )
+                    return {
+                        int(pid): float(score)
+                        for pid, score in zip(cand_ids, scores)
+                        if score is not None
+                    }
+        except Exception as exc:
+            logger.warning("[stacks] Failed to compute smart scores: %s", exc)
+        return {}
+
+    def _ensure_stack_positions(
+        request: Request,
+        stack_id: int,
+        pictures: list[Picture],
+    ) -> list[Picture]:
+        if not pictures:
+            return pictures
+        if any(pic.stack_position is not None for pic in pictures):
+            return sorted(
+                pictures,
+                key=lambda pic: (
+                    pic.stack_position is None,
+                    pic.stack_position or 0,
+                    int(pic.id or 0),
+                ),
+            )
+
+        smart_score_by_id = _compute_smart_score_map(
+            request,
+            [pic.id for pic in pictures if pic.id is not None],
+        )
+        ordered = sorted(
+            pictures,
+            key=lambda pic: _stack_order_key(pic, smart_score_by_id),
+        )
+        ordered_ids = [pic.id for pic in ordered if pic.id is not None]
+
+        def update_positions(
+            session: Session, stack_id_value: int, ordered_ids_value: list[int]
+        ):
+            stack = session.get(PictureStack, stack_id_value)
+            if stack is None:
+                return
+            pics = session.exec(
+                select(Picture).where(Picture.stack_id == stack_id_value)
+            ).all()
+            pic_by_id = {pic.id: pic for pic in pics}
+            for idx, pic_id in enumerate(ordered_ids_value):
+                pic = pic_by_id.get(pic_id)
+                if pic is None:
+                    continue
+                pic.stack_position = idx
+                session.add(pic)
+            stack.updated_at = datetime.utcnow()
+            session.add(stack)
+            session.commit()
+
+        if ordered_ids:
+            server.vault.db.run_task(update_positions, stack_id, ordered_ids)
+
+        return ordered
 
     @router.get("/stacks/{stack_id}")
     async def get_stack(stack_id: int, request: Request):
@@ -57,6 +162,8 @@ def create_router(server) -> APIRouter:
         if not stack:
             raise HTTPException(status_code=404, detail="Stack not found")
 
+        pictures = _ensure_stack_positions(request, stack_id, pictures)
+
         payload = safe_model_dict(stack)
         payload["picture_ids"] = [pic.id for pic in pictures]
         return payload
@@ -66,6 +173,7 @@ def create_router(server) -> APIRouter:
         stack_id: int,
         request: Request,
         fields: str = Query("grid"),
+        include_deleted: bool = Query(False),
     ):
         _ensure_secure_when_required(request)
         server.auth.require_user_id(request)
@@ -74,6 +182,7 @@ def create_router(server) -> APIRouter:
             session: Session,
             stack_id_value: int,
             fields_value: str,
+            include_deleted_value: bool,
         ):
             stack = session.get(PictureStack, stack_id_value)
             if not stack:
@@ -84,11 +193,10 @@ def create_router(server) -> APIRouter:
                 if fields_value == "grid"
                 else Picture.metadata_fields()
             )
-            query = (
-                select(Picture)
-                .where(Picture.stack_id == stack_id_value)
-                .order_by(Picture.id)
-            )
+            query = select(Picture).where(Picture.stack_id == stack_id_value)
+            if not include_deleted_value:
+                query = query.where(Picture.deleted.is_(False))
+            query = query.order_by(Picture.id)
 
             if select_fields:
                 select_fields = list(set(select_fields) | {"id"})
@@ -114,9 +222,11 @@ def create_router(server) -> APIRouter:
             fetch_stack_pictures,
             stack_id,
             fields,
+            include_deleted,
         )
         if select_fields is None:
             raise HTTPException(status_code=404, detail="Stack not found")
+        pictures = _ensure_stack_positions(request, stack_id, pictures)
         return [
             {field: safe_model_dict(pic).get(field) for field in select_fields}
             for pic in pictures
@@ -141,6 +251,8 @@ def create_router(server) -> APIRouter:
         if not stack_id or not stack:
             return {"stack_id": None, "picture_ids": []}
 
+        pictures = _ensure_stack_positions(request, stack_id, pictures)
+
         payload = safe_model_dict(stack)
         payload["picture_ids"] = [pic.id for pic in pictures]
         return payload
@@ -155,7 +267,11 @@ def create_router(server) -> APIRouter:
         if name is not None and not isinstance(name, str):
             name = str(name)
 
-        def create_or_assign_stack(session: Session, picture_ids: list[int], name: Optional[str]):
+        def create_or_assign_stack(
+            session: Session,
+            picture_ids: list[int],
+            name: Optional[str],
+        ) -> int:
             pictures = session.exec(
                 select(Picture).where(Picture.id.in_(picture_ids))
             ).all()
@@ -184,21 +300,90 @@ def create_router(server) -> APIRouter:
                 session.commit()
                 session.refresh(stack)
 
+            existing_positions = []
+            if stack.id is not None:
+                rows = session.exec(
+                    select(Picture.stack_position).where(
+                        Picture.stack_id == stack.id,
+                        Picture.stack_position.is_not(None),
+                    )
+                ).all()
+                existing_positions = [row for row in rows if row is not None]
+            next_position = max(existing_positions) + 1 if existing_positions else None
+
             for pic in pictures:
                 pic.stack_id = stack.id
+                if next_position is not None and pic.stack_position is None:
+                    pic.stack_position = next_position
+                    next_position += 1
                 session.add(pic)
 
             stack.updated_at = datetime.utcnow()
             session.add(stack)
             session.commit()
-            return stack
+            if stack.id is None:
+                raise HTTPException(status_code=500, detail="Failed to create stack")
+            return stack.id
 
-        stack = server.vault.db.run_task(
-            create_or_assign_stack, picture_ids, name
-        )
-        payload = safe_model_dict(stack)
-        payload["picture_ids"] = picture_ids
+        def fetch_stack_payload(session: Session, stack_id_value: int) -> dict:
+            stack = session.get(PictureStack, stack_id_value)
+            if stack is None:
+                raise HTTPException(status_code=404, detail="Stack not found")
+            return safe_model_dict(stack)
+
+        stack_id = server.vault.db.run_task(create_or_assign_stack, picture_ids, name)
+        pictures = server.vault.db.run_task(_fetch_stack_pictures, stack_id)
+        pictures = _ensure_stack_positions(request, stack_id, pictures)
+        payload = server.vault.db.run_task(fetch_stack_payload, stack_id)
+        payload["picture_ids"] = [pic.id for pic in pictures]
         return payload
+
+    @router.patch("/stacks/{stack_id}/order")
+    async def reorder_stack(
+        stack_id: int, payload: dict = Body(...), request: Request = None
+    ):
+        _ensure_secure_when_required(request)
+        server.auth.require_user_id(request)
+
+        picture_ids = _normalize_picture_ids(payload.get("picture_ids") or [])
+        unique_ids = list(dict.fromkeys(picture_ids))
+        if len(unique_ids) != len(picture_ids):
+            raise HTTPException(status_code=400, detail="picture_ids must be unique")
+
+        def update_stack_order(
+            session: Session, stack_id_value: int, ordered_ids: list[int]
+        ):
+            stack = session.get(PictureStack, stack_id_value)
+            if stack is None:
+                return None
+
+            pics = session.exec(
+                select(Picture).where(Picture.stack_id == stack_id_value)
+            ).all()
+            pic_by_id = {pic.id: pic for pic in pics}
+            stack_ids = set(pic_by_id.keys())
+            if stack_ids != set(ordered_ids):
+                raise HTTPException(
+                    status_code=400,
+                    detail="picture_ids must include every picture in the stack",
+                )
+
+            for idx, pic_id in enumerate(ordered_ids):
+                pic = pic_by_id.get(pic_id)
+                if pic is None:
+                    continue
+                pic.stack_position = idx
+                session.add(pic)
+
+            stack.updated_at = datetime.utcnow()
+            session.add(stack)
+            session.commit()
+            return ordered_ids
+
+        result = server.vault.db.run_task(update_stack_order, stack_id, unique_ids)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Stack not found")
+        return {"stack_id": stack_id, "picture_ids": result}
 
     @router.post("/stacks/{stack_id}/members")
     async def add_stack_members(
@@ -224,15 +409,30 @@ def create_router(server) -> APIRouter:
                     detail=f"Pictures not found: {missing}",
                 )
 
-            conflicts = [pic.id for pic in pictures if pic.stack_id not in (None, stack_id)]
+            conflicts = [
+                pic.id for pic in pictures if pic.stack_id not in (None, stack_id)
+            ]
             if conflicts:
                 raise HTTPException(
                     status_code=409,
                     detail=f"Pictures already in another stack: {sorted(conflicts)}",
                 )
 
+            existing_positions = []
+            rows = session.exec(
+                select(Picture.stack_position).where(
+                    Picture.stack_id == stack_id,
+                    Picture.stack_position.is_not(None),
+                )
+            ).all()
+            existing_positions = [row for row in rows if row is not None]
+            next_position = max(existing_positions) + 1 if existing_positions else None
+
             for pic in pictures:
                 pic.stack_id = stack_id
+                if next_position is not None and pic.stack_position is None:
+                    pic.stack_position = next_position
+                    next_position += 1
                 session.add(pic)
 
             stack.updated_at = datetime.utcnow()
@@ -241,8 +441,10 @@ def create_router(server) -> APIRouter:
             return stack
 
         stack = server.vault.db.run_task(add_members, stack_id, picture_ids)
+        pictures = server.vault.db.run_task(_fetch_stack_pictures, stack_id)
+        pictures = _ensure_stack_positions(request, stack_id, pictures)
         payload = safe_model_dict(stack)
-        payload["picture_ids"] = picture_ids
+        payload["picture_ids"] = [pic.id for pic in pictures]
         return payload
 
     @router.delete("/stacks/{stack_id}/members")

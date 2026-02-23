@@ -605,10 +605,84 @@ def create_router(server) -> APIRouter:
         groups = sorted(groups, key=min)
         stack_index_map = {}
         ordered_ids = []
-        for idx, group in enumerate(groups):
-            for pic_id in sorted(group):
-                stack_index_map[pic_id] = idx
-                ordered_ids.append(pic_id)
+        assigned_ids = set()
+
+        if groups:
+
+            def fetch_stack_map(session, ids, deleted_only: bool):
+                query = select(Picture.id, Picture.stack_id).where(
+                    Picture.id.in_(ids),
+                    Picture.imported_at.is_not(None),
+                )
+                if deleted_only:
+                    query = query.where(Picture.deleted.is_(True))
+                else:
+                    query = query.where(Picture.deleted.is_(False))
+                return list(session.exec(query).all())
+
+            group_ids = [pic_id for group in groups for pic_id in group]
+            stack_rows = server.vault.db.run_immediate_read_task(
+                fetch_stack_map,
+                group_ids,
+                only_deleted,
+            )
+            stack_map = {row[0]: row[1] for row in stack_rows}
+            stack_ids = {stack_id for stack_id in stack_map.values() if stack_id}
+
+            def fetch_stack_members(session, stack_ids, deleted_only: bool):
+                if not stack_ids:
+                    return []
+                query = select(Picture.id, Picture.stack_id).where(
+                    Picture.stack_id.in_(stack_ids),
+                    Picture.imported_at.is_not(None),
+                )
+                if deleted_only:
+                    query = query.where(Picture.deleted.is_(True))
+                else:
+                    query = query.where(Picture.deleted.is_(False))
+                return list(session.exec(query).all())
+
+            stack_member_rows = server.vault.db.run_immediate_read_task(
+                fetch_stack_members,
+                list(stack_ids),
+                only_deleted,
+            )
+            stack_members_map = {}
+            for pic_id, stack_id in stack_member_rows:
+                if not stack_id:
+                    continue
+                stack_members_map.setdefault(stack_id, set()).add(pic_id)
+
+            group_index = 0
+            for group in groups:
+                has_unstacked = any(stack_map.get(pic_id) is None for pic_id in group)
+                if not has_unstacked:
+                    continue
+                expanded = set(group)
+                for pic_id in group:
+                    stack_id = stack_map.get(pic_id)
+                    if stack_id:
+                        expanded.update(stack_members_map.get(stack_id, set()))
+                stack_ids_in_group = {
+                    stack_map.get(pic_id)
+                    for pic_id in expanded
+                    if stack_map.get(pic_id)
+                }
+                if len(stack_ids_in_group) == 1:
+                    stack_id = next(iter(stack_ids_in_group))
+                    stack_members = stack_members_map.get(stack_id, set())
+                    if expanded.issubset(stack_members):
+                        continue
+                next_ids = [
+                    pic_id for pic_id in sorted(expanded) if pic_id not in assigned_ids
+                ]
+                if not next_ids:
+                    continue
+                for pic_id in next_ids:
+                    stack_index_map[pic_id] = group_index
+                    ordered_ids.append(pic_id)
+                    assigned_ids.add(pic_id)
+                group_index += 1
 
         if not ordered_ids:
             return []
@@ -682,6 +756,11 @@ def create_router(server) -> APIRouter:
                 key=lambda item: (
                     -(item.get("score") or 0),
                     -(item.get("smartScore") or 0),
+                    -(
+                        item.get("created_at").timestamp()
+                        if isinstance(item.get("created_at"), datetime)
+                        else 0.0
+                    ),
                     int(item.get("id") or 0),
                 )
             )

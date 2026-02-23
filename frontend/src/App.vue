@@ -181,17 +181,27 @@ function connectUpdatesSocket() {
     } catch (e) {
       return;
     }
-    if (payload?.type === "pictures_changed") {
+    const isPictureChange =
+      payload?.type === "pictures_changed" ||
+      payload?.type === "picture_imported";
+    if (isPictureChange) {
       refreshSidebar({ flashCounts: true });
       const pictureIds = Array.isArray(payload.picture_ids)
         ? payload.picture_ids
         : [];
-      if (pictureIds.length > 0 && selectedSort.value === "PICTURE_STACKS") {
+      if (
+        pictureIds.length > 0 &&
+        selectedSort.value === "PICTURE_STACKS" &&
+        payload?.type !== "picture_imported"
+      ) {
         const nextKey = (wsTagUpdate.value?.key || 0) + 1;
         wsTagUpdate.value = { key: nextKey, pictureIds };
         return;
       }
-      if (shouldRefreshForPictureChange()) {
+      if (
+        shouldRefreshForPictureChange() ||
+        payload?.type === "picture_imported"
+      ) {
         wsUpdateKey.value = Date.now();
         refreshGridVersion();
       }

@@ -71,7 +71,7 @@ class SortMechanism:
         },
         Keys.PICTURE_STACKS: {
             "field": "id",
-            "description": "Stacks",
+            "description": "Likeness Groups",
         },
         Keys.IMAGE_SIZE: {
             "field": None,  # Special case, not a direct field
@@ -182,7 +182,10 @@ class Picture(SQLModel, table=True):
     aesthetic_score: Optional[float] = None
     pixel_sha: Optional[str] = Field(default=None, index=True)
     deleted: bool = Field(default=False, index=True)
-    stack_id: Optional[int] = Field(default=None, foreign_key="picturestack.id", index=True)
+    stack_id: Optional[int] = Field(
+        default=None, foreign_key="picturestack.id", index=True
+    )
+    stack_position: Optional[int] = Field(default=None, index=True)
 
     # Relationships
     quality: Optional["Quality"] = Relationship(back_populates="picture")
@@ -575,6 +578,7 @@ class Picture(SQLModel, table=True):
             "score",
             "created_at",
             "stack_id",
+            "stack_position",
         }
 
     @classmethod

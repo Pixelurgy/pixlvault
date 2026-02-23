@@ -297,7 +297,11 @@ class Server:
             print(
                 f"[SSL] Running with SSL: keyfile={self._server_config.get('ssl_keyfile')}, certfile={self._server_config.get('ssl_certfile')}"
             )
-        uvicorn.run(self.api, **uvicorn_kwargs)
+        try:
+            uvicorn.run(self.api, **uvicorn_kwargs)
+        finally:
+            if hasattr(self, "vault"):
+                self.vault.close()
 
     @asynccontextmanager
     async def lifespan(self, app):

@@ -74,8 +74,7 @@
                   class="overlay-comfy-warning"
                 >
                   No valid workflows found in comfyui-workflows/ (needs
-                  {{ imagePlaceholderLabel }} and
-                  {{ captionPlaceholderLabel }}).
+                  {{ imagePlaceholderLabel }}).
                 </div>
                 <label class="overlay-comfy-field-label">Workflow</label>
                 <select
@@ -96,22 +95,27 @@
                   class="overlay-comfy-note"
                 >
                   {{ invalidComfyWorkflows.length }} workflow(s) missing
-                  placeholders.
+                  required placeholders.
                 </div>
-                <label class="overlay-comfy-field-label">Caption</label>
-                <div class="overlay-comfy-textarea-wrap">
-                  <div v-if="showComfyuiCaptionHelp" class="overlay-comfy-help">
-                    Add edit caption here
+                <template v-if="showComfyuiCaptionInput">
+                  <label class="overlay-comfy-field-label">Caption</label>
+                  <div class="overlay-comfy-textarea-wrap">
+                    <div
+                      v-if="showComfyuiCaptionHelp"
+                      class="overlay-comfy-help"
+                    >
+                      Add edit caption here
+                    </div>
+                    <textarea
+                      v-model="comfyuiCaption"
+                      class="overlay-comfy-textarea"
+                      rows="4"
+                      @input="comfyuiCaptionTouched = true"
+                      @focus="comfyuiCaptionFocused = true"
+                      @blur="comfyuiCaptionFocused = false"
+                    ></textarea>
                   </div>
-                  <textarea
-                    v-model="comfyuiCaption"
-                    class="overlay-comfy-textarea"
-                    rows="4"
-                    @input="comfyuiCaptionTouched = true"
-                    @focus="comfyuiCaptionFocused = true"
-                    @blur="comfyuiCaptionFocused = false"
-                  ></textarea>
-                </div>
+                </template>
                 <div class="overlay-comfy-actions">
                   <button
                     class="overlay-comfy-run"
@@ -219,6 +223,24 @@
           </button>
         </div>
       </header>
+
+      <div
+        v-if="comfyuiProgress && comfyuiProgress.visible"
+        class="overlay-comfyui-progress"
+        :class="{
+          'overlay-comfyui-progress-error': comfyuiProgress.status === 'failed',
+        }"
+      >
+        <div class="overlay-comfyui-progress-title">
+          {{ comfyuiProgress.message }}
+        </div>
+        <div class="overlay-comfyui-progress-bar">
+          <div
+            class="overlay-comfyui-progress-fill"
+            :style="{ width: `${comfyuiProgressPercent}%` }"
+          ></div>
+        </div>
+      </div>
 
       <div
         ref="overlayMainRef"
@@ -397,25 +419,73 @@
                   ? `filmstrip-${item.id}-${item.index}`
                   : `filmstrip-${item.index}`
               "
-              class="filmstrip-thumb"
-              :class="{ active: item.isActive }"
+              :class="[
+                'filmstrip-thumb',
+                {
+                  'filmstrip-thumb-stack-joined': item.isStackJoined,
+                },
+              ]"
               @click.stop="selectImageByIndex(item.index)"
               :title="item.description || 'Image'"
             >
-              <img
-                v-if="getFilmstripThumbSrc(item)"
-                :src="getFilmstripThumbSrc(item)"
-                :alt="item.description || 'Thumbnail'"
-                loading="lazy"
-              />
-              <div v-else class="filmstrip-thumb-placeholder">
-                <v-icon size="22">
-                  {{
-                    isSupportedVideoFile(getOverlayFormat(item))
-                      ? "mdi-video"
-                      : "mdi-image"
-                  }}
-                </v-icon>
+              <div
+                class="filmstrip-thumb-tile"
+                :style="getFilmstripStackStyle(item)"
+              >
+                <img
+                  v-if="getFilmstripThumbSrc(item)"
+                  :class="[
+                    'filmstrip-thumb-image',
+                    { 'filmstrip-thumb-image-active': item.isActive },
+                  ]"
+                  :src="getFilmstripThumbSrc(item)"
+                  :alt="item.description || 'Thumbnail'"
+                  loading="lazy"
+                />
+                <div
+                  v-else
+                  :class="[
+                    'filmstrip-thumb-placeholder',
+                    { 'filmstrip-thumb-image-active': item.isActive },
+                  ]"
+                >
+                  <v-icon size="22">
+                    {{
+                      isSupportedVideoFile(getOverlayFormat(item))
+                        ? "mdi-video"
+                        : "mdi-image"
+                    }}
+                  </v-icon>
+                </div>
+              </div>
+              <div
+                v-if="
+                  shouldShowFilmstripStackBadge(item) &&
+                  getFilmstripThumbSrc(item) &&
+                  isFilmstripStackLead(item)
+                "
+                class="filmstrip-badge filmstrip-badge--top-left"
+                :title="filmstripStackBadgeTitle(item)"
+                @click.stop="toggleFilmstripStackExpand(item)"
+                @mouseenter.stop="prefetchFilmstripStackMembers(item)"
+              >
+                <v-icon size="14" :style="getFilmstripStackIconStyle(item)"
+                  >mdi-layers</v-icon
+                >
+              </div>
+              <div
+                v-if="shouldShowFilmstripProblemBadge(item)"
+                :class="[
+                  'filmstrip-badge',
+                  shouldShowFilmstripStackBadge(item)
+                    ? 'filmstrip-badge--top-left-stack'
+                    : 'filmstrip-badge--top-left',
+                ]"
+                :title="filmstripProblemTitle(item)"
+              >
+                <v-icon size="14" color="error"
+                  >mdi-emoticon-sad-outline</v-icon
+                >
               </div>
             </button>
           </div>
@@ -851,6 +921,7 @@ import StarRatingOverlay from "./StarRatingOverlay.vue";
 import {
   faceBoxColor,
   formatUserDate,
+  getStackColor,
   handBoxColor,
   toggleScore,
 } from "../utils/utils.js";
@@ -871,6 +942,11 @@ const props = defineProps({
   hiddenTags: { type: Array, default: () => [] },
   applyTagFilter: { type: Boolean, default: false },
   dateFormat: { type: String, default: "locale" },
+  showStacks: { type: Boolean, default: true },
+  showProblemIcon: { type: Boolean, default: true },
+  comfyuiProgress: { type: Object, default: null },
+  comfyuiProgressPercent: { type: Number, default: 0 },
+  comfyuiClientId: { type: String, default: "" },
 });
 
 const {
@@ -881,6 +957,11 @@ const {
   tagUpdate,
   hiddenTags,
   applyTagFilter,
+  showStacks,
+  showProblemIcon,
+  comfyuiProgress,
+  comfyuiProgressPercent,
+  comfyuiClientId,
 } = toRefs(props);
 
 const image = ref(null);
@@ -888,18 +969,22 @@ const isTagsRefreshing = ref(false);
 const sidebarOpen = ref(true);
 const filmstripOpen = ref(false);
 const chromeHidden = ref(false);
+const chromeRevealTimestamp = ref(0);
 const zoomMode = ref("fit");
 const zoomSteps = ["fit", 1.5, 2];
 const pan = reactive({ x: 0, y: 0 });
 const isPanning = ref(false);
 const lastPointer = ref({ x: 0, y: 0 });
+const overlayExpandedStackIds = ref(new Set());
+const overlayExpandedStackMembers = ref(new Map());
+const overlayExpandedStackLoading = ref(new Set());
 
 function setOverlayImageById(nextId) {
   if (nextId == null || nextId === "") {
     image.value = null;
     return;
   }
-  const list = Array.isArray(allImages.value) ? allImages.value : [];
+  const list = getOverlayImageList();
   const target = list.find((item) => String(item?.id) === String(nextId));
   if (target) {
     image.value = {
@@ -915,13 +1000,6 @@ function setOverlayImageById(nextId) {
 }
 
 // Watch for changes to initialImageId and update local image copy
-watch(
-  () => initialImageId.value,
-  (newId) => {
-    setOverlayImageById(newId);
-  },
-  { immediate: true },
-);
 
 const emit = defineEmits([
   "close",
@@ -933,6 +1011,7 @@ const emit = defineEmits([
   "update-description",
   "overlay-change",
   "added-to-set",
+  "comfyui-run",
 ]);
 
 const descriptionRef = ref(null);
@@ -982,12 +1061,51 @@ const comfyuiRunLoading = ref(false);
 const comfyuiRunError = ref("");
 const comfyuiRunSuccess = ref("");
 
+const COMFYUI_PROMPT_STORAGE_PREFIX = "pixlvault:comfyuiPrompt:";
+
+function getComfyuiPromptStorageKey() {
+  if (typeof window === "undefined") return "";
+  const workflow = String(comfyuiSelectedWorkflow.value || "default");
+  return `${COMFYUI_PROMPT_STORAGE_PREFIX}${workflow}`;
+}
+
+function loadComfyuiPromptFromSession() {
+  if (typeof window === "undefined") return null;
+  if (!showComfyuiCaptionInput.value) return null;
+  const key = getComfyuiPromptStorageKey();
+  if (!key) return null;
+  return window.sessionStorage?.getItem(key);
+}
+
+function persistComfyuiPromptToSession() {
+  if (typeof window === "undefined") return;
+  if (!showComfyuiCaptionInput.value) return;
+  const key = getComfyuiPromptStorageKey();
+  if (!key) return;
+  const value = comfyuiCaption.value || "";
+  window.sessionStorage?.setItem(key, value);
+}
+
 const validComfyWorkflows = computed(() =>
   (comfyuiWorkflows.value || []).filter((workflow) => workflow?.valid),
 );
 const invalidComfyWorkflows = computed(() =>
   (comfyuiWorkflows.value || []).filter((workflow) => !workflow?.valid),
 );
+const selectedComfyWorkflow = computed(() =>
+  (comfyuiWorkflows.value || []).find(
+    (workflow) => workflow?.name === comfyuiSelectedWorkflow.value,
+  ),
+);
+const selectedComfyUsesCaption = computed(() => {
+  const missing = Array.isArray(
+    selectedComfyWorkflow.value?.missing_placeholders,
+  )
+    ? selectedComfyWorkflow.value.missing_placeholders
+    : [];
+  return !missing.includes(captionPlaceholderLabel);
+});
+const showComfyuiCaptionInput = computed(() => selectedComfyUsesCaption.value);
 const canRunComfyWorkflow = computed(() => {
   return (
     !!image.value?.id &&
@@ -996,16 +1114,27 @@ const canRunComfyWorkflow = computed(() => {
   );
 });
 const showComfyuiCaptionHelp = computed(() => {
-  return !comfyuiCaptionFocused.value && !comfyuiCaption.value;
+  return (
+    showComfyuiCaptionInput.value &&
+    !comfyuiCaptionFocused.value &&
+    !comfyuiCaption.value
+  );
 });
 
 watch(open, (value) => {
   if (!value) {
     resetTagInput();
     chromeHidden.value = false;
+    chromeRevealTimestamp.value = 0;
     addToSetControlKey.value += 1;
     resetComfyState();
   } else {
+    chromeRevealTimestamp.value = Date.now();
+    const stored = loadComfyuiPromptFromSession();
+    if (stored != null) {
+      comfyuiCaption.value = stored;
+      comfyuiCaptionTouched.value = Boolean(stored);
+    }
     fetchCharacters();
     fetchPenalisedTags();
     fetchComfyWorkflows();
@@ -1024,6 +1153,27 @@ watch(validComfyWorkflows, (workflows) => {
   if (!hasSelection) {
     comfyuiSelectedWorkflow.value = list[0].name;
   }
+});
+
+watch([comfyuiSelectedWorkflow, selectedComfyUsesCaption], () => {
+  if (!selectedComfyUsesCaption.value) {
+    comfyuiCaption.value = "";
+    comfyuiCaptionTouched.value = false;
+    comfyuiCaptionFocused.value = false;
+    return;
+  }
+  const stored = loadComfyuiPromptFromSession();
+  if (stored != null) {
+    comfyuiCaption.value = stored;
+    comfyuiCaptionTouched.value = Boolean(stored);
+    comfyuiCaptionFocused.value = false;
+  } else if (!comfyuiCaptionTouched.value) {
+    comfyuiCaption.value = "";
+  }
+});
+
+watch(comfyuiCaption, () => {
+  persistComfyuiPromptToSession();
 });
 
 watch(comfyuiMenuOpen, (value) => {
@@ -1091,6 +1241,7 @@ async function runComfyWorkflow() {
       picture_id: image.value.id,
       workflow_name: comfyuiSelectedWorkflow.value,
       caption: comfyuiCaption.value || "",
+      client_id: comfyuiClientId.value || undefined,
     };
     const res = await apiClient.post(
       `${backendUrl.value}/comfyui/run_i2i`,
@@ -1099,6 +1250,10 @@ async function runComfyWorkflow() {
     const promptCount = Array.isArray(res.data?.prompts)
       ? res.data.prompts.length
       : 0;
+    emit("comfyui-run", {
+      prompts: Array.isArray(res.data?.prompts) ? res.data.prompts : [],
+      pictureId: image.value?.id ?? null,
+    });
     comfyuiRunSuccess.value = promptCount
       ? `Queued ${promptCount} run(s) in ComfyUI.`
       : "Queued in ComfyUI.";
@@ -1127,6 +1282,435 @@ function getFilmstripThumbSrc(target) {
   if (isSupportedVideoFile(getOverlayFormat(target))) return "";
   return getFullImageUrl(target);
 }
+
+function getOverlayImageList() {
+  const expanded = filmstripImages.value;
+  if (Array.isArray(expanded) && expanded.length) return expanded;
+  return Array.isArray(allImages.value) ? allImages.value : [];
+}
+
+function isImageInFilmstrip(targetId) {
+  if (!targetId) return false;
+  const list = filmstripImages.value;
+  if (!Array.isArray(list) || !list.length) return false;
+  return list.some((item) => String(item?.id) === String(targetId));
+}
+
+async function ensureOverlayFilmstripForImage() {
+  const targetId = image.value?.id ?? null;
+  if (!targetId) return;
+  if (isImageInFilmstrip(targetId)) return;
+  const stackId = getOverlayStackId(image.value);
+  if (!stackId) return;
+  if (!overlayExpandedStackIds.value.has(stackId)) {
+    const nextIds = new Set(overlayExpandedStackIds.value);
+    nextIds.add(stackId);
+    overlayExpandedStackIds.value = nextIds;
+  }
+  await ensureOverlayStackMembersLoaded(stackId, image.value);
+}
+
+function getOverlayStackId(img) {
+  const stackId = img?.stack_id ?? img?.stackId ?? null;
+  if (stackId === null || stackId === undefined) return null;
+  return String(stackId);
+}
+
+function getOverlayStackPositionValue(img) {
+  if (!img) return null;
+  const raw = img.stack_position ?? img.stackPosition ?? null;
+  if (raw === null || raw === undefined) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function getOverlayStackSmartScoreValue(img) {
+  const raw = img?.smartScore ?? img?.smart_score ?? null;
+  if (raw === null || raw === undefined) return 0;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getOverlayStackCreatedAtTs(img) {
+  if (!img?.created_at) return 0;
+  const ts = new Date(img.created_at).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function compareOverlayStackOrder(a, b) {
+  const posA = getOverlayStackPositionValue(a);
+  const posB = getOverlayStackPositionValue(b);
+  if (posA !== null || posB !== null) {
+    if (posA === null) return 1;
+    if (posB === null) return -1;
+    if (posA !== posB) return posA - posB;
+  }
+  const scoreA = Number(a?.score ?? 0);
+  const scoreB = Number(b?.score ?? 0);
+  if (scoreA !== scoreB) return scoreB - scoreA;
+  const smartA = getOverlayStackSmartScoreValue(a);
+  const smartB = getOverlayStackSmartScoreValue(b);
+  if (smartA !== smartB) return smartB - smartA;
+  const dateA = getOverlayStackCreatedAtTs(a);
+  const dateB = getOverlayStackCreatedAtTs(b);
+  if (dateA !== dateB) return dateB - dateA;
+  const idA = Number(a?.id ?? 0);
+  const idB = Number(b?.id ?? 0);
+  return idA - idB;
+}
+
+function sortOverlayStackMembers(members) {
+  if (!Array.isArray(members)) return [];
+  return members.slice().sort(compareOverlayStackOrder);
+}
+
+function buildOverlayStackLeaderMap(images) {
+  const byStack = new Map();
+  for (const img of images) {
+    const stackId = getOverlayStackId(img);
+    if (!stackId || img?.id == null) continue;
+    if (!byStack.has(stackId)) {
+      byStack.set(stackId, []);
+    }
+    byStack.get(stackId).push(img);
+  }
+  const leaders = new Map();
+  for (const [stackId, members] of byStack.entries()) {
+    const ordered = sortOverlayStackMembers(members);
+    const leader = ordered[0];
+    if (leader?.id != null) {
+      leaders.set(stackId, String(leader.id));
+    }
+  }
+  return leaders;
+}
+
+function getOverlayLocalStackMembers(stackId) {
+  if (!stackId) return [];
+  const list = Array.isArray(allImages.value) ? allImages.value : [];
+  if (!list.length) return [];
+  const members = list.filter((img) => getOverlayStackId(img) === stackId);
+  return sortOverlayStackMembers(members);
+}
+
+const overlayStackCounts = computed(() => {
+  const counts = new Map();
+  const list = Array.isArray(allImages.value) ? allImages.value : [];
+  for (const img of list) {
+    const stackId = getOverlayStackId(img);
+    if (!stackId) continue;
+    counts.set(stackId, (counts.get(stackId) || 0) + 1);
+  }
+  return counts;
+});
+
+function getOverlayStackCount(item) {
+  const count = Number(item?.stackCount ?? item?.stack_count ?? 0);
+  if (Number.isFinite(count) && count > 0) return count;
+  const stackId = getOverlayStackId(item);
+  if (!stackId) return 0;
+  const expanded = overlayExpandedStackMembers.value.get(stackId);
+  const ids = Array.isArray(expanded?.ids) ? expanded.ids : [];
+  if (ids.length) return ids.length;
+  return overlayStackCounts.value.get(stackId) || 0;
+}
+
+function shouldShowFilmstripStackBadge(item) {
+  if (!showStacks.value) return false;
+  return getOverlayStackCount(item) > 1;
+}
+
+function isFilmstripStackLead(item) {
+  if (!item) return false;
+  const stackId = getOverlayStackId(item);
+  if (!stackId) return false;
+  const list = filmstripImages.value;
+  const idx = Number(item?.index ?? -1);
+  if (!Array.isArray(list) || idx < 0 || idx >= list.length) return true;
+  const prev = idx > 0 ? list[idx - 1] : null;
+  const prevStackId = getOverlayStackId(prev);
+  return stackId !== prevStackId;
+}
+
+function hasFilmstripPenalisedTags(item) {
+  return Array.isArray(item?.penalised_tags) && item.penalised_tags.length > 0;
+}
+
+function shouldShowFilmstripProblemBadge(item) {
+  if (!showProblemIcon.value) return false;
+  if (!getFilmstripThumbSrc(item)) return false;
+  return hasFilmstripPenalisedTags(item);
+}
+
+function filmstripProblemTitle(item) {
+  const tags = Array.isArray(item?.penalised_tags) ? item.penalised_tags : [];
+  if (!tags.length) return "";
+  return `Penalised tags: ${tags.join(", ")}`;
+}
+
+function filmstripStackBadgeTitle(item) {
+  const count = getOverlayStackCount(item);
+  if (count <= 1) return "";
+  return `Stack of ${count} images`;
+}
+
+function getStackColorIndexFromId(stackId) {
+  if (stackId === null || stackId === undefined) return null;
+  const numeric = Number(stackId);
+  if (Number.isFinite(numeric)) return numeric;
+  const raw = String(stackId);
+  let hash = 0;
+  for (let i = 0; i < raw.length; i += 1) {
+    hash = (hash * 31 + raw.charCodeAt(i)) % 2147483647;
+  }
+  return hash || null;
+}
+
+function getOverlayStackColor(item) {
+  if (!item) return null;
+  if (typeof item.stackColor === "string" && item.stackColor) {
+    return item.stackColor;
+  }
+  const stackIndex =
+    typeof item.stackIndex === "number"
+      ? item.stackIndex
+      : typeof item.stack_index === "number"
+        ? item.stack_index
+        : null;
+  if (typeof stackIndex === "number") {
+    return getStackColor(stackIndex);
+  }
+  const stackId = getOverlayStackId(item);
+  const index = getStackColorIndexFromId(stackId);
+  if (index === null) return null;
+  return getStackColor(index);
+}
+
+function getFilmstripStackIconStyle(item) {
+  const color = getOverlayStackColor(item);
+  if (!color) return {};
+  return { color };
+}
+
+function getFilmstripStackStyle(item) {
+  if (!showStacks.value) return {};
+  if (!isFilmstripStackExpanded(item)) return {};
+  const color = applyOverlayStackBackgroundAlpha(getOverlayStackColor(item));
+  if (!color) return {};
+  return {
+    "--filmstrip-stack-bg": color,
+  };
+}
+
+function applyOverlayStackBackgroundAlpha(color) {
+  if (!color || typeof color !== "string") return color;
+  const trimmed = color.trim();
+  if (!trimmed) return color;
+  if (trimmed.startsWith("hsla(") || trimmed.startsWith("rgba(")) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("hsl(")) {
+    const inner = trimmed.slice(4, -1).trim();
+    return `hsla(${inner} / 0.6)`;
+  }
+  if (trimmed.startsWith("rgb(")) {
+    const inner = trimmed.slice(4, -1).trim();
+    return `rgba(${inner} / 0.6)`;
+  }
+  return trimmed;
+}
+
+function isFilmstripStackExpanded(item) {
+  const stackId = getOverlayStackId(item);
+  if (!stackId) return false;
+  return overlayExpandedStackIds.value.has(stackId);
+}
+
+function buildOverlayExpandedStackImages(stackId, fallbackItem, stackCount) {
+  const entry = overlayExpandedStackMembers.value.get(stackId);
+  const ids = Array.isArray(entry?.ids) ? entry.ids : [];
+  const images = Array.isArray(entry?.images) ? entry.images : [];
+  const localMembers = getOverlayLocalStackMembers(stackId);
+  const merged = [...localMembers, ...images].filter(
+    (img) => img && img.id != null,
+  );
+  const imageById = new Map(merged.map((img) => [String(img.id), img]));
+  const ordered = [];
+  const seen = new Set();
+  const addImage = (img) => {
+    if (!img || img.id == null) return;
+    const key = String(img.id);
+    if (seen.has(key)) return;
+    seen.add(key);
+    ordered.push(img);
+  };
+
+  const orderedIds = ids.length
+    ? ids
+    : sortOverlayStackMembers(merged).map((img) => String(img.id));
+  for (const id of orderedIds) {
+    addImage(imageById.get(String(id)));
+  }
+
+  if (fallbackItem?.id != null) {
+    addImage(fallbackItem);
+  }
+
+  if (ordered.length) {
+    ordered[0] = { ...ordered[0], stackCount };
+  }
+  return ordered;
+}
+
+function collapseOverlayStackImages(images) {
+  if (!showStacks.value) return images;
+  if (!Array.isArray(images) || images.length === 0) return [];
+  const counts = new Map();
+  for (const img of images) {
+    const stackId = getOverlayStackId(img);
+    if (!stackId) continue;
+    counts.set(stackId, (counts.get(stackId) || 0) + 1);
+  }
+  if (!counts.size) return images;
+  const leaders = buildOverlayStackLeaderMap(images);
+  const seen = new Set();
+  const collapsed = [];
+  for (const img of images) {
+    const stackId = getOverlayStackId(img);
+    if (!stackId) {
+      collapsed.push(img);
+      continue;
+    }
+    const leaderId = leaders.get(stackId);
+    if (leaderId && img?.id != null && String(img.id) !== leaderId) {
+      continue;
+    }
+    if (seen.has(stackId)) continue;
+    seen.add(stackId);
+    const stackCount = getOverlayStackCount(img) || counts.get(stackId) || 1;
+    if (overlayExpandedStackIds.value.has(stackId)) {
+      const expanded = buildOverlayExpandedStackImages(
+        stackId,
+        img,
+        stackCount,
+      );
+      if (expanded.length) {
+        collapsed.push(...expanded);
+        continue;
+      }
+    }
+    collapsed.push({
+      ...img,
+      stackCount,
+    });
+  }
+  return collapsed;
+}
+
+async function ensureOverlayStackMembersLoaded(stackId, referenceItem = null) {
+  if (!stackId) return false;
+  const localMembers = getOverlayLocalStackMembers(stackId);
+  const expectedCount = Number(
+    referenceItem?.stackCount ?? referenceItem?.stack_count ?? 0,
+  );
+  if (localMembers.length > 1) {
+    const orderedLocal = sortOverlayStackMembers(localMembers);
+    if (!Number.isFinite(expectedCount) || expectedCount <= 0) {
+      const ids = orderedLocal
+        .filter((img) => img && img.id != null)
+        .map((img) => String(img.id));
+      const nextMembers = new Map(overlayExpandedStackMembers.value);
+      nextMembers.set(stackId, { ids, images: orderedLocal });
+      overlayExpandedStackMembers.value = nextMembers;
+      return true;
+    }
+    if (orderedLocal.length >= expectedCount) {
+      const ids = orderedLocal
+        .filter((img) => img && img.id != null)
+        .map((img) => String(img.id));
+      const nextMembers = new Map(overlayExpandedStackMembers.value);
+      nextMembers.set(stackId, { ids, images: orderedLocal });
+      overlayExpandedStackMembers.value = nextMembers;
+      return true;
+    }
+  }
+  const existing = overlayExpandedStackMembers.value.get(stackId);
+  if (existing && Array.isArray(existing.images) && existing.images.length) {
+    return true;
+  }
+  if (overlayExpandedStackLoading.value.has(stackId)) return false;
+  if (!backendUrl.value) return false;
+  const nextLoading = new Set(overlayExpandedStackLoading.value);
+  nextLoading.add(stackId);
+  overlayExpandedStackLoading.value = nextLoading;
+  try {
+    const res = await apiClient.get(
+      `${backendUrl.value}/stacks/${stackId}/pictures?fields=grid`,
+    );
+    const data = await res.data;
+    const images = Array.isArray(data) ? data : [];
+    const ordered = sortOverlayStackMembers(images);
+    const ids = ordered
+      .filter((img) => img && img.id != null)
+      .map((img) => String(img.id));
+    const nextMembers = new Map(overlayExpandedStackMembers.value);
+    nextMembers.set(stackId, { ids, images: ordered });
+    overlayExpandedStackMembers.value = nextMembers;
+    return true;
+  } catch (e) {
+    console.error("Failed to load overlay stack members:", e);
+    return false;
+  } finally {
+    const cleared = new Set(overlayExpandedStackLoading.value);
+    cleared.delete(stackId);
+    overlayExpandedStackLoading.value = cleared;
+  }
+}
+
+async function toggleFilmstripStackExpand(item) {
+  const stackId = getOverlayStackId(item);
+  if (!stackId) return;
+  if (overlayExpandedStackIds.value.has(stackId)) {
+    const nextIds = new Set(overlayExpandedStackIds.value);
+    nextIds.delete(stackId);
+    overlayExpandedStackIds.value = nextIds;
+    return;
+  }
+  const nextIds = new Set(overlayExpandedStackIds.value);
+  nextIds.add(stackId);
+  overlayExpandedStackIds.value = nextIds;
+  await ensureOverlayStackMembersLoaded(stackId, item);
+}
+
+function prefetchFilmstripStackMembers(item) {
+  const stackId = getOverlayStackId(item);
+  if (!stackId) return;
+  void ensureOverlayStackMembersLoaded(stackId, item);
+}
+
+const filmstripImages = computed(() => {
+  const images = Array.isArray(allImages.value) ? allImages.value : [];
+  return collapseOverlayStackImages(images);
+});
+
+watch(
+  () => initialImageId.value,
+  (newId) => {
+    setOverlayImageById(newId);
+    void ensureOverlayFilmstripForImage();
+  },
+  { immediate: true },
+);
+
+watch(
+  () => allImages.value,
+  () => {
+    overlayExpandedStackIds.value = new Set();
+    overlayExpandedStackMembers.value = new Map();
+    overlayExpandedStackLoading.value = new Set();
+    void ensureOverlayFilmstripForImage();
+  },
+);
 
 watch(image, () => {
   resetTagInput();
@@ -1231,7 +1815,7 @@ function setScore(n) {
 }
 
 function showPrevImage() {
-  const sorted = allImages.value;
+  const sorted = filmstripImages.value;
   if (!image.value || !sorted.length) return;
   const idx = sorted.findIndex((i) => i.id === image.value.id);
   if (idx === -1) return;
@@ -1240,15 +1824,16 @@ function showPrevImage() {
 }
 
 function selectImageByIndex(idx) {
-  if (!Array.isArray(allImages.value)) return;
-  const target = allImages.value[idx];
+  const list = filmstripImages.value;
+  if (!Array.isArray(list)) return;
+  const target = list[idx];
   if (target) {
     setOverlayImageById(target.id ?? null);
   }
 }
 
 function showNextImage() {
-  const sorted = allImages.value;
+  const sorted = filmstripImages.value;
   if (!image.value || !sorted.length) return;
   const idx = sorted.findIndex((i) => i.id === image.value.id);
   if (idx === -1) return;
@@ -1260,6 +1845,16 @@ function handleKeydown(e) {
   if (!open.value) return;
 
   handleUserActivity();
+
+  if (comfyuiCaptionFocused.value) {
+    if (e.key === "Escape") {
+      if (comfyuiMenuOpen.value) {
+        comfyuiMenuOpen.value = false;
+      }
+      e.preventDefault();
+    }
+    return;
+  }
 
   if (isEditingDescription.value || addingTag.value) {
     // Handle editing-specific keydown behavior
@@ -1329,16 +1924,17 @@ function updateViewportMetrics() {
 
 const filmstripStyleVars = computed(() => {
   const targetCount = 7;
-  const gap = 8;
+  const gap = 0;
   const railPadding = 8;
   const railPaddingTotal = railPadding * 2;
   const overlayMainHeight = overlayMainRef.value?.offsetHeight || 0;
   const fallbackHeight = Math.max(0, windowHeight.value || 0);
   const available = Math.max(0, overlayMainHeight || fallbackHeight);
+  const usable = Math.max(0, available - railPaddingTotal);
   const totalGaps = gap * (targetCount - 1);
-  const rawSize = (available - railPaddingTotal - totalGaps) / targetCount;
+  const rawSize = (usable - totalGaps) / targetCount;
   const computed = Number.isFinite(rawSize) ? Math.floor(rawSize) : 0;
-  const thumbSize = computed > 0 ? Math.max(40, computed) : 80;
+  const thumbSize = computed > 0 ? Math.max(36, computed - 8) : 80;
   const railWidth = thumbSize + 12;
   return {
     "--filmstrip-thumb-size": `${thumbSize}px`,
@@ -1346,6 +1942,7 @@ const filmstripStyleVars = computed(() => {
     "--filmstrip-available-height": `${available}px`,
     "--filmstrip-gap": `${gap}px`,
     "--filmstrip-padding": `${railPadding}px`,
+    "--filmstrip-padding-total": `${railPaddingTotal}px`,
   };
 });
 
@@ -1366,6 +1963,7 @@ function handleBackdropClick() {
 
 function handleUserActivity() {
   chromeHidden.value = false;
+  chromeRevealTimestamp.value = Date.now();
 }
 
 function handleOverlayClick(event) {
@@ -1502,7 +2100,7 @@ const zoomHudLabel = computed(() => {
 });
 
 const filmstripWindow = computed(() => {
-  const images = Array.isArray(allImages.value) ? allImages.value : [];
+  const images = filmstripImages.value;
   if (!images.length || !image.value) return [];
   const currentIndex = images.findIndex((img) => img.id === image.value.id);
   if (currentIndex === -1) return [];
@@ -1528,11 +2126,23 @@ const filmstripWindow = computed(() => {
   for (let idx = start; idx <= end; idx += 1) {
     indices.push(idx);
   }
-  return indices.map((idx) => ({
-    ...images[idx],
-    index: idx,
-    isActive: idx === currentIndex,
-  }));
+  return indices.map((idx) => {
+    const item = images[idx];
+    const stackId = getOverlayStackId(item);
+    const prevItem = idx > 0 ? images[idx - 1] : null;
+    const prevStackId = getOverlayStackId(prevItem);
+    const isStackExpanded = stackId
+      ? overlayExpandedStackIds.value.has(stackId)
+      : false;
+    const isStackJoined =
+      isStackExpanded && !!stackId && stackId === prevStackId;
+    return {
+      ...item,
+      index: idx,
+      isActive: idx === currentIndex,
+      isStackJoined,
+    };
+  });
 });
 
 function toggleFaceBbox() {
@@ -1956,6 +2566,7 @@ async function fetchOverlayMetadata(imageId) {
     }
     image.value = merged;
     syncDescriptionDraft();
+    void ensureOverlayFilmstripForImage();
   } catch (e) {
     console.error("Failed to fetch overlay metadata:", e);
   } finally {
@@ -3531,6 +4142,40 @@ function downloadComfyWorkflow(workflow) {
   pointer-events: none;
 }
 
+.overlay-comfyui-progress {
+  position: absolute;
+  bottom: 64px;
+  right: calc(16px + var(--sidebar-width));
+  z-index: 6;
+  background: rgba(var(--v-theme-dark-surface), 0.75);
+  color: rgb(var(--v-theme-on-dark-surface));
+  padding: 8px 10px;
+  border-radius: 8px;
+  min-width: 180px;
+  box-shadow: 0 4px 12px rgba(var(--v-theme-shadow), 0.25);
+  backdrop-filter: blur(6px);
+}
+
+.overlay-comfyui-progress-title {
+  font-size: 0.8em;
+  margin-bottom: 6px;
+}
+
+.overlay-comfyui-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(var(--v-theme-on-dark-surface), 0.2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.overlay-comfyui-progress-fill {
+  height: 100%;
+  background: rgb(var(--v-theme-accent));
+  width: 0;
+  transition: width 0.2s ease;
+}
+
 .overlay-close {
   border: none;
   background: rgba(var(--v-theme-primary), 0.7);
@@ -3969,13 +4614,13 @@ function downloadComfyWorkflow(workflow) {
   display: flex;
   flex-direction: column;
   gap: var(--filmstrip-gap, 8px);
-  overflow-y: auto;
+  overflow-y: hidden;
   width: var(--filmstrip-thumb-size, 100%);
   align-items: center;
   overflow-x: hidden;
   align-self: center;
-  padding-right: 4px;
-  height: 100%;
+  padding-right: 0;
+  height: calc(100% - var(--filmstrip-padding-total, 16px));
 }
 
 .filmstrip-thumb {
@@ -3983,25 +4628,40 @@ function downloadComfyWorkflow(workflow) {
   padding: 0;
   background: transparent;
   cursor: pointer;
-  border-radius: 8px;
-  overflow: hidden;
-  border: 2px solid transparent;
+  border-radius: 0;
+  overflow: visible;
   width: var(--filmstrip-thumb-size, 100%);
   height: var(--filmstrip-thumb-size, auto);
   max-width: 100%;
   aspect-ratio: 1 / 1;
+  position: relative;
 }
 
-.filmstrip-thumb.active {
-  border-color: rgba(var(--v-theme-accent), 0.9);
-  box-shadow: 0 0 0 2px rgba(var(--v-theme-accent), 0.35);
+.filmstrip-thumb-tile {
+  width: 100%;
+  height: 100%;
+  background: var(--filmstrip-stack-bg, transparent);
+  padding: 6px;
+  box-sizing: border-box;
+  border-radius: 0;
+  overflow: visible;
 }
 
-.filmstrip-thumb img {
+.filmstrip-thumb-stack-joined {
+  margin-top: calc(-1 * var(--filmstrip-gap, 8px));
+}
+
+.filmstrip-thumb-image {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  border-radius: 8px;
+}
+
+.filmstrip-thumb-image-active {
+  box-shadow: 0 0 0 4px rgba(var(--v-theme-accent), 0.9);
+  z-index: 2;
 }
 
 .filmstrip-thumb-placeholder {
@@ -4012,6 +4672,31 @@ function downloadComfyWorkflow(workflow) {
   justify-content: center;
   background: rgba(var(--v-theme-on-dark-surface), 0.08);
   color: rgba(var(--v-theme-on-dark-surface), 0.85);
+  border-radius: 8px;
+}
+
+.filmstrip-badge {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--v-theme-dark-surface), 0.7);
+  border: 1px solid rgba(var(--v-theme-on-dark-surface), 0.35);
+  border-radius: 6px;
+  padding: 2px 4px;
+  color: rgb(var(--v-theme-on-dark-surface));
+  box-shadow: 0 2px 6px rgba(var(--v-theme-shadow), 0.3);
+  z-index: 2;
+}
+
+.filmstrip-badge--top-left {
+  top: 8px;
+  left: 8px;
+}
+
+.filmstrip-badge--top-left-stack {
+  top: 28px;
+  left: 8px;
 }
 
 .overlay-sidebar {
