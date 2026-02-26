@@ -671,13 +671,14 @@ function hasCaptionInputs(entries) {
 }
 
 function guessWorkflowOutputTargets(payload, outputs) {
+  const safeOutputs = outputs ?? [];
   const rawTargets =
     payload?.pixlvault_output_nodes ??
     payload?.pixlvault_output_node ??
     payload?.output_node_ids ??
     payload?.output_node_id ??
     null;
-  const available = new Set((outputs || []).map((entry) => entry.id));
+  const available = new Set(safeOutputs.map((entry) => entry.id));
   const normalizeTargets = (value) => {
     if (value == null) return [];
     const list = Array.isArray(value) ? value : [value];
@@ -687,7 +688,7 @@ function guessWorkflowOutputTargets(payload, outputs) {
   };
   const explicit = normalizeTargets(rawTargets);
   if (explicit.length) return explicit;
-  return (outputs || []).map((entry) => entry.id);
+  return safeOutputs.map((entry) => entry.id);
 }
 
 function getWorkflowInputPreview(payload, targetId) {
