@@ -4,7 +4,7 @@ import insightface
 
 from time import time
 
-from pixlvault.feature_extraction_worker import FeatureExtractionWorker
+from pixlvault.tasks.feature_extraction_task import FeatureExtractionTask
 from pixlvault.db_models.picture import Picture
 from pixlvault.pixl_logging import get_logger
 from pixlvault.picture_utils import PictureUtils
@@ -48,12 +48,12 @@ def test_face_extraction_speed_cpu():
             def notify(event_type) -> None:
                 pass
 
-            worker = FeatureExtractionWorker(server.vault.db, None, notify)
-            worker._insightface_app = insightface.app.FaceAnalysis()
-            worker._insightface_app.prepare(ctx_id=-1, det_thresh=0.25)
+            task = FeatureExtractionTask(server.vault.db, None, pictures)
+            task._insightface_app = insightface.app.FaceAnalysis()
+            task._insightface_app.prepare(ctx_id=-1, det_thresh=0.25)
 
             start = time()
-            features = worker._extract_features(pictures)
+            features = task._extract_features(pictures)
             end = time()
             logger.info(
                 f"Face extraction took {end - start} seconds for {len(pictures)} images and created {len(features)} features. Or {(end - start) / len(pictures)} seconds per image on average."
@@ -97,17 +97,17 @@ def test_face_extraction_speed_gpu():
             def notify(event_type) -> None:
                 pass
 
-            worker = FeatureExtractionWorker(server.vault.db, None, notify)
-            # worker._insightface_app = insightface.model_zoo.get_model('buffalo_l.onnx')
-            worker._insightface_app = insightface.app.FaceAnalysis(
+            task = FeatureExtractionTask(server.vault.db, None, pictures)
+            # task._insightface_app = insightface.model_zoo.get_model('buffalo_l.onnx')
+            task._insightface_app = insightface.app.FaceAnalysis(
                 providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
             )
-            worker._insightface_app.prepare(
+            task._insightface_app.prepare(
                 ctx_id=0, det_thresh=0.25, det_size=(480, 480)
             )
 
             start = time()
-            features = worker._extract_features(pictures)
+            features = task._extract_features(pictures)
             end = time()
             logger.info(
                 f"Face extraction took {end - start} seconds for {len(pictures)} images and created {len(features)} features. Or {(end - start) / len(pictures)} seconds per image on average."
