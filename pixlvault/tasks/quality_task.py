@@ -6,9 +6,9 @@ from sqlalchemy import func
 
 from pixlvault.database import DBPriority
 from pixlvault.db_models import Picture, Quality
+from pixlvault.picture_quality_utils import PictureQualityUtils
 from pixlvault.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger
-from pixlvault.quality_worker import QualityWorker
 from pixlvault.task_runner import BaseTask
 
 
@@ -32,9 +32,7 @@ class QualityTask(BaseTask):
 
     def _run_task(self):
         start = time.time()
-        quality_helper = QualityWorker(
-            self._db, picture_tagger=None, event_callback=None
-        )
+        quality_helper = PictureQualityUtils(self._db)
 
         pics_missing_quality = self._db.run_task(self._find_pictures_missing_quality)
         if not pics_missing_quality:
@@ -42,7 +40,7 @@ class QualityTask(BaseTask):
 
         self._backfill_missing_picture_metadata(pics_missing_quality)
 
-        grouped_full = quality_helper._group_pictures_by_format_and_size(
+        grouped_full = quality_helper.group_pictures_by_format_and_size(
             pics_missing_quality
         )
         if not grouped_full:
@@ -71,14 +69,14 @@ class QualityTask(BaseTask):
                     skipped.append(pic)
 
             if valid_batch:
-                qualities = quality_helper._calculate_quality(
+                qualities = quality_helper.calculate_quality(
                     valid_batch,
                     valid_loaded,
                     max_side=self.FULL_IMAGE_MAX_SIDE,
                 )
                 if qualities:
                     result = self._db.run_task(
-                        quality_helper._update_quality,
+                        quality_helper.update_quality,
                         valid_batch,
                         qualities,
                         priority=DBPriority.LOW,
@@ -101,7 +99,7 @@ class QualityTask(BaseTask):
                     for _ in skipped
                 ]
                 result = self._db.run_task(
-                    quality_helper._update_quality,
+                    quality_helper.update_quality,
                     skipped,
                     sentinel_qualities,
                     priority=DBPriority.LOW,

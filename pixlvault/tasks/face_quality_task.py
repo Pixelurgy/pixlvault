@@ -5,8 +5,8 @@ from sqlalchemy import func
 
 from pixlvault.database import DBPriority
 from pixlvault.db_models import Face, Picture, Quality
+from pixlvault.picture_quality_utils import PictureQualityUtils
 from pixlvault.pixl_logging import get_logger
-from pixlvault.quality_worker import FaceQualityWorker
 from pixlvault.task_runner import BaseTask
 
 
@@ -29,18 +29,14 @@ class FaceQualityTask(BaseTask):
 
     def _run_task(self):
         start = time.time()
-        face_quality_helper = FaceQualityWorker(
-            self._db,
-            picture_tagger=None,
-            event_callback=None,
-        )
+        face_quality_helper = PictureQualityUtils(self._db)
 
         faces_missing_quality = self._db.run_task(self._find_faces_missing_quality)
         if not faces_missing_quality:
             return {"changed_count": 0, "changed": []}
 
         grouped_faces, invalid_faces = (
-            face_quality_helper._group_faces_by_format_and_size(faces_missing_quality)
+            face_quality_helper.group_faces_by_format_and_size(faces_missing_quality)
         )
 
         changed = []
@@ -58,7 +54,7 @@ class FaceQualityTask(BaseTask):
                 for _ in invalid_faces
             ]
             result = self._db.run_task(
-                face_quality_helper._update_face_quality,
+                face_quality_helper.update_face_quality,
                 invalid_faces,
                 sentinel_qualities,
                 priority=DBPriority.LOW,
@@ -69,11 +65,11 @@ class FaceQualityTask(BaseTask):
             batch = group[: self.BATCH_SIZE]
             if not batch:
                 continue
-            qualities = face_quality_helper._calculate_face_quality(batch)
+            qualities = face_quality_helper.calculate_face_quality(batch)
             if qualities:
                 faces = [face for _, face in batch]
                 result = self._db.run_task(
-                    face_quality_helper._update_face_quality,
+                    face_quality_helper.update_face_quality,
                     faces,
                     qualities,
                     priority=DBPriority.LOW,
