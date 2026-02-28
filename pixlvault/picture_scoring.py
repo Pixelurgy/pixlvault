@@ -17,7 +17,7 @@ from pixlvault.db_models import (
     Tag,
     User,
 )
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger
 from pixlvault.utils import _smart_score_penalised_tags, safe_model_dict
 

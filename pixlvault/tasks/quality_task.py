@@ -6,8 +6,8 @@ from sqlalchemy import func
 
 from pixlvault.database import DBPriority
 from pixlvault.db_models import Picture, Quality
-from pixlvault.picture_quality_utils import PictureQualityUtils
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_quality_utils import PictureQualityUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger
 from pixlvault.tasks.base_task import BaseTask
 

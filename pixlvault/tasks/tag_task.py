@@ -7,7 +7,7 @@ from sqlmodel import Session, select, delete
 from pixlvault.database import DBPriority
 from pixlvault.db_models import FaceTag, HandTag, Picture, Tag
 from pixlvault.feature_tag_blacklist import is_face_tag, is_hand_tag
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger
 from pixlvault.tasks.base_task import BaseTask
 

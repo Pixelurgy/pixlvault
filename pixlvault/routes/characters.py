@@ -19,7 +19,7 @@ from pixlvault.db_models import (
 )
 from pixlvault.event_types import EventType
 from pixlvault.pixl_logging import get_logger
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.picture_scoring import select_reference_faces_for_character
 from pixlvault.utils import _normalize_hidden_tags, safe_model_dict
 

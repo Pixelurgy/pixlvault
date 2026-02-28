@@ -7,7 +7,7 @@ from time import time
 from pixlvault.tasks.feature_extraction_task import FeatureExtractionTask
 from pixlvault.db_models.picture import Picture
 from pixlvault.pixl_logging import get_logger
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.server import Server
 
 logger = get_logger(__name__)

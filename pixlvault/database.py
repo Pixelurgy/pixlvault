@@ -11,7 +11,7 @@ from sqlmodel import create_engine, Session
 from rapidfuzz.distance import Levenshtein
 
 from pixlvault.pixl_logging import get_logger
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 
 # These imports are necessary to register the models with SQLModel
 

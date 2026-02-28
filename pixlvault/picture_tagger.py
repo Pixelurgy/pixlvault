@@ -22,7 +22,7 @@ from .pixl_logging import get_logger
 from pixlvault.db_models.picture import Picture
 from pixlvault.tag_naturaliser import TagNaturaliser
 from pixlvault.image_loading_dataset_prepper import ImageLoadingDatasetPrepper
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 
 logger = get_logger(__name__)
 
@@ -581,7 +581,7 @@ class PictureTagger:
 
             caption = None
             if ext in video_exts:
-                from pixlvault.picture_utils import PictureUtils
+                from pixlvault.utils.picture_utils import PictureUtils
 
                 frames = PictureUtils.extract_representative_video_frames(
                     image_path, count=3
@@ -1557,7 +1557,7 @@ class PictureTagger:
         Generate facial features for a list of face_bboxes in a picture.
         Returns a list of facial_features (np.ndarray or None) for each bbox.
         """
-        from pixlvault.picture_utils import PictureUtils
+        from pixlvault.utils.picture_utils import PictureUtils
         import os
         import torch
         from PIL import Image

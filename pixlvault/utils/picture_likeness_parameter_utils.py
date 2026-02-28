@@ -15,7 +15,7 @@ from pixlvault.db_models.picture import (
 )
 from pixlvault.db_models.picture_likeness import PictureLikeness, PictureLikenessQueue
 from pixlvault.db_models.quality import Quality
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger
 
 logger = get_logger(__name__)
@@ -465,20 +465,13 @@ class PictureLikenessParameterUtils:
         quality_by_id: Dict[int, Dict[str, float]],
         vector_length: int,
     ) -> None:
-        if not ids:
-            return
-        pics = session.exec(select(Picture).where(Picture.id.in_(ids))).all()
-        for pic in pics:
-            vec = PictureLikenessParameterUtils.decode_parameters(
-                pic.likeness_parameters, vector_length
-            )
-            quality_values = quality_by_id.get(int(pic.id), {})
-            for param, field in QUALITY_PARAM_FIELDS.items():
-                value = quality_values.get(field, LIKENESS_PARAMETER_SENTINEL)
-                vec[int(param)] = float(value)
-            pic.likeness_parameters = vec
-            session.add(pic)
-        session.commit()
+        PictureLikenessParameterUtils._update_values_for_parameters(
+            session=session,
+            ids=ids,
+            values_by_id=quality_by_id,
+            parameter_fields=QUALITY_PARAM_FIELDS,
+            vector_length=vector_length,
+        )
         PictureLikenessParameterUtils.reset_likeness_for_pictures(session, ids)
 
     @staticmethod
@@ -488,6 +481,23 @@ class PictureLikenessParameterUtils:
         picture_by_id: Dict[int, Dict[str, float]],
         vector_length: int,
     ) -> None:
+        PictureLikenessParameterUtils._update_values_for_parameters(
+            session=session,
+            ids=ids,
+            values_by_id=picture_by_id,
+            parameter_fields=PICTURE_PARAM_FIELDS,
+            vector_length=vector_length,
+        )
+        PictureLikenessParameterUtils.reset_likeness_for_pictures(session, ids)
+
+    @staticmethod
+    def _update_values_for_parameters(
+        session: Session,
+        ids: List[int],
+        values_by_id: Dict[int, Dict[str, float]],
+        parameter_fields: Dict[LikenessParameter, str],
+        vector_length: int,
+    ) -> None:
         if not ids:
             return
         pics = session.exec(select(Picture).where(Picture.id.in_(ids))).all()
@@ -495,14 +505,13 @@ class PictureLikenessParameterUtils:
             vec = PictureLikenessParameterUtils.decode_parameters(
                 pic.likeness_parameters, vector_length
             )
-            values = picture_by_id.get(int(pic.id), {})
-            for param, field in PICTURE_PARAM_FIELDS.items():
+            values = values_by_id.get(int(pic.id), {})
+            for param, field in parameter_fields.items():
                 value = values.get(field, LIKENESS_PARAMETER_SENTINEL)
                 vec[int(param)] = float(value)
             pic.likeness_parameters = vec
             session.add(pic)
         session.commit()
-        PictureLikenessParameterUtils.reset_likeness_for_pictures(session, ids)
 
     @staticmethod
     def reset_likeness_for_pictures(session: Session, ids: List[int]) -> None:
