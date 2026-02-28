@@ -1,6 +1,6 @@
 from typing import List
 from pixlvault.db_models import Picture
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 
 
 def picture_order_key(pic: Picture, image_root: str = None):

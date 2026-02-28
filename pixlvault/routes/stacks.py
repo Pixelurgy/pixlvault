@@ -12,7 +12,7 @@ from pixlvault.picture_scoring import (
     get_smart_score_penalised_tags_from_request,
     prepare_smart_score_inputs,
 )
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger
 from pixlvault.utils import safe_model_dict
 

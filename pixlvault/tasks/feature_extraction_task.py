@@ -15,7 +15,7 @@ from pixlvault.db_models.face import Face
 from pixlvault.db_models.hand import Hand
 from pixlvault.db_models.picture import Picture
 from pixlvault.picture_tagger import MODEL_DIR, PictureTagger
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger
 from pixlvault.tasks.base_task import BaseTask
 

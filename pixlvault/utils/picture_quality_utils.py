@@ -7,7 +7,7 @@ from sqlmodel import delete
 from pixlvault.db_models.face import Face
 from pixlvault.db_models.picture import Picture
 from pixlvault.db_models.quality import Quality
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger
 
 
