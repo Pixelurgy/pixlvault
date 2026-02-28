@@ -10,7 +10,7 @@ from PIL import Image
 from sqlmodel import Session, select
 
 from pixlvault.db_models.picture_set import PictureSet, PictureSetMember
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.server import Server
 
 
@@ -229,7 +229,9 @@ def test_create_picture_from_bytes_preserves_video_extension_format(monkeypatch)
         def release(self):
             return None
 
-    monkeypatch.setattr("pixlvault.picture_utils.cv2.VideoCapture", _FakeVideoCapture)
+    monkeypatch.setattr(
+        "pixlvault.utils.picture_utils.cv2.VideoCapture", _FakeVideoCapture
+    )
 
     with tempfile.TemporaryDirectory() as temp_dir:
         picture = PictureUtils.create_picture_from_bytes(

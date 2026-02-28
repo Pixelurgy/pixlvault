@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 
 from pixlvault.database import DBPriority
 from pixlvault.db_models.picture import Picture
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger
 from pixlvault.stacking import (
     assign_picture_to_stack,

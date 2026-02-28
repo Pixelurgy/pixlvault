@@ -7,7 +7,7 @@ from pixlvault.server import Server
 from pixlvault.worker_types import WorkerType
 from pixlvault.db_models.picture import Picture
 from pixlvault.db_models.picture_likeness import PictureLikeness, PictureLikenessQueue
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from sqlalchemy import func
 from sqlmodel import select
 

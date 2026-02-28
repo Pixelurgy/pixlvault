@@ -19,7 +19,7 @@ from datetime import datetime
 from pixlvault.database import DBPriority
 from pixlvault.db_models import Face, Picture, PictureStack, User
 from pixlvault.event_types import EventType
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.stacking import (
     build_stack_filename_prefix,
     get_or_create_stack_for_picture,

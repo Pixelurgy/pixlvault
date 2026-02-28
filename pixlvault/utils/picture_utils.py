@@ -1021,54 +1021,69 @@ class PictureUtils:
             return square_img
 
     @staticmethod
-    def calculate_hash_from_file_path(file_path: str) -> str:
-        CHUNK_SIZE = 8192
-        N = 8
-        WHOLE_FILE_THRESHOLD = 128 * 1024  # 128KB
-        file_size = os.path.getsize(file_path)
+    def _calculate_sha256_digest(
+        file_size: int,
+        read_chunk,
+        source_label: Optional[str] = None,
+    ) -> str:
+        chunk_size = 8192
+        sample_count = 8
+        whole_file_threshold = 128 * 1024  # 128KB
+
         sha256 = hashlib.sha256()
-        if file_size <= WHOLE_FILE_THRESHOLD:
-            with open(file_path, "rb") as f:
-                while chunk := f.read(CHUNK_SIZE):
-                    sha256.update(chunk)
-            digest = sha256.hexdigest()
-            logger.debug(f"WHOLE: {file_path} size={file_size} hash={digest}")
-            return digest
-        # For larger files, sample N evenly spaced blocks
-        offsets = [int(i * (file_size - CHUNK_SIZE) / (N - 1)) for i in range(N)]
-        with open(file_path, "rb") as f:
-            for offset in offsets:
-                f.seek(offset)
-                chunk = f.read(CHUNK_SIZE)
+        if file_size <= whole_file_threshold:
+            for offset in range(0, file_size, chunk_size):
+                chunk = read_chunk(offset, chunk_size)
                 if chunk:
                     sha256.update(chunk)
             digest = sha256.hexdigest()
-            logger.debug(f"SAMPLED: {file_path} size={file_size} hash={digest}")
+            if source_label:
+                logger.debug(f"WHOLE: {source_label} size={file_size} hash={digest}")
+            else:
+                logger.debug(f"WHOLE: size={file_size} hash={digest}")
             return digest
 
-    @staticmethod
-    def calculate_hash_from_bytes(image_bytes: bytes) -> str:
-        CHUNK_SIZE = 8192
-        N = 8
-        WHOLE_FILE_THRESHOLD = 128 * 1024  # 128KB
-        file_size = len(image_bytes)
-        sha256 = hashlib.sha256()
-        if file_size <= WHOLE_FILE_THRESHOLD:
-            for i in range(0, file_size, CHUNK_SIZE):
-                chunk = image_bytes[i : i + CHUNK_SIZE]
-                sha256.update(chunk)
-            digest = sha256.hexdigest()
-            logger.debug(f"WHOLE: size={file_size} hash={digest}")
-            return digest
-        # For larger files, sample N evenly spaced blocks
-        offsets = [int(i * (file_size - CHUNK_SIZE) / (N - 1)) for i in range(N)]
+        offsets = [
+            int(i * (file_size - chunk_size) / (sample_count - 1))
+            for i in range(sample_count)
+        ]
         for offset in offsets:
-            chunk = image_bytes[offset : offset + CHUNK_SIZE]
+            chunk = read_chunk(offset, chunk_size)
             if chunk:
                 sha256.update(chunk)
         digest = sha256.hexdigest()
-        logger.debug(f"SAMPLED: hash={digest}")
+        if source_label:
+            logger.debug(f"SAMPLED: {source_label} size={file_size} hash={digest}")
+        else:
+            logger.debug(f"SAMPLED: hash={digest}")
         return digest
+
+    @staticmethod
+    def calculate_hash_from_file_path(file_path: str) -> str:
+        file_size = os.path.getsize(file_path)
+        with open(file_path, "rb") as f:
+
+            def _read_chunk(offset, size):
+                f.seek(offset)
+                return f.read(size)
+
+            return PictureUtils._calculate_sha256_digest(
+                file_size=file_size,
+                read_chunk=_read_chunk,
+                source_label=file_path,
+            )
+
+    @staticmethod
+    def calculate_hash_from_bytes(image_bytes: bytes) -> str:
+        file_size = len(image_bytes)
+
+        def _read_chunk(offset, size):
+            return image_bytes[offset : offset + size]
+
+        return PictureUtils._calculate_sha256_digest(
+            file_size=file_size,
+            read_chunk=_read_chunk,
+        )
 
     @staticmethod
     def create_picture_from_file(

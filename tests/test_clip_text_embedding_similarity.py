@@ -231,7 +231,7 @@ def test_sqlite_cosine_similarity_matches_numpy(a, b):
     expected = cosine_similarity(a, b)
     # Setup in-memory SQLite DB and register function
     conn = sqlite3.connect(":memory:")
-    import pixlvault.picture_utils as pu
+    import pixlvault.utils.picture_utils as pu
 
     conn.create_function("cosine_similarity", 2, pu.PictureUtils.cosine_similarity)
     # Store as bytes

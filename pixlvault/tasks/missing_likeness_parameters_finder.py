@@ -1,6 +1,8 @@
 from sqlmodel import Session
 
-from pixlvault.picture_likeness_parameter_utils import PictureLikenessParameterUtils
+from pixlvault.utils.picture_likeness_parameter_utils import (
+    PictureLikenessParameterUtils,
+)
 
 from .base_task_finder import BaseTaskFinder
 from .likeness_parameters_task import LikenessParametersTask

@@ -25,7 +25,7 @@ from pixlvault.picture_scoring import (
     find_pictures_by_smart_score,
     get_smart_score_penalised_tags_from_request,
 )
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.utils import safe_model_dict, _normalize_hidden_tags
 
 logger = get_logger(__name__)

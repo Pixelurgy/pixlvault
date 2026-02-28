@@ -214,7 +214,7 @@ def test_character_thumbnail_endpoint():
             best_pic = server.vault.db.run_task(
                 lambda session: session.get(Picture, best_face.picture_id)
             )
-            from pixlvault.picture_utils import PictureUtils
+            from pixlvault.utils.picture_utils import PictureUtils
 
             bbox = best_face.bbox
             logger.info(

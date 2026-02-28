@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from pixlvault.db_models import Picture, PictureSetMember, PictureStack
 from pixlvault.image_plugins.base import ImagePlugin
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.pixl_logging import get_logger
 from pixlvault.stacking import get_or_create_stack_for_picture
 

@@ -40,7 +40,7 @@ from pixlvault.routes.tags import create_router as create_tags_router
 from pixlvault.routes.stacks import create_router as create_stacks_router
 from pixlvault.routes.pictures import create_router as create_pictures_router
 from pixlvault.routes.comfyui import create_router as create_comfyui_router
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 
 
 # Logging will be set up after config is loaded

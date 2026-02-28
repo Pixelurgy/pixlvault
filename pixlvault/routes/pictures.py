@@ -54,7 +54,7 @@ from pixlvault.picture_scoring import (
     prepare_smart_score_inputs,
     select_reference_faces_for_character,
 )
-from pixlvault.picture_utils import PictureUtils
+from pixlvault.utils.picture_utils import PictureUtils
 from pixlvault.utils import (
     safe_model_dict,
     serialize_tag_objects,
@@ -1347,7 +1347,7 @@ def create_router(server) -> APIRouter:
             "filename": None,
         }
 
-        from pixlvault.picture_service_utils import PictureServiceUtils
+        from pixlvault.utils.picture_service_utils import PictureServiceUtils
 
         # Gather extra params for the export service
         background_data = {

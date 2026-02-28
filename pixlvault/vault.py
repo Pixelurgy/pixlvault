@@ -28,13 +28,14 @@ from .db_models import (
 )
 from .pixl_logging import get_logger
 from .picture_tagger import PictureTagger
-from .picture_utils import PictureUtils
+from .utils.picture_utils import PictureUtils
 from .tasks.face_quality_task import FaceQualityTask
 from .tasks.feature_extraction_task import FeatureExtractionTask
 from .tasks.image_embedding_task import ImageEmbeddingTask
 from .tasks.likeness_task import LikenessTask
 from .tasks.quality_task import QualityTask
-from .task_runner import TaskRunner, TaskStatus
+from .tasks.base_task import TaskStatus
+from .task_runner import TaskRunner
 from .work_planner import WorkPlanner
 from .worker_types import WorkerType
 
