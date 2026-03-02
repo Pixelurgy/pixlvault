@@ -29,7 +29,6 @@ def test_tag_worker_picture_tags():
     with tempfile.TemporaryDirectory() as temp_dir:
         server_config_path = os.path.join(temp_dir, "server-config.json")
         with Server(server_config_path) as server:
-            server.vault.start_workers({TaskType.FACE})
             client = TestClient(server.api)
 
             resp = client.post(
@@ -59,10 +58,7 @@ def test_tag_worker_picture_tags():
                 TaskType.TAGGER, Picture, pic_id, "tags"
             )
 
-            server.vault.start_workers({TaskType.TAGGER})
-
             assert future.result(timeout=60), "TagWorker did not finish in time"
-            server.vault.stop_workers({TaskType.TAGGER})
 
             # Check tags via related Tag object
             def get_tags(session):
@@ -86,8 +82,6 @@ def test_tag_worker_end_to_end():
         os.makedirs(image_root, exist_ok=True)
         server_config_path = os.path.join(temp_dir, "server-config.json")
         with Server(server_config_path) as server:
-            server.vault.start_workers({TaskType.FACE})
-
             client = TestClient(server.api)
 
             resp = client.post(
@@ -121,9 +115,7 @@ def test_tag_worker_end_to_end():
             t_future = server.vault.get_worker_future(
                 TaskType.TAGGER, Picture, pic_id, "tags"
             )
-            server.vault.start_workers({TaskType.TAGGER})
             assert t_future.result(timeout=60), "TagWorker did not finish in time"
-            server.vault.stop_workers({TaskType.TAGGER})
 
             # Retrieve picture tags
             def get_tags(session):
@@ -146,8 +138,6 @@ def test_tagger_worker_adds_tags():
         # Copy TaggerTest.png into temp dir
         src_img = os.path.join(os.path.dirname(__file__), "../pictures/TaggerTest.png")
         with Server(server_config_path=server_config_path) as server:
-            server.vault.start_workers({TaskType.FACE})
-
             client = TestClient(server.api)
 
             resp = client.post(
@@ -168,19 +158,7 @@ def test_tagger_worker_adds_tags():
             future = server.vault.get_worker_future(
                 TaskType.TAGGER, Picture, picture_id, "tags"
             )
-            server.vault.start_workers(
-                {
-                    TaskType.TAGGER,
-                    TaskType.DESCRIPTION,
-                }
-            )
             assert future.result(timeout=60), "Tagger worker did not finish in time"
-            server.vault.stop_workers(
-                {
-                    TaskType.TAGGER,
-                    TaskType.DESCRIPTION,
-                }
-            )
 
             get_pic_resp = client.get(f"/pictures/{picture_id}/metadata")
             assert get_pic_resp.status_code == 200, (

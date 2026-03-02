@@ -57,22 +57,12 @@ def test_likeness_worker():
                 quality_futures.append(future)
             logger.info(f"Queued {len(quality_futures)} quality computations.")
             # Start the quality worker
-            server.vault.start_workers({TaskType.QUALITY})
             # Wait for all quality computations to complete
             timeout = time.time() + 120
             for future in quality_futures:
                 future.result(timeout=timeout - time.time())
 
             logger.info("All picture quality computations completed.")
-
-            server.vault.stop_workers({TaskType.QUALITY})
-
-            server.vault.start_workers(
-                {
-                    TaskType.LIKENESS_PARAMETERS,
-                    TaskType.IMAGE_EMBEDDING,
-                }
-            )
 
             def fetch_missing_prereqs(session):
                 rows = session.exec(
@@ -93,13 +83,6 @@ def test_likeness_worker():
                 "Timed out waiting for likeness prerequisites for picture ids: "
                 f"{missing}"
             )
-            server.vault.stop_workers(
-                {
-                    TaskType.LIKENESS_PARAMETERS,
-                    TaskType.IMAGE_EMBEDDING,
-                }
-            )
-
             # Get all unique pairs (a < b)
             pairs = []
             ids = sorted([pic.id for pic in pictures])
@@ -108,7 +91,6 @@ def test_likeness_worker():
                     pairs.append((a, b))
             logger.info(f"Queued {len(pairs)} likeness pairs for processing.")
             # Start the likeness worker
-            server.vault.start_workers({TaskType.LIKENESS})
 
             def fetch_queue_remaining(session):
                 return session.exec(
@@ -123,7 +105,6 @@ def test_likeness_worker():
             assert not remaining, (
                 f"Timed out waiting for likeness queue to drain. Remaining={remaining}"
             )
-            server.vault.stop_workers({TaskType.LIKENESS})
             # Check that all likeness results are present
             likeness_results = server.vault.db.run_task(
                 lambda session: PictureLikeness.find(session)

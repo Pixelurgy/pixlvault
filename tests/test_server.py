@@ -207,7 +207,6 @@ def test_upload_existing_picture():
     with tempfile.TemporaryDirectory() as temp_dir:
         server_config_path = os.path.join(temp_dir, "server_config.json")
         with Server(server_config_path=server_config_path) as server:
-            server.vault.start_workers({TaskType.FACE})
             client = TestClient(server.api)
             # Get a valid token
             response = client.post(
@@ -297,7 +296,6 @@ def test_characters_summary():
         with Server(server_config_path) as server:
             server.vault.import_default_data()
             client = TestClient(server.api)
-            server.vault.start_workers({TaskType.FACE})
 
             # Get a valid token
             response = client.post(
@@ -392,8 +390,6 @@ def test_pictures_stacks():
         server_config_path = os.path.join(temp_dir, "server_config.json")
         with Server(server_config_path) as server:
             client = TestClient(server.api)
-
-            server.vault.start_workers({TaskType.FACE})
 
             response = client.post(
                 "/login", json={"username": "testuser", "password": "testpassword"}
@@ -535,7 +531,6 @@ def test_post_logo_identical_upload():
         server_config_path = os.path.join(temp_dir, "server_config.json")
         with Server(server_config_path=server_config_path) as server:
             server.vault.import_default_data()
-            server.vault.start_workers({TaskType.FACE})
             client = TestClient(server.api)
 
             resp = client.post(
@@ -559,7 +554,6 @@ def test_post_logo_altered_pixel_upload():
     with tempfile.TemporaryDirectory() as temp_dir:
         server_config_path = os.path.join(temp_dir, "server_config.json")
         with Server(server_config_path=server_config_path) as server:
-            server.vault.start_workers({TaskType.FACE})
             client = TestClient(server.api)
 
             resp = client.post(
@@ -610,7 +604,6 @@ def test_benchmark_add_images_by_binary_upload():
     with tempfile.TemporaryDirectory() as temp_dir:
         server_config_path = os.path.join(temp_dir, "server_config.json")
         with Server(server_config_path=server_config_path) as server:
-            server.vault.start_workers({TaskType.FACE})
             client = TestClient(server.api)
 
             resp = client.post(
@@ -666,7 +659,6 @@ def test_semantic_search():
         with Server(server_config_path=server_config_path) as server:
             server.vault.import_default_data()
             client = TestClient(server.api)
-            server.vault.start_workers({TaskType.FACE})
 
             resp = client.post(
                 "/login", json={"username": "testuser", "password": "testpassword"}
@@ -733,13 +725,6 @@ def test_semantic_search():
                 )
                 for pic_id in picture_ids
             ]
-
-            server.vault.start_workers(
-                {
-                    TaskType.TAGGER,
-                    TaskType.DESCRIPTION,
-                }
-            )
 
             def wait_for_imported_at(timeout_s=60, poll_interval=0.5):
                 start = time.time()
@@ -848,12 +833,6 @@ def test_semantic_search():
             for future in tag_futures:
                 future.result(timeout=120)
 
-            server.vault.start_workers(
-                {
-                    TaskType.TEXT_EMBEDDING,
-                }
-            )
-
             # Wait for all text embeddings to be processed
             for future in embeddings_futures:
                 result_id = future.result(timeout=80)
@@ -885,14 +864,6 @@ def test_semantic_search():
                 )
 
             wait_for_semantic_ready()
-
-            server.vault.stop_workers(
-                {
-                    TaskType.TAGGER,
-                    TaskType.DESCRIPTION,
-                    TaskType.TEXT_EMBEDDING,
-                }
-            )
 
             # Inspect embeddings for each picture after embedding futures complete
             for pid in picture_ids:

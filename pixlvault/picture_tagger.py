@@ -12,6 +12,7 @@ import os
 import platform
 import re
 import threading
+import time
 import torch
 from torchvision import transforms
 
@@ -45,6 +46,8 @@ GENERAL_THRESHOLD = 0.8
 UNDESIRED_TAGS = "solo, general, male_focus, meme, sensitive"
 CAPTION_SEPARATOR = ", "
 FLORENCE_REVISION = "5ca5edf5bd017b9919c05d08aebef5e4c7ac3bac"
+CUSTOM_TAGGER_HF_REPO = "PersonalJeebus/pixlvault-anomaly-tagger"
+CUSTOM_TAGGER_FILENAME = "best.pt"
 CUSTOM_TAGGER_PATH = os.path.join(os.path.dirname(__file__), "..", MODEL_DIR, "best.pt")
 CUSTOM_TAGGER_THRESHOLD_FULL = 0.85
 CUSTOM_TAGGER_IMAGE_SIZE_FULL = 448
@@ -140,6 +143,8 @@ class PictureTagger:
         self._custom_transform = None
         self._custom_transform_cache = {}
         if not os.path.isfile(self._custom_tagger_path):
+            self._download_custom_tagger()
+        if not os.path.isfile(self._custom_tagger_path):
             logger.warning(
                 "Custom tagger not found at %s, skipping initialization.",
                 self._custom_tagger_path,
@@ -155,6 +160,8 @@ class PictureTagger:
 
         self._florence_device = None
         self._florence_model_name = "microsoft/Florence-2-base"
+        self._last_florence_fallback_reason = None
+        self._last_florence_fallback_at = None
 
         self._florence_max_tokens = 40 if PictureTagger.FAST_CAPTIONS else 120
         self._florence_batch_size = (
@@ -417,6 +424,10 @@ class PictureTagger:
                 getattr(self, "_florence_model", None) is not None
                 and getattr(self, "_florence_processor", None) is not None
             ),
+            "florence_fallback_reason": getattr(
+                self, "_last_florence_fallback_reason", None
+            ),
+            "florence_fallback_at": getattr(self, "_last_florence_fallback_at", None),
             "clip_loaded": bool(getattr(self, "_clip_model", None) is not None),
             "wd14_onnx_loaded": bool(getattr(self, "ort_sess", None) is not None),
             "sbert_loaded": bool(getattr(self, "_sbert_model", None) is not None),
@@ -475,6 +486,10 @@ class PictureTagger:
                     self._florence_batch_size = FLORENCE_BATCH_SIZE_GPU
                     logger.debug("Florence-2 loaded successfully on GPU (~500MB VRAM)")
                 except Exception as gpu_error:
+                    self._record_florence_fallback(
+                        "init_gpu_load_failed",
+                        gpu_error,
+                    )
                     logger.warning(
                         f"GPU loading failed, falling back to CPU: {gpu_error}"
                     )
@@ -546,10 +561,18 @@ class PictureTagger:
 
         self._florence_device = device
 
-    def _reload_florence_on_cpu(self):
+    def _record_florence_fallback(self, phase: str, error: Exception):
+        reason = f"{phase}: {type(error).__name__}: {error}"
+        self._last_florence_fallback_reason = reason
+        self._last_florence_fallback_at = time.time()
+        logger.warning("[FLORENCE_FALLBACK] %s", reason)
+
+    def _reload_florence_on_cpu(self, cause: Exception = None):
         logger.warning(
             "Florence-2 GPU inference failed; attempting to reload on CPU..."
         )
+        if cause is not None:
+            self._record_florence_fallback("runtime_gpu_inference_failed", cause)
         try:
             self._florence_model = None
             self._florence_processor = None
@@ -741,7 +764,7 @@ class PictureTagger:
                 logger.warning(
                     "Florence-2 captioning failed on GPU (%s); retrying on CPU.", e
                 )
-                if self._reload_florence_on_cpu():
+                if self._reload_florence_on_cpu(cause=e):
                     return self._generate_florence_caption(
                         image_path, _retry_on_cpu=False
                     )
@@ -858,7 +881,7 @@ class PictureTagger:
                     "Florence-2 batch captioning failed on GPU (%s); retrying on CPU.",
                     e,
                 )
-                if self._reload_florence_on_cpu():
+                if self._reload_florence_on_cpu(cause=e):
                     return self._generate_florence_captions_batch(
                         image_paths, _retry_on_cpu=False
                     )
@@ -991,6 +1014,23 @@ class PictureTagger:
 
         self._rating_tags = [row[1] for row in rows[0:] if row[2] == "9"]
         self._general_tags = [row[1] for row in rows[0:] if row[2] == "0"]
+
+    def _download_custom_tagger(self):
+        """Download the custom anomaly tagger weights from HuggingFace if not present locally."""
+        try:
+            from huggingface_hub import hf_hub_download
+
+            dest_dir = os.path.dirname(os.path.abspath(self._custom_tagger_path))
+            os.makedirs(dest_dir, exist_ok=True)
+            logger.info("Downloading custom tagger from %s ...", CUSTOM_TAGGER_HF_REPO)
+            hf_hub_download(
+                repo_id=CUSTOM_TAGGER_HF_REPO,
+                filename=CUSTOM_TAGGER_FILENAME,
+                local_dir=dest_dir,
+            )
+            logger.info("Custom tagger downloaded to %s", self._custom_tagger_path)
+        except Exception as e:
+            logger.warning("Failed to download custom tagger: %s", e)
 
     def _ensure_model_files(self, force_download):
         # hf_hub_download
