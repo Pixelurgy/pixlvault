@@ -333,6 +333,37 @@ async function handleLocalImport(files) {
   sidebarRef.value?.startLocalImport?.(files);
 }
 
+function isInsideImageGrid(event) {
+  const target = event?.target;
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest(".image-grid, .grid-scroll-wrapper"));
+}
+
+function isExternalFileDragEvent(event) {
+  const dataTransfer = event?.dataTransfer;
+  if (!dataTransfer) return false;
+  const files = dataTransfer.files;
+  if (files && files.length > 0) return true;
+  const types = dataTransfer.types ? Array.from(dataTransfer.types) : [];
+  return types.includes("Files") || types.includes("application/x-moz-file");
+}
+
+function handleWindowDragOver(event) {
+  if (!isExternalFileDragEvent(event)) return;
+  event.preventDefault();
+}
+
+function handleWindowDrop(event) {
+  if (!isExternalFileDragEvent(event)) return;
+  event.preventDefault();
+  if (isInsideImageGrid(event)) {
+    return;
+  }
+  const droppedFiles = Array.from(event.dataTransfer?.files || []);
+  if (!droppedFiles.length) return;
+  sidebarRef.value?.startLocalImport?.(droppedFiles);
+}
+
 function updateIsMobile() {
   if (typeof window !== "undefined") {
     isMobile.value = window.innerWidth <= MOBILE_BREAKPOINT;
@@ -1028,6 +1059,8 @@ onMounted(async () => {
   updateIsMobile();
   window.addEventListener("resize", updateIsMobile);
   window.addEventListener("keydown", handleGlobalKeydown);
+  window.addEventListener("dragover", handleWindowDragOver, true);
+  window.addEventListener("drop", handleWindowDrop, true);
   refreshSidebar();
   updateMaxColumns();
   connectUpdatesSocket();
@@ -1043,6 +1076,8 @@ onBeforeUnmount(() => {
   disconnectUpdatesSocket();
   window.removeEventListener("resize", updateIsMobile);
   window.removeEventListener("keydown", handleGlobalKeydown);
+  window.removeEventListener("dragover", handleWindowDragOver, true);
+  window.removeEventListener("drop", handleWindowDrop, true);
   if (mainAreaResizeObserver) {
     mainAreaResizeObserver.disconnect();
     mainAreaResizeObserver = null;

@@ -219,16 +219,21 @@ function deriveMaxVramSliderMax(totalVramGb) {
     return VRAM_BUDGET_MIN_GB;
   }
   const available = total - 2;
-  const stepped = Math.floor(available / VRAM_BUDGET_STEP_GB) * VRAM_BUDGET_STEP_GB;
+  const stepped =
+    Math.floor(available / VRAM_BUDGET_STEP_GB) * VRAM_BUDGET_STEP_GB;
   return Math.max(VRAM_BUDGET_MIN_GB, stepped);
 }
 
 function clampAndSnapVramBudget(value, upperBound = maxVramGbMax.value) {
-  const maxValue = Math.max(VRAM_BUDGET_MIN_GB, Number(upperBound) || VRAM_BUDGET_MIN_GB);
+  const maxValue = Math.max(
+    VRAM_BUDGET_MIN_GB,
+    Number(upperBound) || VRAM_BUDGET_MIN_GB,
+  );
   const parsed = Number(value);
   const base = Number.isFinite(parsed) ? parsed : VRAM_BUDGET_MIN_GB;
   const clamped = Math.min(maxValue, Math.max(VRAM_BUDGET_MIN_GB, base));
-  const stepped = Math.round(clamped / VRAM_BUDGET_STEP_GB) * VRAM_BUDGET_STEP_GB;
+  const stepped =
+    Math.round(clamped / VRAM_BUDGET_STEP_GB) * VRAM_BUDGET_STEP_GB;
   return Math.min(maxValue, Math.max(VRAM_BUDGET_MIN_GB, stepped));
 }
 
@@ -237,7 +242,9 @@ async function fetchVramSliderBounds() {
     const res = await apiClient.get("/workers/progress");
     const processData = res.data?.process || res.data?.system || {};
     const totalVramGb =
-      processData.vram_total_gb ?? processData.vramTotalGb ?? processData.total_vram_gb;
+      processData.vram_total_gb ??
+      processData.vramTotalGb ??
+      processData.total_vram_gb;
     maxVramGbMax.value = deriveMaxVramSliderMax(totalVramGb);
   } catch (e) {
     maxVramGbMax.value = VRAM_BUDGET_MIN_GB;
@@ -402,10 +409,14 @@ async function fetchSmartScoreSettings() {
     await fetchVramSliderBounds();
     maxVramGbHydrating.value = true;
     const parsedMaxVram = Number(res.data?.max_vram_gb);
-    const initialValue = Number.isFinite(parsedMaxVram) && parsedMaxVram > 0
-      ? parsedMaxVram
-      : VRAM_BUDGET_MIN_GB;
-    const snappedValue = clampAndSnapVramBudget(initialValue, maxVramGbMax.value);
+    const initialValue =
+      Number.isFinite(parsedMaxVram) && parsedMaxVram > 0
+        ? parsedMaxVram
+        : VRAM_BUDGET_MIN_GB;
+    const snappedValue = clampAndSnapVramBudget(
+      initialValue,
+      maxVramGbMax.value,
+    );
     maxVramGbValue.value = snappedValue;
     maxVramGbSavedValue.value = snappedValue;
     maxVramGbError.value = "";
@@ -1341,7 +1352,9 @@ const workflowImportCaptionPreview = computed(() => {
                   immediately.
                 </div>
                 <div class="settings-slider-row">
-                  <span class="settings-slider-value">{{ maxVramGbValue }} GB</span>
+                  <span class="settings-slider-value"
+                    >{{ maxVramGbValue }} GB</span
+                  >
                   <v-slider
                     v-model="maxVramGbValue"
                     :min="VRAM_BUDGET_MIN_GB"
@@ -1355,9 +1368,8 @@ const workflowImportCaptionPreview = computed(() => {
                   />
                 </div>
                 <div class="settings-section-desc">
-                  Range: {{ VRAM_BUDGET_MIN_GB }}–{{ maxVramGbMax }} GB (step {{
-                    VRAM_BUDGET_STEP_GB
-                  }} GB)
+                  Range: {{ VRAM_BUDGET_MIN_GB }}–{{ maxVramGbMax }} GB (step
+                  {{ VRAM_BUDGET_STEP_GB }} GB)
                 </div>
                 <div class="settings-form">
                   <div v-if="maxVramGbError" class="settings-error">

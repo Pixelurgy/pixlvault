@@ -142,6 +142,10 @@
       class="grid-scroll-wrapper"
       ref="scrollWrapper"
       @scroll="onGridScroll"
+      @dragenter.prevent="handleGridDragEnter"
+      @dragover.prevent="handleGridDragOver"
+      @dragleave.prevent="handleGridDragLeave"
+      @drop.capture.prevent="handleGridDrop"
       :style="scrollWrapperStyle"
     >
       <!-- Drag overlay (visible viewport of grid) -->
@@ -181,10 +185,6 @@
           position: 'relative',
         }"
         ref="gridContainer"
-        @dragenter.prevent="handleGridDragEnter"
-        @dragover.prevent="handleGridDragOver"
-        @dragleave.prevent="handleGridDragLeave"
-        @drop.prevent="handleGridDrop"
         @click="handleGridBackgroundClick"
       >
         <!-- Top spacer for virtual scroll alignment -->
@@ -1522,6 +1522,8 @@ let initialFetchTimer = null;
 
 onMounted(() => {
   window.addEventListener("resize", triggerFaceOverlayRedraw);
+  window.addEventListener("drop", clearGridDragOverlay, true);
+  window.addEventListener("dragend", clearGridDragOverlay, true);
   fetchAvailablePlugins();
   fetchAllPicturesCount();
   const mountFetchKey = buildGridFetchKey();
@@ -1573,6 +1575,8 @@ watch(
 
 onUnmounted(() => {
   window.removeEventListener("resize", triggerFaceOverlayRedraw);
+  window.removeEventListener("drop", clearGridDragOverlay, true);
+  window.removeEventListener("dragend", clearGridDragOverlay, true);
   if (gridResizeObserver) {
     gridResizeObserver.disconnect();
     gridResizeObserver = null;
@@ -2552,7 +2556,7 @@ async function handleImagesUploaded(payload) {
   allGridImages.value = [];
   selectedImageIds.value = [];
   lastSelectedImageId = null;
-  fetchAllGridImages().then(() => {
+  fetchAllGridImages({ force: true }).then(() => {
     updateVisibleThumbnails();
   });
   emit("refresh-sidebar");
@@ -2626,6 +2630,7 @@ const overlayInitialExpandedStackIds = ref([]);
 // Drag-and-drop overlay state
 const dragOverlayVisible = ref(false);
 const dragOverlayMessage = ref("Drop files here to import");
+const dragOverlayDepth = ref(0);
 const dragSource = ref(null);
 const dragSourceImageIds = ref(new Set());
 const stackReorderHoverId = ref(null);
@@ -3449,6 +3454,7 @@ function handleGridDragEnter(e) {
   if (!e.dataTransfer) return;
   const types = e.dataTransfer.types ? Array.from(e.dataTransfer.types) : [];
   if (!isFileDrag(e.dataTransfer) && types.length > 0) return;
+  dragOverlayDepth.value += 1;
   dragOverlayVisible.value = true;
   dragOverlayMessage.value = "Drop files here to import";
   e.preventDefault();
@@ -3466,13 +3472,19 @@ function handleGridDragOver(e) {
 }
 
 function handleGridDragLeave(e) {
-  if (!e.relatedTarget || !e.currentTarget.contains(e.relatedTarget)) {
+  dragOverlayDepth.value = Math.max(0, dragOverlayDepth.value - 1);
+  if (dragOverlayDepth.value === 0) {
     dragOverlayVisible.value = false;
   }
 }
 
-function handleGridDrop(e) {
+function clearGridDragOverlay() {
+  dragOverlayDepth.value = 0;
   dragOverlayVisible.value = false;
+}
+
+function handleGridDrop(e) {
+  clearGridDragOverlay();
 
   // Ignore drag-and-drop if the source is the grid itself
   if (
@@ -4637,11 +4649,12 @@ function handleStackReorderDrop(img, event) {
 }
 
 // Fetch total image count for current filters
-async function fetchAllGridImages() {
+async function fetchAllGridImages(options = {}) {
+  const force = options?.force === true;
   console.log("[ImageGrid.vue] fetchAllGridImages called.");
   const fetchKey = buildGridFetchKey();
   const now = Date.now();
-  if (imagesLoading.value && lastFetchKey.value === fetchKey) {
+  if (!force && imagesLoading.value && lastFetchKey.value === fetchKey) {
     const lastActivity = Math.max(
       lastFetchSuccess.value.at || 0,
       lastFetchError.value.at || 0,
@@ -4652,12 +4665,14 @@ async function fetchAllGridImages() {
     imagesLoading.value = false;
   }
   if (
+    !force &&
     lastFetchSuccess.value.key === fetchKey &&
     now - lastFetchSuccess.value.at < 1200
   ) {
     return;
   }
   if (
+    !force &&
     lastFetchError.value.key === fetchKey &&
     now - lastFetchError.value.at < 2500
   ) {

@@ -284,7 +284,7 @@ class Picture(SQLModel, table=True):
         select_fields: Optional[List[str]] = None,
         include_deleted: bool = False,
         only_deleted: bool = False,
-        include_unimported: bool = False,
+        include_unimported: bool = True,
         candidate_ids: Optional[List[int]] = None,
     ) -> List["Picture"]:
         """
@@ -484,7 +484,7 @@ class Picture(SQLModel, table=True):
         format: Optional[List[str]] = None,
         include_deleted: bool = False,
         only_deleted: bool = False,
-        include_unimported: bool = False,
+        include_unimported: bool = True,
         **search,
     ) -> List["Picture"]:
         """
@@ -655,7 +655,6 @@ class Picture(SQLModel, table=True):
             unassigned_condition,
             not_in_set_condition,
             Picture.deleted.is_(False),
-            Picture.imported_at.is_not(None),
         )
 
         if format:

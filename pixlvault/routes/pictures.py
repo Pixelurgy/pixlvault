@@ -367,6 +367,7 @@ def _select_pictures_for_listing(
             select_fields=metadata_fields,
             format=format,
             only_deleted=True,
+            include_unimported=True,
             **query_params,
         )
     else:
@@ -392,6 +393,7 @@ def _select_pictures_for_listing(
             limit=limit,
             select_fields=metadata_fields,
             format=format,
+            include_unimported=True,
             **query_params,
         )
     if pics:
@@ -978,6 +980,7 @@ def create_router(server) -> APIRouter:
                     "file_path",
                 ],
                 include_deleted=True,
+                include_unimported=True,
             )
             return pics[0] if pics else None
 
@@ -1199,6 +1202,7 @@ def create_router(server) -> APIRouter:
                     "thumbnail_side",
                 ],
                 include_deleted=True,
+                include_unimported=True,
             ),
             priority=DBPriority.IMMEDIATE,
         )

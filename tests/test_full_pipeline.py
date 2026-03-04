@@ -25,6 +25,7 @@ Tasks intentionally excluded (require external setup):
 """
 
 import gc
+import math
 import os
 import tempfile
 import time
@@ -39,12 +40,14 @@ from pixlvault.server import Server
 from pixlvault.tasks.likeness_task import LikenessTask
 from pixlvault.tasks.quality_task import QualityTask
 from pixlvault.tasks.task_type import TaskType
+from pixlvault.utils.image_processing.image_utils import ImageUtils
 from pixlvault.utils.likeness.likeness_params import PictureLikenessParameterUtils
 from tests.utils import upload_pictures_and_wait
 
 logger = get_logger(__name__)
 
 _PICTURES_DIR = os.path.join(os.path.dirname(__file__), "../pictures")
+_SCORES_FILE = os.path.join(_PICTURES_DIR, "scores.txt")
 _TASK_TIMEOUT_S = 180
 
 
@@ -74,6 +77,86 @@ def _poll_until_nonzero(
     raise AssertionError(
         f"Timed out after {timeout_s}s waiting for {label} to produce output"
     )
+
+
+def _parse_reference_scores(scores_file: str) -> dict[str, int]:
+    result = {}
+    with open(scores_file, "r", encoding="utf-8") as handle:
+        for line in handle:
+            text = line.strip()
+            if not text:
+                continue
+            parts = text.split()
+            if len(parts) != 2:
+                continue
+            filename, score_text = parts
+            try:
+                result[filename] = int(score_text)
+            except ValueError:
+                continue
+    return result
+
+
+def _pearson_corr(xs: list[float], ys: list[float]) -> float:
+    if len(xs) != len(ys) or len(xs) < 2:
+        return 0.0
+    n = len(xs)
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    num = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    den_x = sum((x - mean_x) ** 2 for x in xs)
+    den_y = sum((y - mean_y) ** 2 for y in ys)
+    den = math.sqrt(den_x * den_y)
+    if den <= 0.0:
+        return 0.0
+    return float(num / den)
+
+
+def _average_ranks(values: list[float]) -> list[float]:
+    indexed = sorted(enumerate(values), key=lambda item: item[1])
+    ranks = [0.0] * len(values)
+    i = 0
+    while i < len(indexed):
+        j = i + 1
+        while j < len(indexed) and indexed[j][1] == indexed[i][1]:
+            j += 1
+        avg_rank = (i + 1 + j) / 2.0
+        for k in range(i, j):
+            orig_idx = indexed[k][0]
+            ranks[orig_idx] = avg_rank
+        i = j
+    return ranks
+
+
+def _spearman_corr(xs: list[float], ys: list[float]) -> float:
+    if len(xs) != len(ys) or len(xs) < 2:
+        return 0.0
+    rank_x = _average_ranks(xs)
+    rank_y = _average_ranks(ys)
+    return _pearson_corr(rank_x, rank_y)
+
+
+def _format_ascii_table(headers: list[str], rows: list[list[str]]) -> str:
+    if not headers:
+        return ""
+    widths = [len(str(header)) for header in headers]
+    for row in rows:
+        for idx, cell in enumerate(row):
+            widths[idx] = max(widths[idx], len(str(cell)))
+
+    def make_row(cells: list[str]) -> str:
+        return (
+            "| "
+            + " | ".join(str(cell).ljust(widths[idx]) for idx, cell in enumerate(cells))
+            + " |"
+        )
+
+    sep = "+-" + "-+-".join("-" * w for w in widths) + "-+"
+    lines = [sep, make_row(headers), sep]
+    for row in rows:
+        lines.append(make_row(row))
+    lines.append(sep)
+    return "\n".join(lines)
 
 
 def test_full_pipeline_on_real_pictures():
@@ -325,5 +408,191 @@ def test_full_pipeline_on_real_pictures():
                 + "\n".join(failures)
             )
             logger.info("All %d pictures passed full pipeline assertions.", n)
+
+    gc.collect()
+
+
+def test_smart_score_correlates_with_reference_scores():
+    """Verify smart score correlates strongly with reference human scores."""
+
+    image_files = sorted(
+        f
+        for f in os.listdir(_PICTURES_DIR)
+        if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
+    )
+    assert image_files, f"No test images found in {_PICTURES_DIR}"
+
+    reference_scores = _parse_reference_scores(_SCORES_FILE)
+    assert reference_scores, f"No reference scores parsed from {_SCORES_FILE}"
+
+    source_sha_to_score = {}
+    source_sha_to_filename = {}
+    for filename, score in reference_scores.items():
+        file_path = os.path.join(_PICTURES_DIR, filename)
+        if not os.path.exists(file_path):
+            continue
+        with open(file_path, "rb") as handle:
+            sha = ImageUtils.calculate_hash_from_bytes(handle.read())
+            source_sha_to_score[sha] = score
+            source_sha_to_filename[sha] = filename
+
+    assert source_sha_to_score, "No source hashes with scores could be constructed"
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        server_config_path = os.path.join(temp_dir, "server_config.json")
+
+        with Server(server_config_path=server_config_path) as server:
+            client = TestClient(server.api)
+
+            login = client.post(
+                "/login", json={"username": "testuser", "password": "testpassword"}
+            )
+            assert login.status_code == 200
+
+            files = []
+            for fname in image_files:
+                with open(os.path.join(_PICTURES_DIR, fname), "rb") as handle:
+                    files.append(("file", (fname, handle.read(), "image/png")))
+
+            import_status = upload_pictures_and_wait(client, files, timeout_s=120)
+            assert import_status["status"] == "completed", (
+                f"Batch import failed: {import_status}"
+            )
+
+            picture_ids = []
+            for result in import_status.get("results", []):
+                if result.get("status") in {"success", "duplicate"}:
+                    picture_ids.append(result["picture_id"])
+            picture_ids = sorted(set(picture_ids))
+            assert picture_ids, "No picture ids from import"
+
+            emb_futures = {
+                pid: server.vault.get_worker_future(
+                    TaskType.IMAGE_EMBEDDING, Picture, pid, "image_embedding"
+                )
+                for pid in picture_ids
+            }
+            for future in emb_futures.values():
+                future.result(timeout=_TASK_TIMEOUT_S)
+
+            def fetch_imported_picture_shas(session):
+                pics = session.exec(
+                    select(Picture).where(Picture.id.in_(picture_ids))
+                ).all()
+                return [
+                    {
+                        "id": pic.id,
+                        "pixel_sha": pic.pixel_sha,
+                        "imported_file": os.path.basename(pic.file_path or ""),
+                    }
+                    for pic in pics
+                    if pic.id is not None and pic.pixel_sha
+                ]
+
+            imported_rows = server.vault.db.run_immediate_read_task(
+                fetch_imported_picture_shas
+            )
+            assert imported_rows, "Could not fetch imported pictures for score mapping"
+
+            expected_score_by_picture_id = {}
+            expected_source_name_by_picture_id = {}
+            imported_name_by_picture_id = {}
+            for row in imported_rows:
+                score = source_sha_to_score.get(row["pixel_sha"])
+                if score is not None:
+                    expected_score_by_picture_id[row["id"]] = int(score)
+                    expected_source_name_by_picture_id[row["id"]] = (
+                        source_sha_to_filename.get(row["pixel_sha"], "")
+                    )
+                    imported_name_by_picture_id[row["id"]] = row.get(
+                        "imported_file", ""
+                    )
+
+            assert expected_score_by_picture_id, (
+                "No imported pictures matched scores.txt via content hash"
+            )
+
+            for pic_id, score in expected_score_by_picture_id.items():
+                patch_resp = client.patch(f"/pictures/{pic_id}", json={"score": score})
+                assert patch_resp.status_code == 200, patch_resp.text
+
+            smart_resp = client.get(
+                "/pictures",
+                params={
+                    "sort": "SMART_SCORE",
+                    "descending": "true",
+                    "offset": 0,
+                    "limit": 10000,
+                },
+            )
+            assert smart_resp.status_code == 200, smart_resp.text
+
+            smart_results = smart_resp.json() or []
+            smart_score_by_id = {
+                int(row.get("id")): float(row.get("smartScore"))
+                for row in smart_results
+                if row.get("id") is not None and row.get("smartScore") is not None
+            }
+
+            common_ids = [
+                pid
+                for pid in expected_score_by_picture_id.keys()
+                if pid in smart_score_by_id
+            ]
+            assert len(common_ids) >= 8, (
+                f"Too few points for correlation check: {len(common_ids)}"
+            )
+
+            expected_values = [
+                float(expected_score_by_picture_id[pid]) for pid in common_ids
+            ]
+            smart_values = [float(smart_score_by_id[pid]) for pid in common_ids]
+
+            pearson = _pearson_corr(expected_values, smart_values)
+            spearman = _spearman_corr(expected_values, smart_values)
+
+            scored_rows = []
+            for pid in common_ids:
+                scored_rows.append(
+                    [
+                        str(pid),
+                        expected_source_name_by_picture_id.get(pid, ""),
+                        imported_name_by_picture_id.get(pid, ""),
+                        f"{expected_score_by_picture_id[pid]:.2f}",
+                        f"{smart_score_by_id[pid]:.4f}",
+                    ]
+                )
+
+            scored_rows.sort(key=lambda row: (row[1], row[0]))
+
+            score_table = _format_ascii_table(
+                ["Picture ID", "Source File", "Imported File", "Expected", "Smart"],
+                scored_rows,
+            )
+            coeff_table = _format_ascii_table(
+                ["Coefficient", "Value"],
+                [
+                    ["Pearson", f"{pearson:.4f}"],
+                    ["Spearman", f"{spearman:.4f}"],
+                    ["Sample Size", str(len(common_ids))],
+                ],
+            )
+
+            logger.info("Smart score vs expected table:\n%s", score_table)
+            logger.info("Smart score correlation coefficients:\n%s", coeff_table)
+
+            logger.info(
+                "Smart score correlation: n=%d pearson=%.4f spearman=%.4f",
+                len(common_ids),
+                pearson,
+                spearman,
+            )
+
+            threshold = 0.70
+            assert max(pearson, spearman) >= threshold, (
+                "Smart score correlation too low: "
+                f"pearson={pearson:.4f}, spearman={spearman:.4f}, "
+                f"required>={threshold:.2f}"
+            )
 
     gc.collect()

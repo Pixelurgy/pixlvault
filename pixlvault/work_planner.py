@@ -181,15 +181,36 @@ class WorkPlanner:
             if task is None:
                 continue
 
-            task_id = self._task_runner.submit(task)
+            task_id = getattr(task, "id", None)
             with self._lock:
-                self._inflight_by_finder[finder_name] = inflight_count + 1
-                self._finder_by_task_id[task_id] = finder_name
+                current_inflight = int(self._inflight_by_finder.get(finder_name, 0))
+                self._inflight_by_finder[finder_name] = current_inflight + 1
+                if task_id:
+                    self._finder_by_task_id[task_id] = finder_name
+
+            try:
+                submitted_task_id = self._task_runner.submit(task)
+            except Exception:
+                with self._lock:
+                    current_inflight = int(self._inflight_by_finder.get(finder_name, 0))
+                    self._inflight_by_finder[finder_name] = max(
+                        0,
+                        current_inflight - 1,
+                    )
+                    if task_id:
+                        self._finder_by_task_id.pop(task_id, None)
+                raise
+
+            if submitted_task_id and submitted_task_id != task_id:
+                with self._lock:
+                    if task_id:
+                        self._finder_by_task_id.pop(task_id, None)
+                    self._finder_by_task_id[submitted_task_id] = finder_name
 
             self._finder_order_idx = (idx + 1) % finder_count
             logger.debug(
                 "WorkPlanner submitted task id=%s via finder=%s",
-                task_id,
+                submitted_task_id,
                 finder_name,
             )
             return True

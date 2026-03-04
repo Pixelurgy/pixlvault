@@ -108,7 +108,8 @@
               <div class="task-manager-canvas-wrap">
                 <canvas
                   :ref="
-                    (el) => registerCanvas(`${combinedKey}-grid`, combinedKey, el)
+                    (el) =>
+                      registerCanvas(`${combinedKey}-grid`, combinedKey, el)
                   "
                   width="240"
                   height="60"
@@ -119,7 +120,8 @@
                 <span
                   class="task-manager-status-dot"
                   :class="{
-                    'task-manager-status-dot--running': combinedSnapshot.running,
+                    'task-manager-status-dot--running':
+                      combinedSnapshot.running,
                   }"
                 ></span>
                 <span class="task-manager-status-text">
@@ -334,7 +336,6 @@ function registerCanvas(canvasKey, dataKey, el) {
     drawSparkline(el, series.value[dataKey] || []);
   });
 }
-
 
 function startPolling() {
   if (pollTimer) return;
@@ -580,7 +581,9 @@ function getLatestRate(key) {
   const latestTime = Number(latest?.t || 0);
   if (!latestTime) return Number(latest?.rate || 0);
   const cutoff = latestTime - RATE_AVERAGE_WINDOW_SECONDS;
-  const windowSamples = samples.filter((sample) => Number(sample?.t || 0) >= cutoff);
+  const windowSamples = samples.filter(
+    (sample) => Number(sample?.t || 0) >= cutoff,
+  );
   if (!windowSamples.length) return Number(latest?.rate || 0);
   const sum = windowSamples.reduce(
     (acc, sample) => acc + Number(sample?.rate || 0),
@@ -743,7 +746,6 @@ onBeforeUnmount(() => {
   background: rgba(var(--v-theme-surface), 0.45);
   border-color: rgba(var(--v-theme-primary), 0.6);
 }
-
 
 .task-manager-panel-header {
   display: flex;

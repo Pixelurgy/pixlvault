@@ -559,6 +559,7 @@ def create_router(server) -> APIRouter:
                 sort_mech=sort_mech,
                 select_fields=Picture.metadata_fields(),
                 format=format,
+                include_unimported=True,
             )
             return [
                 pic.dict(
