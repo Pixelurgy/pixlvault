@@ -70,5 +70,9 @@ include = ["pixlvault*"]
 
 [tool.setuptools.package-data]
 pixlvault = [
+    "alembic.ini",
     "frontend/dist/**/*",
+    "migrations/*.py",
+    "migrations/*.mako",
+    "migrations/versions/*.py",
 ]

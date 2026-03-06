@@ -211,14 +211,28 @@ def _run_migrations(engine, db_path: str, db_exists: bool) -> None:
         logger.error("Alembic is required for database migrations: %s", exc)
         raise
 
-    repo_root = Path(__file__).resolve().parents[1]
-    alembic_ini = repo_root / "alembic.ini"
-    migrations_dir = repo_root / "migrations"
+    module_dir = Path(__file__).resolve().parent
+    repo_root = module_dir.parent
 
-    if not alembic_ini.exists() or not migrations_dir.exists():
-        raise RuntimeError(
-            f"Alembic config missing. Expected {alembic_ini} and {migrations_dir}."
+    candidate_locations = [
+        (repo_root / "alembic.ini", repo_root / "migrations"),
+        (module_dir / "alembic.ini", module_dir / "migrations"),
+    ]
+
+    alembic_ini = None
+    migrations_dir = None
+    for candidate_ini, candidate_migrations in candidate_locations:
+        if candidate_ini.exists() and candidate_migrations.exists():
+            alembic_ini = candidate_ini
+            migrations_dir = candidate_migrations
+            break
+
+    if alembic_ini is None or migrations_dir is None:
+        expected = " or ".join(
+            f"({candidate_ini}, {candidate_migrations})"
+            for candidate_ini, candidate_migrations in candidate_locations
         )
+        raise RuntimeError(f"Alembic config missing. Expected {expected}.")
 
     config = Config(str(alembic_ini))
     config.set_main_option("script_location", str(migrations_dir))

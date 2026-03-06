@@ -27,6 +27,37 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install .[test,dev]
+
+      - name: Verify wheel includes Alembic assets
+        run: |
+          set -e
+          python -m pip wheel . --no-deps -w /tmp/pixlvault-wheelcheck
+          python - <<'PY'
+          import glob
+          import sys
+          import zipfile
+
+          wheel = sorted(glob.glob('/tmp/pixlvault-wheelcheck/pixlvault-*.whl'))[-1]
+          required = [
+              'pixlvault/alembic.ini',
+              'pixlvault/migrations/env.py',
+              'pixlvault/migrations/script.py.mako',
+              'pixlvault/migrations/versions/0001_baseline.py',
+          ]
+
+          with zipfile.ZipFile(wheel) as archive:
+              names = set(archive.namelist())
+
+          missing = [name for name in required if name not in names]
+          if missing:
+              print('Missing required files in wheel:')
+              for name in missing:
+                  print(f' - {name}')
+              sys.exit(1)
+
+          print('Wheel Alembic asset check passed.')
+          PY
+
       - name: Check formatting with ruff
         run: |
           ruff check pixlvault

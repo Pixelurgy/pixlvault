@@ -69,6 +69,40 @@ jobs:
       - name: Build Python distributions
         run: python -m build
 
+      - name: Verify wheel includes Alembic assets
+        run: |
+          python - <<'PY'
+          import glob
+          import pathlib
+          import sys
+          import zipfile
+
+          wheel_paths = sorted(glob.glob('dist/pixlvault-*.whl'))
+          if not wheel_paths:
+            print('No wheel found in dist/.')
+            sys.exit(1)
+
+          wheel = pathlib.Path(wheel_paths[-1])
+          required = [
+            'pixlvault/alembic.ini',
+            'pixlvault/migrations/env.py',
+            'pixlvault/migrations/script.py.mako',
+            'pixlvault/migrations/versions/0001_baseline.py',
+          ]
+
+          with zipfile.ZipFile(wheel) as archive:
+            names = set(archive.namelist())
+
+          missing = [name for name in required if name not in names]
+          if missing:
+            print('Missing required files in wheel:')
+            for name in missing:
+              print(f' - {name}')
+            sys.exit(1)
+
+          print(f'Wheel Alembic asset check passed: {wheel}')
+          PY
+
       - name: Check distribution metadata
         run: twine check dist/*
 

@@ -5,6 +5,7 @@ import json
 import re
 import asyncio
 import threading
+from importlib.metadata import PackageNotFoundError, version as package_version
 
 
 from contextlib import asynccontextmanager
@@ -543,15 +544,23 @@ class Server:
 
     def _get_version(self):
         try:
+            return package_version("pixlvault")
+        except PackageNotFoundError:
+            pass
+
+        try:
             import tomllib
         except ImportError:
             import tomli as tomllib
         pyproject_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)), "pyproject.toml"
         )
-        with open(pyproject_path, "rb") as f:
-            data = tomllib.load(f)
-        return data.get("project", {}).get("version", "unknown")
+        try:
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+            return data.get("project", {}).get("version", "unknown")
+        except OSError:
+            return "unknown"
 
     def _get_frontend_dist_dir(self):
         package_dir = os.path.abspath(os.path.dirname(__file__))

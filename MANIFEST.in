@@ -1,1 +1,5 @@
 recursive-include pixlvault/frontend/dist *
+include pixlvault/alembic.ini
+recursive-include pixlvault/migrations *
+include alembic.ini
+recursive-include migrations *
