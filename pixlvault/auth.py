@@ -85,7 +85,6 @@ class AuthService:
                     session.add(user)
                     session.commit()
                     session.refresh(user)
-                self._logger.info("Found user in the database: %s", user.username)
                 return user
 
             user = User(
@@ -431,7 +430,6 @@ class AuthService:
         session_id = request.cookies.get("session_id")
         if session_id in self.active_session_ids:
             self.active_session_ids.pop(session_id, None)
-            self._logger.debug("Session %s invalidated.", session_id)
         response.delete_cookie("session_id", path="/")
         return {"message": "Logged out successfully."}
 
@@ -463,15 +461,9 @@ class AuthService:
             request.url.path.startswith(prefix) for prefix in excluded_prefixes
         ):
             session_id = request.cookies.get("session_id")
-            self._logger.debug("Retrieved session_id from cookies: %s", session_id)
-            self._logger.debug(
-                "Current active_session_ids: %s",
-                self.active_session_ids,
-            )
             if session_id not in self.active_session_ids:
                 self._logger.error(
-                    "Invalid session_id: %s. It has expired and the client needs to log in again. When trying to access %s",
-                    session_id,
+                    "Invalid session_id. It has expired and the client needs to log in again. When trying to access %s",
                     request.url.path,
                 )
                 origin = request.headers.get("origin")
