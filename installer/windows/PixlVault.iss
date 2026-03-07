@@ -62,8 +62,7 @@ begin
   if not IsPythonAvailable() then
   begin
     MsgBox(
-      'Python 3.10 or newer is required to install PixlVault.' + #13#10 +
-      #13#10 +
+      'Python 3.10 or newer is required to install PixlVault.' + #13#10#13#10 +
       'Please install Python from https://www.python.org/ and run this installer again.' + #13#10 +
       'Make sure to check "Add Python to PATH" during installation.',
       mbCriticalError, MB_OK);
