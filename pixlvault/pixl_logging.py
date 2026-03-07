@@ -1,5 +1,4 @@
 import logging as logging_
-import time
 from uvicorn.logging import ColourizedFormatter as ColourisedFormatter
 
 LOG_FORMAT = "%(asctime)s %(levelprefix)s %(name)s: %(message)s"
@@ -10,7 +9,6 @@ class PixlVaultColourisedHandler(logging_.StreamHandler):
     def __init__(self, stream=None):
         super().__init__(stream)
         formatter = ColourisedFormatter(fmt=LOG_FORMAT, use_colors=True)
-        formatter.converter = time.gmtime  # Use UTC for asctime if desired
         self.setFormatter(formatter)
 
 
