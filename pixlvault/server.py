@@ -380,7 +380,7 @@ class Server:
         self._shutdown_on_lifespan = True
         uvicorn_kwargs = dict(
             host=self._server_config.get("host", "127.0.0.1"),
-            port=self._server_config.get("port", 8000),
+            port=self._server_config.get("port", 9537),
             log_config=uvicorn_log_config,
         )
         if self._server_config.get("require_ssl", False):
@@ -428,7 +428,7 @@ class Server:
         if not os.path.exists(server_config_path):
             server_config = {
                 "host": "localhost",
-                "port": 8000,
+                "port": 9537,
                 "log_level": "info",
                 "log_file": default_log_path,
                 "require_ssl": False,
