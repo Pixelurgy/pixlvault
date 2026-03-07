@@ -3,6 +3,7 @@ import uvicorn
 import os
 import json
 import re
+import socket
 import asyncio
 import threading
 from importlib.metadata import PackageNotFoundError, version as package_version
@@ -46,6 +47,21 @@ from pixlvault.utils.image_processing.image_utils import ImageUtils
 
 # Logging will be set up after config is loaded
 logger = get_logger(__name__)
+
+
+def _get_lan_ip() -> str | None:
+    """Return the machine's primary LAN IP by probing an outbound UDP route.
+
+    Does not send any data. Returns None if the IP cannot be determined.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return None
 
 
 API_OPENAPI_TAGS = [
@@ -155,9 +171,15 @@ class Server:
             openapi_tags=API_OPENAPI_TAGS,
             lifespan=self.lifespan,
         )
-        # Enable CORS for any origin (credentials require explicit origin echo)
-        self.allow_origins = []
-        self.allow_origin_regex = r".*"
+        # CORS: always allow localhost/127.0.0.1 on any port plus the machine's
+        # own LAN IP (any port) so the Vite dev server works over LAN without
+        # any extra configuration. Additional origins can be added via cors_origins.
+        self.allow_origins = list(self._server_config.get("cors_origins") or [])
+        _cors_hosts = ["localhost", r"127\.0\.0\.1"]
+        _lan_ip = _get_lan_ip()
+        if _lan_ip and _lan_ip not in ("127.0.0.1", "localhost"):
+            _cors_hosts.append(re.escape(_lan_ip))
+        self.allow_origin_regex = r"^https?\://(" + "|".join(_cors_hosts) + r")(:\d+)?$"
         self.api.add_middleware(
             CORSMiddleware,
             allow_origins=self.allow_origins,
@@ -332,7 +354,7 @@ class Server:
     def run(self):
         self._shutdown_on_lifespan = True
         uvicorn_kwargs = dict(
-            host="0.0.0.0",
+            host=self._server_config.get("host", "127.0.0.1"),
             port=self._server_config.get("port", 8000),
             log_config=uvicorn_log_config,
         )
@@ -391,7 +413,7 @@ class Server:
                 "cookie_secure": False,
                 "image_root": default_image_root,
                 "default_device": "cpu",
-                "USERNAME": None,
+                "cors_origins": [],
                 "watch_folders": [],
             }
             with open(server_config_path, "w") as f:
@@ -423,8 +445,8 @@ class Server:
                     server_config["image_root"] = default_image_root
                 if "default_device" not in server_config:
                     server_config["default_device"] = "cpu"
-                if "USERNAME" not in server_config:
-                    server_config["USERNAME"] = None
+                if "cors_origins" not in server_config:
+                    server_config["cors_origins"] = []
                 if "watch_folders" not in server_config:
                     server_config["watch_folders"] = []
                 if "generate_thumbnails_on_startup" not in server_config:

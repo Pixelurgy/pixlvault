@@ -88,8 +88,6 @@ class AuthService:
                 return user
 
             user = User(
-                username=self._server_config.get("USERNAME"),
-                password_hash=self._server_config.get("PASSWORD_HASH"),
                 max_vram_gb=default_max_vram_gb(),
             )
             session.add(user)
