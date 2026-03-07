@@ -615,11 +615,6 @@ def create_router(server) -> APIRouter:
             picture_set = session.get(PictureSet, id)
             if not picture_set:
                 return False
-            members = session.exec(
-                select(PictureSetMember).where(PictureSetMember.set_id == id)
-            ).all()
-            for member in members:
-                session.delete(member)
             session.delete(picture_set)
             session.commit()
             return True
