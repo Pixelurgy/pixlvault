@@ -1,8 +1,17 @@
 # PixlVault
 
+<p align="center">
+  <img src="frontend/public/Logo.png" alt="PixlVault Logo" width="200"/>
+</p>
+
+<p align="center">
+  <img src="website/assets/ScreenshotGrid.jpg" alt="PixlVault Screenshot" width="800"/>
+</p>
+
 PixlVault is a local picture library server for organizing, filtering, and reviewing large image collections.
 
 It provides:
+
 - A browser-based interface
 - Fast metadata and tag filtering
 - Smart score sorting
@@ -25,11 +34,16 @@ Use this if you want the easiest setup on Windows.
 4. Start PixlVault Server from the Start Menu shortcut.
 5. Open your browser to `http://localhost:9537`.
 
+> **Windows SmartScreen warning:** Because the installer is not yet signed with a paid code-signing certificate, Windows SmartScreen may show a red "Windows protected your PC" dialog when you run it. This is expected. Click **More info** and then **Run anyway** to proceed with the installation.
+>
+> <img src="website/assets/SmartScreen.png" alt="Windows SmartScreen – click More info then Run anyway" width="420"/>
+
 ## Option 2: Install from PyPI
 
 Use this if you already have Python and want a pip install.
 
 Requirements:
+
 - Python 3.10 or newer
 
 Install:
@@ -55,6 +69,7 @@ http://localhost:9537
 Use this if you want to run from source.
 
 Requirements:
+
 - Python 3.10 or newer
 - Node.js 20 or newer
 - npm
@@ -108,6 +123,7 @@ To add your own plugin:
 ## First run and data location
 
 On first run, PixlVault creates a user config directory and stores:
+
 - Server config
 - Database
 - Imported media files
@@ -131,11 +147,11 @@ Edit the file and restart the server to apply changes.
 
 ### Network and port
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `host` | `"localhost"` | Address the server binds to. Change to `"0.0.0.0"` to expose the server on the local network. |
-| `port` | `9537` | TCP port the server listens on. |
-| `cors_origins` | `[]` | Extra origins allowed to make credentialed cross-origin requests. `localhost`, `127.0.0.1`, and the server's own LAN IP are always permitted on any port. |
+| Key            | Default       | Description                                                                                                                                               |
+| -------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`         | `"localhost"` | Address the server binds to. Change to `"0.0.0.0"` to expose the server on the local network.                                                             |
+| `port`         | `9537`        | TCP port the server listens on.                                                                                                                           |
+| `cors_origins` | `[]`          | Extra origins allowed to make credentialed cross-origin requests. `localhost`, `127.0.0.1`, and the server's own LAN IP are always permitted on any port. |
 
 At startup the server detects its own LAN IP and automatically allows it on any port. This means the Vite dev server works over LAN (`http://192.168.1.5:5173` → `http://192.168.1.5:9537`) without any extra configuration, as long as network access is enabled via `host`.
 
@@ -143,26 +159,26 @@ Use `cors_origins` only if you need to allow origins on a different machine enti
 
 ### SSL / HTTPS
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `require_ssl` | `false` | Enable HTTPS. When `true`, the server will use the key and certificate below. |
-| `ssl_keyfile` | `<config_dir>/ssl/key.pem` | Path to the SSL private key file. |
-| `ssl_certfile` | `<config_dir>/ssl/cert.pem` | Path to the SSL certificate file. |
-| `cookie_samesite` | `"Lax"` | `SameSite` attribute for session cookies (`"Lax"`, `"Strict"`, or `"None"`). |
-| `cookie_secure` | `false` | Set the `Secure` flag on session cookies. Enable when serving over HTTPS. |
+| Key               | Default                     | Description                                                                   |
+| ----------------- | --------------------------- | ----------------------------------------------------------------------------- |
+| `require_ssl`     | `false`                     | Enable HTTPS. When `true`, the server will use the key and certificate below. |
+| `ssl_keyfile`     | `<config_dir>/ssl/key.pem`  | Path to the SSL private key file.                                             |
+| `ssl_certfile`    | `<config_dir>/ssl/cert.pem` | Path to the SSL certificate file.                                             |
+| `cookie_samesite` | `"Lax"`                     | `SameSite` attribute for session cookies (`"Lax"`, `"Strict"`, or `"None"`).  |
+| `cookie_secure`   | `false`                     | Set the `Secure` flag on session cookies. Enable when serving over HTTPS.     |
 
 ### Storage
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `image_root` | `<config_dir>/images` | Directory where imported media files are stored. |
-| `watch_folders` | `[]` | List of folder entries to watch for new images and automatically import them. Each entry is an object with the fields below. |
+| Key             | Default               | Description                                                                                                                  |
+| --------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `image_root`    | `<config_dir>/images` | Directory where imported media files are stored.                                                                             |
+| `watch_folders` | `[]`                  | List of folder entries to watch for new images and automatically import them. Each entry is an object with the fields below. |
 
 Each entry in `watch_folders` has the following fields:
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `folder` | string | — | Absolute path to the directory to monitor (recursively). |
+| Field                 | Type    | Default | Description                                                                            |
+| --------------------- | ------- | ------- | -------------------------------------------------------------------------------------- |
+| `folder`              | string  | —       | Absolute path to the directory to monitor (recursively).                               |
 | `delete_after_import` | boolean | `false` | When `true`, source files are deleted from the watch folder after a successful import. |
 
 Example:
@@ -176,17 +192,17 @@ Example:
 
 ### Processing
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `default_device` | `"cpu"` | Device used for AI processing (`"cpu"` or `"cuda"`). |
-| `generate_thumbnails_on_startup` | `true` | Generate missing thumbnails when the server starts. |
+| Key                              | Default | Description                                          |
+| -------------------------------- | ------- | ---------------------------------------------------- |
+| `default_device`                 | `"cpu"` | Device used for AI processing (`"cpu"` or `"cuda"`). |
+| `generate_thumbnails_on_startup` | `true`  | Generate missing thumbnails when the server starts.  |
 
 ### Logging
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `log_level` | `"info"` | Log verbosity (`"debug"`, `"info"`, `"warning"`, `"error"`). |
-| `log_file` | `<config_dir>/server.log` | Path to the log file. |
+| Key         | Default                   | Description                                                  |
+| ----------- | ------------------------- | ------------------------------------------------------------ |
+| `log_level` | `"info"`                  | Log verbosity (`"debug"`, `"info"`, `"warning"`, `"error"`). |
+| `log_file`  | `<config_dir>/server.log` | Path to the log file.                                        |
 
 ### Example config
 
