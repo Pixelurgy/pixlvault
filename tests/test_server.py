@@ -994,25 +994,24 @@ def test_semantic_search(request):
                     "Skipping semantic search regression comparison: --fast-captions produces truncated "
                     "descriptions that differ from the full-caption baseline."
                 )
-                continue
+            else:
+                _write_json(regression_path, regression_payload)
 
-            _write_json(regression_path, regression_payload)
-
-            diff_result = subprocess.run(
-                ["git", "diff", "HEAD", "--", str(regression_path)],
-                capture_output=True,
-                text=True,
-                cwd=Path(__file__).resolve().parent.parent,
-            )
-            if diff_result.returncode != 0:
-                logger.warning(
-                    f"git diff failed (exit {diff_result.returncode}): {diff_result.stderr.strip()}"
+                diff_result = subprocess.run(
+                    ["git", "diff", "HEAD", "--", str(regression_path)],
+                    capture_output=True,
+                    text=True,
+                    cwd=Path(__file__).resolve().parent.parent,
                 )
-            elif diff_result.stdout.strip():
-                raise AssertionError(
-                    f"Semantic search regression detected for device='{device_tag}'.\n"
-                    f"Review the diff below and commit {regression_path.name} if the change is intentional.\n\n"
-                    f"{diff_result.stdout}"
-                )
+                if diff_result.returncode != 0:
+                    logger.warning(
+                        f"git diff failed (exit {diff_result.returncode}): {diff_result.stderr.strip()}"
+                    )
+                elif diff_result.stdout.strip():
+                    raise AssertionError(
+                        f"Semantic search regression detected for device='{device_tag}'.\n"
+                        f"Review the diff below and commit {regression_path.name} if the change is intentional.\n\n"
+                        f"{diff_result.stdout}"
+                    )
     gc.collect()
     log_resources("END test_semantic_search")
