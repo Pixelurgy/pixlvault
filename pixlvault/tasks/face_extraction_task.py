@@ -1,6 +1,7 @@
 import gc
 import os
 import platform
+import threading
 import time
 import torch
 from typing import List
@@ -26,6 +27,11 @@ logger = get_logger(__name__)
 
 CROP_EXPAND_SCALE = 1.25
 
+# Inference-only VRAM scratch when InsightFace models are already resident.
+# The cold-load cost is covered by estimate_face_extraction_vram_mb the first
+# time; subsequent tasks only pay for activation memory during a forward pass.
+INSIGHTFACE_INFERENCE_SCRATCH_MB = 150
+
 
 class FaceExtractionTask(BaseTask):
     """Task that extracts and persists face/hand detections for a picture batch.
@@ -37,6 +43,8 @@ class FaceExtractionTask(BaseTask):
     """
 
     _global_insightface_app = None
+    _global_cpu_insightface_app = None
+    _cpu_insightface_lock = threading.Lock()
 
     def __init__(self, database, picture_tagger, pictures: list):
         picture_ids = [pic.id for pic in (pictures or []) if getattr(pic, "id", None)]
@@ -51,6 +59,13 @@ class FaceExtractionTask(BaseTask):
         self._picture_tagger = picture_tagger
         self._pictures = pictures or []
         self._insightface_app = None
+        self._cpu_spillover_enabled = False
+
+    def allow_cpu_spillover(self) -> bool:
+        return True
+
+    def enable_cpu_spillover(self) -> None:
+        self._cpu_spillover_enabled = True
 
     def _run_task(self):
         if not self._pictures:
@@ -61,7 +76,9 @@ class FaceExtractionTask(BaseTask):
             {pic_id for _, pic_id, _, _ in (changed or []) if pic_id is not None}
         )
 
-        if not self._should_keep_models_in_memory():
+        if not self._should_keep_models_in_memory() and not self._cpu_spillover_enabled:
+            # Only release the GPU app when not in CPU spillover mode; the CPU
+            # app uses no GPU VRAM so there is nothing to free.
             self.release_detection_models()
 
         return {
@@ -74,6 +91,10 @@ class FaceExtractionTask(BaseTask):
         return bool(getattr(self._picture_tagger, "keep_models_in_memory", True))
 
     def estimated_vram_mb(self) -> int:
+        if FaceExtractionTask._global_insightface_app is not None:
+            # InsightFace models are already resident in VRAM; only charge for
+            # the inference activation scratch, not the cold model-load cost.
+            return INSIGHTFACE_INFERENCE_SCRATCH_MB
         fn = getattr(self._picture_tagger, "estimate_face_extraction_vram_mb", None)
         if callable(fn):
             try:
@@ -108,12 +129,25 @@ class FaceExtractionTask(BaseTask):
     def _init_insightface_app(self):
         if self._insightface_app is not None:
             return
+
+        if self._cpu_spillover_enabled:
+            with FaceExtractionTask._cpu_insightface_lock:
+                if FaceExtractionTask._global_cpu_insightface_app is None:
+                    logger.debug("FaceExtractionTask: initialising CPU spillover InsightFace app (ctx_id=-1).")
+                    app = FaceAnalysis(providers=["CPUExecutionProvider"])
+                    app.prepare(ctx_id=-1, det_thresh=0.25, det_size=(480, 480))
+                    FaceExtractionTask._global_cpu_insightface_app = app
+                else:
+                    logger.debug("FaceExtractionTask: reusing CPU spillover InsightFace app.")
+                self._insightface_app = FaceExtractionTask._global_cpu_insightface_app
+            return
+
         if FaceExtractionTask._global_insightface_app is not None:
             logger.debug("Reusing global InsightFace app")
             self._insightface_app = FaceExtractionTask._global_insightface_app
             return
 
-        logger.debug("initialising InsightFace with CPU only (ctx_id=-1)")
+        logger.debug("initialising InsightFace with GPU (ctx_id=0) or CPU (ctx_id=-1)")
         app = FaceAnalysis(providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
         app.prepare(
             ctx_id=0 if not PictureTagger.FORCE_CPU else -1,

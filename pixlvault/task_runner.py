@@ -123,9 +123,20 @@ class TaskRunner:
     def _wait_for_vram_budget(self, task: BaseTask) -> None:
         budget_mb = self._max_vram_usage_mb
         if not budget_mb:
+            logger.debug(
+                "Task %s (%s) VRAM gate: no budget configured, running immediately.",
+                task.id,
+                task.type,
+            )
             return
         estimated_mb = max(0, int(getattr(task, "estimated_vram_mb", lambda: 0)()))
         if estimated_mb <= 0:
+            logger.debug(
+                "Task %s (%s) VRAM gate: no VRAM estimate, running immediately (budget=%sMB).",
+                task.id,
+                task.type,
+                budget_mb,
+            )
             return
         if estimated_mb > budget_mb:
             logger.warning(
@@ -138,22 +149,44 @@ class TaskRunner:
             return
 
         wait_started_at = time.perf_counter()
+        last_log_s = -1.0
+        LOG_INTERVAL_S = 5.0
         spillover_allowed = bool(getattr(task, "allow_cpu_spillover", lambda: False)())
         spillover_applied = False
         while not self._stop.is_set():
             used_mb = self._get_process_vram_mb()
+            waited_s = time.perf_counter() - wait_started_at
             if used_mb <= 0:
+                logger.debug(
+                    "Task %s (%s) VRAM gate: nvidia-smi reports 0 MB used, running immediately "
+                    "(estimated=%sMB budget=%sMB waited=%.3fs).",
+                    task.id,
+                    task.type,
+                    estimated_mb,
+                    budget_mb,
+                    waited_s,
+                )
                 return
             required_mb = used_mb + estimated_mb
             overflow_mb = required_mb - budget_mb
             if overflow_mb <= 0:
-                waited_s = time.perf_counter() - wait_started_at
                 if waited_s > 0.01:
                     logger.debug(
-                        "Task %s (%s) VRAM gate released after %.3fs (used=%sMB estimated=%sMB budget=%sMB)",
+                        "Task %s (%s) VRAM gate released after %.3fs "
+                        "(used=%sMB estimated=%sMB budget=%sMB).",
                         task.id,
                         task.type,
                         waited_s,
+                        used_mb,
+                        estimated_mb,
+                        budget_mb,
+                    )
+                else:
+                    logger.debug(
+                        "Task %s (%s) VRAM gate passed immediately "
+                        "(used=%sMB estimated=%sMB budget=%sMB).",
+                        task.id,
+                        task.type,
                         used_mb,
                         estimated_mb,
                         budget_mb,
@@ -162,7 +195,8 @@ class TaskRunner:
 
             if overflow_mb <= self.SPILLOVER_TOLERANCE_MB:
                 logger.debug(
-                    "Task %s (%s) VRAM gate allowing small overflow (used=%sMB estimated=%sMB overflow=%sMB tolerance=%sMB budget=%sMB)",
+                    "Task %s (%s) VRAM gate allowing small overflow "
+                    "(used=%sMB estimated=%sMB overflow=%sMB tolerance=%sMB budget=%sMB waited=%.3fs).",
                     task.id,
                     task.type,
                     used_mb,
@@ -170,10 +204,26 @@ class TaskRunner:
                     overflow_mb,
                     self.SPILLOVER_TOLERANCE_MB,
                     budget_mb,
+                    waited_s,
                 )
                 return
 
-            waited_s = time.perf_counter() - wait_started_at
+            if waited_s - last_log_s >= LOG_INTERVAL_S:
+                logger.debug(
+                    "Task %s (%s) VRAM gate waiting: used=%sMB estimated=%sMB "
+                    "required=%sMB budget=%sMB overflow=%sMB waited=%.1fs spillover_allowed=%s.",
+                    task.id,
+                    task.type,
+                    used_mb,
+                    estimated_mb,
+                    required_mb,
+                    budget_mb,
+                    overflow_mb,
+                    waited_s,
+                    spillover_allowed,
+                )
+                last_log_s = waited_s
+
             if spillover_allowed and waited_s < self.SPILLOVER_GRACE_SECONDS:
                 time.sleep(0.1)
                 continue
@@ -182,8 +232,8 @@ class TaskRunner:
                 try:
                     getattr(task, "enable_cpu_spillover", lambda: None)()
                     spillover_applied = True
-                    logger.info(
-                        "Task %s (%s) switched to CPU spillover (used=%sMB estimated=%sMB budget=%sMB)",
+                    logger.debug(
+                        "Task %s (%s) switched to CPU spillover (used=%sMB estimated=%sMB budget=%sMB).",
                         task.id,
                         task.type,
                         used_mb,
@@ -244,13 +294,21 @@ class TaskRunner:
                 exc,
             )
         self._queue.put(task)
+        qsize = self._queue.qsize()
+        logger.debug(
+            "TaskRunner %s: submitted task id=%s type=%s queue_depth=%s",
+            self._name,
+            task.id,
+            task.type,
+            qsize,
+        )
         return task.id
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
     def _run(self):
-        logger.info("TaskRunner %s started.", self._name)
+        logger.debug("TaskRunner %s started.", self._name)
         while not self._stop.is_set():
             try:
                 task = self._queue.get(timeout=0.2)
@@ -260,8 +318,23 @@ class TaskRunner:
             if isinstance(task, _StopTask):
                 continue
 
+            logger.debug(
+                "TaskRunner %s: dequeued task id=%s type=%s queue_depth=%s.",
+                self._name,
+                task.id,
+                task.type,
+                self._queue.qsize(),
+            )
+
             self._wait_for_vram_budget(task)
 
+            task_start = time.perf_counter()
+            logger.debug(
+                "TaskRunner %s: starting task id=%s type=%s.",
+                self._name,
+                task.id,
+                task.type,
+            )
             error: Optional[BaseException] = None
             try:
                 task.run()
@@ -283,6 +356,15 @@ class TaskRunner:
                 else:
                     logger.warning("Task %s (%s) failed: %s", task.id, task.type, exc)
             finally:
+                elapsed_s = time.perf_counter() - task_start
+                logger.debug(
+                    "TaskRunner %s: finished task id=%s type=%s status=%s elapsed=%.3fs.",
+                    self._name,
+                    task.id,
+                    task.type,
+                    task.status,
+                    elapsed_s,
+                )
                 callbacks = list(self._on_task_complete_callbacks)
                 for callback in callbacks:
                     try:
@@ -293,7 +375,7 @@ class TaskRunner:
                             task.id,
                             callback_exc,
                         )
-        logger.info("TaskRunner %s stopped.", self._name)
+        logger.debug("TaskRunner %s stopped.", self._name)
 
 
 class _StopTask(BaseTask):

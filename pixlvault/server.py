@@ -103,7 +103,13 @@ class Server:
 
     Attributes:
         server_config_path(str): Server-side-only configuration file.
+        DEFAULT_MAX_VRAM_GB: Class-level VRAM budget override (GB). When set
+            (e.g. by the pytest ``--max-vram-gb`` option) it takes precedence
+            over the persisted user config value for all Server instances.
+            ``None`` means use the user config.
     """
+
+    DEFAULT_MAX_VRAM_GB: float | None = None
 
     def __init__(
         self,
@@ -115,9 +121,8 @@ class Server:
         Args:
             server_config_path (str): Path to the server-only config file.
         """
-
-        # Ensure garbage collection before starting server to free up memory
-        # This is mainly to ensure repeated runs within the testing framework do not accumulate memory usage
+        # Ensure garbage collection before starting server to free up memory.
+        # This is mainly to ensure repeated runs within the testing framework do not accumulate memory usage.
         gc.collect()
 
         self._server_config_path = server_config_path
@@ -165,7 +170,12 @@ class Server:
         self.vault.set_keep_models_in_memory(
             getattr(self._user, "keep_models_in_memory", True)
         )
-        self.vault.set_max_vram_usage_gb(getattr(self._user, "max_vram_gb", None))
+        effective_vram_gb = (
+            Server.DEFAULT_MAX_VRAM_GB
+            if Server.DEFAULT_MAX_VRAM_GB is not None
+            else getattr(self._user, "max_vram_gb", None)
+        )
+        self.vault.set_max_vram_usage_gb(effective_vram_gb)
 
         self.api = FastAPI(
             title="PixlVault API",

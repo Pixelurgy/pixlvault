@@ -1,3 +1,6 @@
+import threading
+import time
+
 from sqlmodel import Session
 
 from pixlvault.database import DBPriority
@@ -19,6 +22,11 @@ class DescriptionTask(BaseTask):
         pictures: Pictures to process in this batch.
     """
 
+    CPU_SPILLOVER_REUSE_GRACE_S = 8.0
+    _cpu_spillover_tagger: PictureTagger | None = None
+    _cpu_spillover_last_used_at: float = 0.0
+    _cpu_spillover_lock = threading.Lock()
+
     def __init__(
         self,
         database,
@@ -36,6 +44,42 @@ class DescriptionTask(BaseTask):
         self._db = database
         self._picture_tagger = picture_tagger
         self._pictures = pictures or []
+        self._cpu_spillover_enabled = False
+
+    def allow_cpu_spillover(self) -> bool:
+        return True
+
+    def enable_cpu_spillover(self) -> None:
+        self._cpu_spillover_enabled = True
+
+    @classmethod
+    def _acquire_cpu_spillover_tagger(cls, image_root: str) -> PictureTagger:
+        with cls._cpu_spillover_lock:
+            if cls._cpu_spillover_tagger is None:
+                logger.debug("DescriptionTask: creating CPU spillover PictureTagger.")
+                cls._cpu_spillover_tagger = PictureTagger(
+                    silent=True,
+                    device="cpu",
+                    image_root=image_root,
+                )
+            cls._cpu_spillover_last_used_at = time.perf_counter()
+            return cls._cpu_spillover_tagger
+
+    @classmethod
+    def _release_idle_cpu_spillover_tagger(cls, force: bool = False) -> None:
+        with cls._cpu_spillover_lock:
+            tagger = cls._cpu_spillover_tagger
+            if tagger is None:
+                return
+            if not force:
+                idle_s = time.perf_counter() - cls._cpu_spillover_last_used_at
+                if idle_s < cls.CPU_SPILLOVER_REUSE_GRACE_S:
+                    return
+            cls._cpu_spillover_tagger = None
+        try:
+            tagger.close()
+        except Exception as exc:
+            logger.debug("DescriptionTask CPU spillover tagger close failed: %s", exc)
 
     def estimated_vram_mb(self) -> int:
         fn = getattr(self._picture_tagger, "estimate_description_vram_mb", None)
@@ -84,9 +128,21 @@ class DescriptionTask(BaseTask):
             picture_ids,
         )
 
+        self._release_idle_cpu_spillover_tagger(force=False)
+        active_tagger = self._picture_tagger
+        cpu_spillover_tagger = None
+        if self._cpu_spillover_enabled:
+            logger.debug(
+                "DescriptionTask %s: using CPU spillover for ids=%s", self.id, picture_ids
+            )
+            cpu_spillover_tagger = self._acquire_cpu_spillover_tagger(
+                self._db.image_root
+            )
+            active_tagger = cpu_spillover_tagger
+
         descriptions_generated = []
         try:
-            batch_results = self._picture_tagger.generate_descriptions_batch(pictures)
+            batch_results = active_tagger.generate_descriptions_batch(pictures)
         except Exception as exc:
             import traceback
 
@@ -97,6 +153,11 @@ class DescriptionTask(BaseTask):
                 traceback.format_exc(),
             )
             batch_results = None
+        finally:
+            if cpu_spillover_tagger is not None:
+                with self._cpu_spillover_lock:
+                    self._cpu_spillover_last_used_at = time.perf_counter()
+                self._release_idle_cpu_spillover_tagger(force=False)
 
         if not batch_results:
             for pic in pictures:

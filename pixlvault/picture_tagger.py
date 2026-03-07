@@ -403,11 +403,20 @@ class PictureTagger:
         return INSIGHTFACE_VRAM_MB
 
     def estimate_description_vram_mb(self, image_count: int) -> int:
-        """Incremental VRAM estimate for a DescriptionTask batch."""
+        """Incremental VRAM estimate for a DescriptionTask batch.
+
+        When Florence is already loaded in memory returns only the per-image
+        activation scratch, avoiding a false-positive VRAM gate stall on warm
+        runs (the full model footprint is already reflected in the nvidia-smi
+        reading that the gate compares against).
+        """
         if self._device != "cuda":
             return 0
         florence_batch = max(1, int(getattr(self, "_florence_batch_size", 4)))
         batch = min(max(1, int(image_count or 1)), florence_batch)
+        if self._florence_model is not None:
+            # Model already resident; only charge for per-image activation scratch.
+            return int(FLORENCE_PER_IMAGE_VRAM_MB * batch)
         return int(FLORENCE_BASE_VRAM_MB + FLORENCE_PER_IMAGE_VRAM_MB * batch)
 
     def _resolve_picture_path(self, file_path: str) -> str:
