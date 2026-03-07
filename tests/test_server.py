@@ -2,6 +2,7 @@ import numpy as np
 import logging
 import shutil
 import os
+import json
 import random
 import tempfile
 import time
@@ -15,6 +16,7 @@ import collections
 from PIL import Image
 from fastapi.testclient import TestClient
 from io import BytesIO
+from pathlib import Path
 from urllib.parse import quote
 
 from pixlvault.db_models.picture import Picture
@@ -25,6 +27,12 @@ from pixlvault.server import Server
 from tests.utils import upload_pictures_and_wait
 
 logger = get_logger(__name__)
+
+_REGRESSION_DIR = Path(__file__).resolve().parent / "regression"
+_SEMANTIC_LATEST_FILE = _REGRESSION_DIR / "semantic_search_latest.json"
+_SEMANTIC_BASELINE_FILE = _REGRESSION_DIR / "semantic_search_baseline.json"
+_SEMANTIC_SCORE_TOLERANCE = float(os.getenv("PIXLVAULT_SEMANTIC_SCORE_TOLERANCE", "0.02"))
+_UPDATE_REGRESSION_BASELINES = os.getenv("PIXLVAULT_UPDATE_REGRESSION_BASELINES") == "1"
 
 # Monkey-patch os.remove and shutil.rmtree to log deletions
 
@@ -78,6 +86,58 @@ def log_resources(label):
         logger.info(
             f"[RESOURCE] {label}: Tracemalloc current={tracemalloc.get_traced_memory()[0] / (1024 * 1024):.2f}MB, peak={tracemalloc.get_traced_memory()[1] / (1024 * 1024):.2f}MB"
         )
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, ensure_ascii=False, sort_keys=True)
+        handle.write("\n")
+
+
+def _load_json(path: Path) -> dict:
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _semantic_regressions(current_payload: dict, baseline_payload: dict) -> list[str]:
+    regressions: list[str] = []
+
+    baseline_queries = {
+        row["query"]: row for row in baseline_payload.get("queries", []) if "query" in row
+    }
+    current_queries = {
+        row["query"]: row for row in current_payload.get("queries", []) if "query" in row
+    }
+
+    for query_text, baseline_row in baseline_queries.items():
+        current_row = current_queries.get(query_text)
+        if current_row is None:
+            regressions.append(f"Query missing in current results: {query_text}")
+            continue
+
+        baseline_count = int(baseline_row.get("result_count", 0))
+        current_count = int(current_row.get("result_count", 0))
+        if current_count < baseline_count:
+            regressions.append(
+                f"Result count regressed for query '{query_text[:60]}...': {current_count} < {baseline_count}"
+            )
+
+        baseline_top_score = float(baseline_row.get("top_score", 0.0))
+        current_top_score = float(current_row.get("top_score", 0.0))
+        if (current_top_score + _SEMANTIC_SCORE_TOLERANCE) < baseline_top_score:
+            regressions.append(
+                f"Top score regressed for query '{query_text[:60]}...': {current_top_score:.6f} < {baseline_top_score:.6f} (tol={_SEMANTIC_SCORE_TOLERANCE:.4f})"
+            )
+
+    baseline_avg = float(baseline_payload.get("summary", {}).get("avg_top_score", 0.0))
+    current_avg = float(current_payload.get("summary", {}).get("avg_top_score", 0.0))
+    if (current_avg + _SEMANTIC_SCORE_TOLERANCE) < baseline_avg:
+        regressions.append(
+            f"Average top score regressed: {current_avg:.6f} < {baseline_avg:.6f} (tol={_SEMANTIC_SCORE_TOLERANCE:.4f})"
+        )
+
+    return regressions
 
 
 def test_esmeralda_vault_character_and_logo():
@@ -893,6 +953,8 @@ def test_semantic_search():
                 "Esmeralda sat down on the wooden park bench and considered her predicament. She was in serious trouble.",
             ]
 
+            query_rows = []
+
             for search_text in search_texts:
                 search_resp = client.get(
                     f"/pictures/search?query={quote(search_text)}&threshold=0.4"
@@ -909,5 +971,58 @@ def test_semantic_search():
                 for r in results:
                     print(f"Match: {r['description']}")
                     print(f"Similarity: {r['likeness_score']:.4f}.")
+
+                query_rows.append(
+                    {
+                        "query": search_text,
+                        "result_count": len(results),
+                        "top_score": round(float(results[0]["likeness_score"]), 6),
+                        "top_description": results[0].get("description", ""),
+                    }
+                )
+
+            summary = {
+                "total_queries": len(query_rows),
+                "total_results": int(sum(row["result_count"] for row in query_rows)),
+                "avg_top_score": round(
+                    float(sum(row["top_score"] for row in query_rows) / max(1, len(query_rows))),
+                    6,
+                ),
+                "min_top_score": round(float(min(row["top_score"] for row in query_rows)), 6),
+            }
+
+            current_payload = {
+                "meta": {
+                    "schema_version": 1,
+                    "project_version": get_project_version(),
+                    "query_threshold": 0.4,
+                    "score_tolerance": _SEMANTIC_SCORE_TOLERANCE,
+                },
+                "summary": summary,
+                "queries": query_rows,
+            }
+
+            _write_json(_SEMANTIC_LATEST_FILE, current_payload)
+
+            if _UPDATE_REGRESSION_BASELINES or not _SEMANTIC_BASELINE_FILE.exists():
+                _write_json(_SEMANTIC_BASELINE_FILE, current_payload)
+                if _UPDATE_REGRESSION_BASELINES:
+                    return
+                raise AssertionError(
+                    "Semantic search baseline was missing and has been generated at "
+                    f"{_SEMANTIC_BASELINE_FILE}. Commit this file and rerun tests."
+                )
+
+            baseline_payload = _load_json(_SEMANTIC_BASELINE_FILE)
+            regressions = _semantic_regressions(current_payload, baseline_payload)
+            if regressions:
+                message = [
+                    "Semantic search regression detected.",
+                    f"Baseline: {_SEMANTIC_BASELINE_FILE}",
+                    f"Latest: {_SEMANTIC_LATEST_FILE}",
+                    "Degradation details:",
+                ]
+                message.extend(f"- {item}" for item in regressions)
+                raise AssertionError("\n".join(message))
     gc.collect()
     log_resources("END test_semantic_search")
