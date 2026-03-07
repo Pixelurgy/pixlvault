@@ -32,23 +32,28 @@ class CallableTask(BaseTask):
 
 
 class TaskRunner:
-    """Single-thread in-memory task orchestrator.
+    """Multi-thread in-memory task orchestrator.
 
-    Tasks are executed serially by one background thread.
+    Tasks are dequeued by priority and executed concurrently across
+    *num_workers* background threads.  A single shared PriorityQueue
+    ensures correct ordering while all threads remain busy.
     """
 
     SPILLOVER_GRACE_SECONDS = 1.5
     SPILLOVER_TOLERANCE_MB = 256
 
-    def __init__(self, name: str = "TaskRunner"):
+    def __init__(self, name: str = "TaskRunner", num_workers: int = 1):
         self._name = name
+        self._num_workers = max(1, int(num_workers))
         self._queue: queue.PriorityQueue[tuple[int, int, BaseTask]] = (
             queue.PriorityQueue()
         )
         self._queue_seq = itertools.count()
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
+        self._vram_gate_lock = threading.Lock()
+        self._vram_reserved_mb: int = 0
         self._closed = False
         self._on_task_complete_callbacks: list[
             Callable[[BaseTask, Optional[BaseException]], None]
@@ -124,7 +129,12 @@ class TaskRunner:
         except Exception:
             return 0
 
-    def _wait_for_vram_budget(self, task: BaseTask) -> None:
+    def _wait_for_vram_budget(self, task: BaseTask) -> int:
+        """Wait until VRAM budget allows the task and return the MB reserved.
+
+        The caller must release the reservation (subtract from
+        ``self._vram_reserved_mb``) once the task finishes.
+        """
         budget_mb = self._max_vram_usage_mb
         if not budget_mb:
             logger.debug(
@@ -132,7 +142,7 @@ class TaskRunner:
                 task.id,
                 task.type,
             )
-            return
+            return 0
         estimated_mb = max(0, int(getattr(task, "estimated_vram_mb", lambda: 0)()))
         if estimated_mb <= 0:
             logger.debug(
@@ -141,7 +151,7 @@ class TaskRunner:
                 task.type,
                 budget_mb,
             )
-            return
+            return 0
         if estimated_mb > budget_mb:
             logger.warning(
                 "Task %s (%s) estimated VRAM %sMB exceeds configured budget %sMB; running anyway.",
@@ -150,7 +160,7 @@ class TaskRunner:
                 estimated_mb,
                 budget_mb,
             )
-            return
+            return 0
 
         wait_started_at = time.perf_counter()
         last_log_s = -1.0
@@ -170,55 +180,69 @@ class TaskRunner:
                     budget_mb,
                     waited_s,
                 )
-                return
-            required_mb = used_mb + estimated_mb
+                with self._vram_gate_lock:
+                    self._vram_reserved_mb += estimated_mb
+                return estimated_mb
+            # Include VRAM already committed by other in-flight tasks that have
+            # passed the gate but may not yet be visible to nvidia-smi.
+            with self._vram_gate_lock:
+                reserved_mb = self._vram_reserved_mb
+            required_mb = used_mb + reserved_mb + estimated_mb
             overflow_mb = required_mb - budget_mb
             if overflow_mb <= 0:
                 if waited_s > 0.01:
                     logger.debug(
                         "Task %s (%s) VRAM gate released after %.3fs "
-                        "(used=%sMB estimated=%sMB budget=%sMB).",
+                        "(used=%sMB reserved=%sMB estimated=%sMB budget=%sMB).",
                         task.id,
                         task.type,
                         waited_s,
                         used_mb,
+                        reserved_mb,
                         estimated_mb,
                         budget_mb,
                     )
                 else:
                     logger.debug(
                         "Task %s (%s) VRAM gate passed immediately "
-                        "(used=%sMB estimated=%sMB budget=%sMB).",
+                        "(used=%sMB reserved=%sMB estimated=%sMB budget=%sMB).",
                         task.id,
                         task.type,
                         used_mb,
+                        reserved_mb,
                         estimated_mb,
                         budget_mb,
                     )
-                return
+                with self._vram_gate_lock:
+                    self._vram_reserved_mb += estimated_mb
+                return estimated_mb
 
             if overflow_mb <= self.SPILLOVER_TOLERANCE_MB:
                 logger.debug(
                     "Task %s (%s) VRAM gate allowing small overflow "
-                    "(used=%sMB estimated=%sMB overflow=%sMB tolerance=%sMB budget=%sMB waited=%.3fs).",
+                    "(used=%sMB reserved=%sMB estimated=%sMB overflow=%sMB tolerance=%sMB budget=%sMB waited=%.3fs).",
                     task.id,
                     task.type,
                     used_mb,
+                    reserved_mb,
                     estimated_mb,
                     overflow_mb,
                     self.SPILLOVER_TOLERANCE_MB,
                     budget_mb,
                     waited_s,
                 )
-                return
+                with self._vram_gate_lock:
+                    self._vram_reserved_mb += estimated_mb
+                return estimated_mb
 
             if waited_s - last_log_s >= LOG_INTERVAL_S:
                 logger.debug(
-                    "Task %s (%s) VRAM gate waiting: used=%sMB estimated=%sMB "
+                    "Task %s (%s) VRAM gate waiting: used=%sMB reserved=%sMB estimated=%sMB "
                     "required=%sMB budget=%sMB overflow=%sMB waited=%.1fs spillover_allowed=%s.",
                     task.id,
                     task.type,
                     used_mb,
+                    reserved_mb,
                     estimated_mb,
                     required_mb,
                     budget_mb,
@@ -237,14 +261,15 @@ class TaskRunner:
                     getattr(task, "enable_cpu_spillover", lambda: None)()
                     spillover_applied = True
                     logger.debug(
-                        "Task %s (%s) switched to CPU spillover (used=%sMB estimated=%sMB budget=%sMB).",
+                        "Task %s (%s) switched to CPU spillover (used=%sMB reserved=%sMB estimated=%sMB budget=%sMB).",
                         task.id,
                         task.type,
                         used_mb,
+                        reserved_mb,
                         estimated_mb,
                         budget_mb,
                     )
-                    return
+                    return estimated_mb
                 except Exception as exc:
                     logger.warning(
                         "Task %s (%s) CPU spillover hook failed: %s",
@@ -253,6 +278,7 @@ class TaskRunner:
                         exc,
                     )
             time.sleep(0.1)
+        return 0
 
     def set_task_complete_callback(
         self, callback: Callable[[BaseTask, Optional[BaseException]], None]
@@ -265,13 +291,20 @@ class TaskRunner:
         self._on_task_complete_callbacks.append(callback)
 
     def start(self):
-        if self._thread is not None and self._thread.is_alive():
-            return
         with self._lock:
+            self._threads = [t for t in self._threads if t.is_alive()]
+            if self._threads:
+                return
             self._closed = False
             self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name=self._name, daemon=True)
-        self._thread.start()
+        for i in range(self._num_workers):
+            t = threading.Thread(
+                target=self._run,
+                name=f"{self._name}-{i}",
+                daemon=True,
+            )
+            t.start()
+            self._threads.append(t)
 
     def stop(self):
         with self._lock:
@@ -279,11 +312,17 @@ class TaskRunner:
                 return
             self._closed = True
             self._stop.set()
-        self._queue.put((TaskPriority.HIGH, next(self._queue_seq), _StopTask()))
-        if self._thread is not None:
-            self._thread.join(timeout=60)
-            if self._thread.is_alive():
-                logger.warning("TaskRunner %s did not stop within timeout.", self._name)
+        # Unblock every worker with a dedicated stop sentinel.
+        for _ in range(self._num_workers):
+            self._queue.put((TaskPriority.HIGH, next(self._queue_seq), _StopTask()))
+        for t in self._threads:
+            t.join(timeout=60)
+            if t.is_alive():
+                logger.warning(
+                    "TaskRunner %s worker %s did not stop within timeout.",
+                    self._name,
+                    t.name,
+                )
 
     def submit(self, task: BaseTask) -> str:
         if self._closed or self._stop.is_set():
@@ -309,7 +348,7 @@ class TaskRunner:
         return task.id
 
     def is_running(self) -> bool:
-        return self._thread is not None and self._thread.is_alive()
+        return any(t.is_alive() for t in self._threads)
 
     def _run(self):
         logger.debug("TaskRunner %s started.", self._name)
@@ -330,7 +369,7 @@ class TaskRunner:
                 self._queue.qsize(),
             )
 
-            self._wait_for_vram_budget(task)
+            vram_reserved_mb = self._wait_for_vram_budget(task)
 
             task_start = time.perf_counter()
             logger.debug(
@@ -360,6 +399,11 @@ class TaskRunner:
                 else:
                     logger.warning("Task %s (%s) failed: %s", task.id, task.type, exc)
             finally:
+                if vram_reserved_mb > 0:
+                    with self._vram_gate_lock:
+                        self._vram_reserved_mb = max(
+                            0, self._vram_reserved_mb - vram_reserved_mb
+                        )
                 elapsed_s = time.perf_counter() - task_start
                 logger.debug(
                     "TaskRunner %s: finished task id=%s type=%s status=%s elapsed=%.3fs.",
