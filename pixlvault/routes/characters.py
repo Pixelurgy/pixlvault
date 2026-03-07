@@ -385,7 +385,7 @@ def create_router(server) -> APIRouter:
                 get_reference_set_and_members, char.reference_picture_set_id
             )
             if ref_set and ref_set.members:
-                pics = sorted(members, key=lambda p: (p.score or 0), reverse=True)
+                pics = sorted(members, key=lambda p: p.score or 0, reverse=True)
                 for pic in pics:
                     faces = server.vault.db.run_immediate_read_task(
                         Face.find, picture_id=pic.id

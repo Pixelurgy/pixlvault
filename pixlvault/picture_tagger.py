@@ -279,6 +279,14 @@ class PictureTagger:
         return max(0, int(budget_mb - used_mb - max(0, int(reserve_mb))))
 
     def set_max_vram_usage_gb(self, max_vram_gb: float | None):
+        if self._device != "cuda":
+            self._max_vram_usage_mb = None
+            logger.info(
+                "Ignoring tagger VRAM budget because inference device is %s.",
+                self._device,
+            )
+            return
+
         if max_vram_gb is None:
             self._max_vram_usage_mb = None
             return

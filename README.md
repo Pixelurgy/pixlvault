@@ -231,3 +231,24 @@ pip install -e .
 - If the page does not load, confirm the server process is running.
 - If port `9537` is in use, set a different port in your server config file.
 - If frontend assets are missing, rebuild frontend with `npm run build` and restart the server.
+
+### GPU startup fails (`CUDAExecutionProvider` unavailable)
+
+If startup reports that ONNX `CUDAExecutionProvider` is unavailable, you likely have CPU-only ONNX Runtime installed.
+
+Fix your environment:
+
+```bash
+pip uninstall -y onnxruntime
+pip install onnxruntime-gpu
+```
+
+Verify providers:
+
+```bash
+python -c "import onnxruntime as ort; print(ort.get_available_providers())"
+```
+
+Expected output should include `CUDAExecutionProvider`.
+
+If you prefer CPU mode, set `"default_device": "cpu"` in `server-config.json`.

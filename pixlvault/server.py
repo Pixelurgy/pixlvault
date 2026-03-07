@@ -34,6 +34,7 @@ from pixlvault.db_models import (
 from pixlvault.event_types import EventType
 from pixlvault.auth import AuthService, LoginRequest
 from pixlvault.pixl_logging import get_logger, uvicorn_log_config
+from pixlvault.startup_checks import StartupChecks
 from pixlvault.vault import Vault
 from pixlvault.routes.config import create_router as create_config_router
 from pixlvault.routes.characters import create_router as create_characters_router
@@ -122,6 +123,11 @@ class Server:
         self._server_config_path = server_config_path
 
         self._server_config = self._init_server_config(server_config_path)
+        self._startup_check_report = StartupChecks(
+            server_config=self._server_config,
+            server_config_path=self._server_config_path,
+            logger=logger,
+        ).run()
         with open(server_config_path, "w") as f:
             json.dump(self._server_config, f, indent=2)
 
@@ -206,7 +212,7 @@ class Server:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if hasattr(self, "vault"):
-            logger.warning("Closing the vault and cleaning up resources")
+            logger.info("Closing the vault and cleaning up resources")
             self.vault.close()
         gc.collect()
 
@@ -413,6 +419,8 @@ class Server:
                 "cookie_secure": False,
                 "image_root": default_image_root,
                 "default_device": "cpu",
+                "min_free_disk_gb": 1.0,
+                "min_free_vram_mb": 1024.0,
                 "cors_origins": [],
                 "watch_folders": [],
             }
@@ -445,6 +453,10 @@ class Server:
                     server_config["image_root"] = default_image_root
                 if "default_device" not in server_config:
                     server_config["default_device"] = "cpu"
+                if "min_free_disk_gb" not in server_config:
+                    server_config["min_free_disk_gb"] = 1.0
+                if "min_free_vram_mb" not in server_config:
+                    server_config["min_free_vram_mb"] = 1024.0
                 if "cors_origins" not in server_config:
                     server_config["cors_origins"] = []
                 if "watch_folders" not in server_config:

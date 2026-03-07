@@ -69,6 +69,9 @@ class ImageEmbeddingTask(BaseTask):
             try:
                 return max(0, int(fn(suggest_fn())))
             except Exception:
+                logger.warning(
+                    "ImageEmbeddingTask: Failed to estimate VRAM usage from PictureTagger"
+                )
                 return 0
         return 0
 

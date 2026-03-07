@@ -1,12 +1,14 @@
 import os
 import argparse
 import logging
+import sys
 
 from platformdirs import user_config_dir
 
 
 from pixlvault.pixl_logging import setup_logging, get_logger
 from pixlvault.server import Server
+from pixlvault.startup_checks import StartupCheckError
 
 logger = get_logger(__name__)
 
@@ -76,7 +78,13 @@ def main():
     else:
         setup_logging(log_level=log_level)
 
-    server = Server(server_config_path=args.server_config)
+    try:
+        server = Server(server_config_path=args.server_config)
+    except StartupCheckError as exc:
+        print("Startup checks failed. Please resolve the following issues:")
+        for failure in exc.failures:
+            print(f"- {failure}")
+        return 1
     if args.remove_password:
         server.remove_password_hash()
         # Continue running the server after removing the password hash
@@ -104,7 +112,8 @@ def main():
 
     server.vault.ensure_ready()
     server.run()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

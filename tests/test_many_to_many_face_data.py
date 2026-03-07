@@ -123,9 +123,11 @@ def test_many_to_many_face_data():
                 )
             )
             face2_after = server.vault.db.run_task(
-                lambda session: session.query(Face)
-                .filter(Face.picture_id == pic_id, Face.face_index == 1)
-                .first()
+                lambda session: (
+                    session.query(Face)
+                    .filter(Face.picture_id == pic_id, Face.face_index == 1)
+                    .first()
+                )
             )
             assert face2_after.character_id is None, (
                 f"Expected character_id None after removal, got: {face2_after}"

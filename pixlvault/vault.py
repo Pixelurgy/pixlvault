@@ -258,13 +258,15 @@ class Vault:
 
     def get_description(self) -> Optional[str]:
         return self.db.submit_task(
-            lambda session: session.exec(
-                select(MetaData).where(
-                    MetaData.schema_version == MetaData.CURRENT_SCHEMA_VERSION
+            lambda session: (
+                session.exec(
+                    select(MetaData).where(
+                        MetaData.schema_version == MetaData.CURRENT_SCHEMA_VERSION
+                    )
                 )
+                .first()
+                .description
             )
-            .first()
-            .description
         ).result()
 
     def submit_task(self, task):
