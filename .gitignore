@@ -18,3 +18,4 @@ node_modules
 downloaded_models
 pixlvault/alembic.ini
 pixlvault/migrations/
+.DS_Store
