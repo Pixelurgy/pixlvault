@@ -4,6 +4,7 @@ import shutil
 import os
 import json
 import random
+import subprocess
 import tempfile
 import time
 import tomllib
@@ -90,7 +91,6 @@ def _write_json(path: Path, payload: dict) -> None:
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False, sort_keys=True)
         handle.write("\n")
-
 
 
 def test_esmeralda_vault_character_and_logo():
@@ -762,6 +762,7 @@ def test_semantic_search():
             wait_for_imported_at()
 
             # Wait for facial features to be processed and associate Esmeralda Vault with largest face in each picture
+            picture_ids_with_chars: set[int] = set()
             for pid in picture_ids:
                 # Fetch faces for this picture
                 faces_resp = client.get(f"/pictures/{pid}/faces")
@@ -815,6 +816,7 @@ def test_semantic_search():
                     logging.debug(
                         f"Verified Esmeralda Vault character association for face {face_id}"
                     )
+                    picture_ids_with_chars.add(pid)
                 elif len(faces_ordered) >= 3:
                     # Associate Barbara, Barry, Cassandra with left, center, right faces
                     face_ids = [
@@ -839,6 +841,32 @@ def test_semantic_search():
                         logging.debug(
                             f"Associated face ID {face_id} in picture {pid} with character ID {char_id}"
                         )
+                    picture_ids_with_chars.add(pid)
+
+            # Assert that character associations persisted in the DB.
+            for pid in picture_ids_with_chars:
+                faces_check_resp = client.get(f"/pictures/{pid}/faces")
+                assert faces_check_resp.status_code == 200, (
+                    f"Failed to fetch faces for picture {pid} after character association"
+                )
+                faces_check = faces_check_resp.json().get("faces", [])
+                assigned = [f for f in faces_check if f.get("character_id") is not None]
+                assert assigned, (
+                    f"Picture {pid} has no faces with character_id after association — association did not persist"
+                )
+
+            # Replace embedding futures: the originals may have resolved before
+            # character association (and clear_field) ran, so they could be stale.
+            # We need fresh futures that will only resolve after the re-embedding.
+            embeddings_futures = [
+                server.vault.get_worker_future(
+                    TaskType.TEXT_EMBEDDING,
+                    Picture,
+                    pid,
+                    "text_embedding",
+                )
+                for pid in picture_ids
+            ]
 
             for future in description_futures:
                 future.result(timeout=120)
@@ -846,7 +874,7 @@ def test_semantic_search():
             for future in tag_futures:
                 future.result(timeout=120)
 
-            # Wait for all text embeddings to be processed
+            # Wait for all text embeddings to be processed (futures refreshed post-association)
             for future in embeddings_futures:
                 result_id = future.result(timeout=80)
                 logging.debug(f"Text embedding processed for picture ID: {result_id}")
@@ -938,10 +966,15 @@ def test_semantic_search():
                 "total_queries": len(query_rows),
                 "total_results": int(sum(row["result_count"] for row in query_rows)),
                 "avg_top_score": round(
-                    float(sum(row["top_score"] for row in query_rows) / max(1, len(query_rows))),
+                    float(
+                        sum(row["top_score"] for row in query_rows)
+                        / max(1, len(query_rows))
+                    ),
                     6,
                 ),
-                "min_top_score": round(float(min(row["top_score"] for row in query_rows)), 6),
+                "min_top_score": round(
+                    float(min(row["top_score"] for row in query_rows)), 6
+                ),
             }
 
             device_tag = "cpu" if PictureTagger.FORCE_CPU else "gpu"
@@ -958,5 +991,22 @@ def test_semantic_search():
 
             regression_path = _REGRESSION_DIR / f"semantic_search_{device_tag}.json"
             _write_json(regression_path, regression_payload)
+
+            diff_result = subprocess.run(
+                ["git", "diff", "HEAD", "--", str(regression_path)],
+                capture_output=True,
+                text=True,
+                cwd=Path(__file__).resolve().parent.parent,
+            )
+            if diff_result.returncode != 0:
+                logger.warning(
+                    f"git diff failed (exit {diff_result.returncode}): {diff_result.stderr.strip()}"
+                )
+            elif diff_result.stdout.strip():
+                raise AssertionError(
+                    f"Semantic search regression detected for device='{device_tag}'.\n"
+                    f"Review the diff below and commit {regression_path.name} if the change is intentional.\n\n"
+                    f"{diff_result.stdout}"
+                )
     gc.collect()
     log_resources("END test_semantic_search")
