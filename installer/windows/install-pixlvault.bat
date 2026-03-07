@@ -55,7 +55,7 @@ if not defined WHEEL_FILE (
 )
 
 echo Installing wheel: %WHEEL_DIR%\%WHEEL_FILE%
-"%PIP_EXE%" install --upgrade pip setuptools wheel
+"%VENV_DIR%\Scripts\python.exe" -m pip install --upgrade pip setuptools wheel
 if errorlevel 1 exit /b 1
 
 "%PIP_EXE%" install --upgrade "%WHEEL_DIR%\%WHEEL_FILE%"
