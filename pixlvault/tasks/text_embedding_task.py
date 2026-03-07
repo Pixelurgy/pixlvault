@@ -1,7 +1,8 @@
-from sqlmodel import Session
+from sqlalchemy.orm import selectinload
+from sqlmodel import Session, select
 
 from pixlvault.database import DBPriority
-from pixlvault.db_models import Picture
+from pixlvault.db_models import Character, Picture
 from pixlvault.picture_tagger import PictureTagger
 from pixlvault.pixl_logging import get_logger
 from pixlvault.tasks.base_task import BaseTask
@@ -35,7 +36,43 @@ class TextEmbeddingTask(BaseTask):
         if not self._pictures:
             return {"changed_count": 0, "changed": []}
 
-        embeddings_generated = self._generate_text_embeddings(self._pictures)
+        # Re-fetch pictures from DB with current character associations so that
+        # any association that happened after the finder picked these pictures up
+        # is reflected in the embedding text.
+        picture_ids = [pic.id for pic in self._pictures]
+
+        def fetch_fresh(session: Session, ids: list[int]) -> list[Picture]:
+            return session.exec(
+                select(Picture)
+                .where(Picture.id.in_(ids))
+                .options(
+                    selectinload(Picture.characters).load_only(
+                        Character.id,
+                        Character.name,
+                        Character.description,
+                    ),
+                    selectinload(Picture.tags),
+                )
+            ).all()
+
+        fresh_pictures = self._db.run_immediate_read_task(fetch_fresh, picture_ids)
+        # Preserve original order and description from the finder's snapshot.
+        description_map = {pic.id: pic.description for pic in self._pictures}
+        fresh_by_id = {pic.id: pic for pic in fresh_pictures}
+        pictures_to_embed = []
+        for pid in picture_ids:
+            pic = fresh_by_id.get(pid)
+            if pic is None:
+                continue
+            # Description may not be loaded in the fresh fetch; carry it over.
+            if pic.description is None:
+                pic.description = description_map.get(pid)
+            pictures_to_embed.append(pic)
+
+        if not pictures_to_embed:
+            return {"changed_count": 0, "changed": []}
+
+        embeddings_generated = self._generate_text_embeddings(pictures_to_embed)
         if not embeddings_generated:
             return {"changed_count": 0, "changed": []}
 
