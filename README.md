@@ -118,6 +118,93 @@ If you need to use a custom config path:
 python -m pixlvault.app --server-config "C:\path\to\server-config.json"
 ```
 
+## Server configuration
+
+On first run, PixlVault generates a `server-config.json` file in the user config directory:
+
+- **Linux / macOS:** `~/.config/pixlvault/server-config.json`
+- **Windows:** `%APPDATA%\pixlvault\server-config.json`
+
+You can also supply a custom path with `--server-config <path>`.
+
+Edit the file and restart the server to apply changes.
+
+### Network and port
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `host` | `"localhost"` | Address the server binds to. Change to `"0.0.0.0"` to expose the server on the local network. |
+| `port` | `9537` | TCP port the server listens on. |
+| `cors_origins` | `[]` | Extra origins allowed to make credentialed cross-origin requests. `localhost`, `127.0.0.1`, and the server's own LAN IP are always permitted on any port. |
+
+At startup the server detects its own LAN IP and automatically allows it on any port. This means the Vite dev server works over LAN (`http://192.168.1.5:5173` → `http://192.168.1.5:9537`) without any extra configuration, as long as network access is enabled via `host`.
+
+Use `cors_origins` only if you need to allow origins on a different machine entirely.
+
+### SSL / HTTPS
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `require_ssl` | `false` | Enable HTTPS. When `true`, the server will use the key and certificate below. |
+| `ssl_keyfile` | `<config_dir>/ssl/key.pem` | Path to the SSL private key file. |
+| `ssl_certfile` | `<config_dir>/ssl/cert.pem` | Path to the SSL certificate file. |
+| `cookie_samesite` | `"Lax"` | `SameSite` attribute for session cookies (`"Lax"`, `"Strict"`, or `"None"`). |
+| `cookie_secure` | `false` | Set the `Secure` flag on session cookies. Enable when serving over HTTPS. |
+
+### Storage
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `image_root` | `<config_dir>/images` | Directory where imported media files are stored. |
+| `watch_folders` | `[]` | List of folder entries to watch for new images and automatically import them. Each entry is an object with the fields below. |
+
+Each entry in `watch_folders` has the following fields:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `folder` | string | — | Absolute path to the directory to monitor (recursively). |
+| `delete_after_import` | boolean | `false` | When `true`, source files are deleted from the watch folder after a successful import. |
+
+Example:
+
+```json
+"watch_folders": [
+  { "folder": "/home/user/downloads/photos", "delete_after_import": false },
+  { "folder": "/mnt/camera", "delete_after_import": true }
+]
+```
+
+### Processing
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `default_device` | `"cpu"` | Device used for AI processing (`"cpu"` or `"cuda"`). |
+| `generate_thumbnails_on_startup` | `true` | Generate missing thumbnails when the server starts. |
+
+### Logging
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `log_level` | `"info"` | Log verbosity (`"debug"`, `"info"`, `"warning"`, `"error"`). |
+| `log_file` | `<config_dir>/server.log` | Path to the log file. |
+
+### Example config
+
+```json
+{
+  "host": "localhost",
+  "port": 9537,
+  "log_level": "info",
+  "require_ssl": false,
+  "image_root": "/home/user/.config/pixlvault/images",
+  "watch_folders": [
+    { "folder": "/path/to/photos", "delete_after_import": false }
+  ],
+  "default_device": "cpu",
+  "generate_thumbnails_on_startup": true
+}
+```
+
 ## Updating PixlVault
 
 ### PyPI install
