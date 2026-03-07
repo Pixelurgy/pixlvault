@@ -96,7 +96,7 @@ class Vault:
         self._planner_watchers_lock = threading.Lock()
         self._event_listeners = []
         self._event_listeners_lock = threading.Lock()
-        self._task_runner = TaskRunner(name="vault-task-runner")
+        self._task_runner = TaskRunner(name="vault-task-runner", num_workers=4)
         self._planner_work_finders = WorkPlanner.work_finders(
             database=self.db,
             picture_tagger_getter=lambda: self._picture_tagger,
