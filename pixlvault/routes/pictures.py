@@ -4,6 +4,7 @@ import concurrent.futures
 import base64
 import os
 import re
+import shutil
 import sys
 import uuid
 import zipfile
@@ -1630,6 +1631,9 @@ def create_router(server) -> APIRouter:
         background_tasks: BackgroundTasks,
         file: list[UploadFile] = File(None),
     ):
+        _MAX_UPLOAD_BYTES = 5 * 1024**3  # 5 GB per uploaded file / zip
+        _MAX_ZIP_ENTRIES = 5_000  # max files inside a zip
+        _MAX_ZIP_DECOMPRESSED_BYTES = 10 * 1024**3  # 10 GB total decompressed
         if not server.vault.is_worker_running(TaskType.FACE):
             raise HTTPException(
                 status_code=400,
@@ -1662,14 +1666,29 @@ def create_router(server) -> APIRouter:
                 contents = await upload.read()
                 if not contents:
                     continue
+                if len(contents) > _MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Uploaded file '{upload.filename}' exceeds the 2 GB limit.",
+                    )
                 ext = os.path.splitext(upload.filename)[1].lower()
                 if ext == ".zip":
                     try:
                         with zipfile.ZipFile(BytesIO(contents)) as zip_file:
+                            entries = [i for i in zip_file.infolist() if not i.is_dir()]
+                            if len(entries) > _MAX_ZIP_ENTRIES:
+                                raise HTTPException(
+                                    status_code=413,
+                                    detail=f"Zip '{upload.filename}' contains too many files (max {_MAX_ZIP_ENTRIES:,}).",
+                                )
+                            total_decompressed = sum(i.file_size for i in entries)
+                            if total_decompressed > _MAX_ZIP_DECOMPRESSED_BYTES:
+                                raise HTTPException(
+                                    status_code=413,
+                                    detail=f"Zip '{upload.filename}' decompressed size exceeds the 10 GB limit.",
+                                )
                             added = 0
-                            for info in zip_file.infolist():
-                                if info.is_dir():
-                                    continue
+                            for info in entries:
                                 inner_ext = os.path.splitext(info.filename)[1].lower()
                                 if inner_ext not in allowed_exts:
                                     continue
@@ -1706,6 +1725,21 @@ def create_router(server) -> APIRouter:
             raise HTTPException(
                 status_code=400,
                 detail="No valid media files found for import",
+            )
+
+        total_import_bytes = sum(len(data) for data, _ in uploaded_files)
+        free_bytes = shutil.disk_usage(dest_folder).free
+        required_bytes = int(total_import_bytes * 1.1)  # 10% headroom
+        if required_bytes > free_bytes:
+            free_gb = free_bytes / 1024**3
+            needed_gb = required_bytes / 1024**3
+            raise HTTPException(
+                status_code=507,
+                detail=(
+                    f"Not enough disk space. "
+                    f"Import needs {needed_gb:.2f} GB (including 10% headroom) "
+                    f"but only {free_gb:.2f} GB is available."
+                ),
             )
 
         task_id = str(uuid.uuid4())
