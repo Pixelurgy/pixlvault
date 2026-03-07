@@ -1,7 +1,5 @@
 PixlVault 1.0 Hardening Plan
 
-1. Standardize naming and file organization (routes/workers/utils).
-2. Reduce noisy logs; keep actionable warnings/errors only.
-3. Make the VRAM budget cover all tasks and not just tagger.
-4. Add startup self-checks (models, paths, DB schema/version).
-5. Add regression tests for stacking, overlay refresh, workflow import/delete.
+1. Add startup self-checks (models, paths, DB schema/version).
+2. Add regression tests for stacking, overlay refresh, workflow import/delete.
+3. Improve smart score

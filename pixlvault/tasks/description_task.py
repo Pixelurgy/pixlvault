@@ -37,6 +37,15 @@ class DescriptionTask(BaseTask):
         self._picture_tagger = picture_tagger
         self._pictures = pictures or []
 
+    def estimated_vram_mb(self) -> int:
+        fn = getattr(self._picture_tagger, "estimate_description_vram_mb", None)
+        if callable(fn):
+            try:
+                return max(0, int(fn(len(self._pictures))))
+            except Exception:
+                return 0
+        return 0
+
     def _run_task(self):
         if not self._pictures:
             return {"changed_count": 0, "changed": []}

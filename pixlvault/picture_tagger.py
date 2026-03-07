@@ -86,6 +86,11 @@ CLIP_MODEL_NAME = "ViT-B-32"
 DEFAULT_MAX_VRAM_GB = _env_float("PIXLVAULT_MAX_VRAM_GB", None)
 EXPECTED_CONCURRENT_TAG_TASKS = _env_int("PIXLVAULT_EXPECTED_TAG_TASKS", 2)
 
+# Approximate VRAM footprints for non-tagging GPU pipelines
+INSIGHTFACE_VRAM_MB = 400  # RetinaFace + ArcFace models via CUDA provider
+FLORENCE_BASE_VRAM_MB = 500  # Florence-2-base model footprint
+FLORENCE_PER_IMAGE_VRAM_MB = 150  # Activation scratch per image in a GPU mini-batch
+
 # Tags that require close-up face crops to detect reliably at full-image resolution.
 # These are collected from face-crop passes and merged into the picture's flat tag list.
 QUALITY_CROP_TAG_WHITELIST = frozenset(
@@ -362,6 +367,40 @@ class PictureTagger:
         wd14_incremental = 220 * wd14_batch
         custom_incremental = 180 * custom_batch
         return int(max(256, wd14_incremental, custom_incremental))
+
+    def suggested_image_embedding_batch_size(self) -> int:
+        """VRAM-budget-constrained batch size for ImageEmbeddingTask CLIP inference."""
+        max_batch = 32
+        if self._device == "cuda":
+            max_batch = min(
+                max_batch,
+                self._vram_limited_batch_cap(base_mb=900, per_item_mb=220),
+            )
+            runtime_headroom_mb = self._runtime_vram_headroom_mb(reserve_mb=128)
+            if runtime_headroom_mb is not None:
+                max_batch = min(max_batch, max(1, int(runtime_headroom_mb / 220)))
+        return max(1, max_batch)
+
+    def estimate_image_embedding_vram_mb(self, image_count: int) -> int:
+        """Incremental VRAM estimate for an ImageEmbeddingTask batch."""
+        if self._device != "cuda":
+            return 0
+        batch = min(max(1, int(image_count or 1)), 32)
+        return int(max(128, 220 * batch))
+
+    def estimate_face_extraction_vram_mb(self) -> int:
+        """Flat VRAM estimate for FaceExtractionTask (InsightFace model + inference)."""
+        if self._device != "cuda":
+            return 0
+        return INSIGHTFACE_VRAM_MB
+
+    def estimate_description_vram_mb(self, image_count: int) -> int:
+        """Incremental VRAM estimate for a DescriptionTask batch."""
+        if self._device != "cuda":
+            return 0
+        florence_batch = max(1, int(getattr(self, "_florence_batch_size", 4)))
+        batch = min(max(1, int(image_count or 1)), florence_batch)
+        return int(FLORENCE_BASE_VRAM_MB + FLORENCE_PER_IMAGE_VRAM_MB * batch)
 
     def _resolve_picture_path(self, file_path: str) -> str:
         return ImageUtils.resolve_picture_path(self._image_root, file_path)
@@ -640,7 +679,16 @@ class PictureTagger:
     def description_batch_size(self):
         max_concurrent = max(1, int(self.max_concurrent_images()))
         florence_batch = max(1, int(getattr(self, "_florence_batch_size", 1)))
-        return min(max_concurrent, florence_batch)
+        base_batch = min(max_concurrent, florence_batch)
+        if self._device == "cuda":
+            base_batch = min(
+                base_batch,
+                self._vram_limited_batch_cap(
+                    base_mb=FLORENCE_BASE_VRAM_MB,
+                    per_item_mb=FLORENCE_PER_IMAGE_VRAM_MB,
+                ),
+            )
+        return max(1, base_batch)
 
     def _init_florence_captioning(self):
         """

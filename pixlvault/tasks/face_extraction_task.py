@@ -73,6 +73,15 @@ class FaceExtractionTask(BaseTask):
     def _should_keep_models_in_memory(self) -> bool:
         return bool(getattr(self._picture_tagger, "keep_models_in_memory", True))
 
+    def estimated_vram_mb(self) -> int:
+        fn = getattr(self._picture_tagger, "estimate_face_extraction_vram_mb", None)
+        if callable(fn):
+            try:
+                return max(0, int(fn()))
+            except Exception:
+                return 0
+        return 0
+
     @classmethod
     def release_detection_models(cls):
         cls._global_insightface_app = None

@@ -60,6 +60,18 @@ class ImageEmbeddingTask(BaseTask):
         if ImageEmbeddingTask._aesthetic_disabled is None:
             ImageEmbeddingTask._aesthetic_disabled = self._aesthetic_config() is None
 
+    def estimated_vram_mb(self) -> int:
+        fn = getattr(self._picture_tagger, "estimate_image_embedding_vram_mb", None)
+        suggest_fn = getattr(
+            self._picture_tagger, "suggested_image_embedding_batch_size", None
+        )
+        if callable(fn) and callable(suggest_fn):
+            try:
+                return max(0, int(fn(suggest_fn())))
+            except Exception:
+                return 0
+        return 0
+
     @classmethod
     def _aesthetic_config(cls):
         return cls.AESTHETIC_MODELS.get(CLIP_MODEL_NAME)
@@ -283,8 +295,18 @@ class ImageEmbeddingTask(BaseTask):
         if not self._ensure_embedding_backend():
             return {"changed_count": 0, "changed": []}
 
+        batch_size_limit = ImageEmbeddingTask.BATCH_SIZE
+        suggest_fn = getattr(
+            self._picture_tagger, "suggested_image_embedding_batch_size", None
+        )
+        if callable(suggest_fn):
+            try:
+                batch_size_limit = max(1, int(suggest_fn()))
+            except Exception:
+                pass
+
         batch = self._db.run_immediate_read_task(
-            lambda session: self.fetch_work(session=session)
+            lambda session: self.fetch_work(session=session, limit=batch_size_limit)
         )
         if not batch:
             return {"changed_count": 0, "changed": []}
