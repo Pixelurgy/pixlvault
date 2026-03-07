@@ -28,12 +28,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 requires-python = ">=3.10"
-
-[project.urls]
-Homepage = "https://pixelurgy.github.io/pixlvault"
-Repository = "https://github.com/Pixelurgy/pixlvault"
-"Bug Tracker" = "https://github.com/Pixelurgy/pixlvault/issues"
-Changelog = "https://github.com/Pixelurgy/pixlvault/releases"
 dependencies = [
     "open_clip_torch",
     "fastapi",
@@ -72,6 +66,12 @@ dependencies = [
     "nvidia-ml-py",
     "piexif",
 ]
+
+[project.urls]
+Homepage = "https://pixelurgy.github.io/pixlvault"
+Repository = "https://github.com/Pixelurgy/pixlvault"
+"Bug Tracker" = "https://github.com/Pixelurgy/pixlvault/issues"
+Changelog = "https://github.com/Pixelurgy/pixlvault/releases"
 
 [project.optional-dependencies]
 test = [
