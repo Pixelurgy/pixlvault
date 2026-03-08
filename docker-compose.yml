@@ -1,0 +1,31 @@
+services:
+  pixlvault:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pixlvault:latest
+    container_name: pixlvault
+    restart: unless-stopped
+
+    # GPU access via nvidia-container-runtime (requires nvidia-container-toolkit).
+    # Ensure the runtime is configured: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+    runtime: nvidia
+
+    ports:
+      - "9537:9537"
+
+    volumes:
+      # Persistent data: images, database, config, logs
+      - pixlvault-data:/data
+
+    environment:
+      # Override any of these to customise without editing the config file
+      PIXLVAULT_HOST: "0.0.0.0"
+      PIXLVAULT_PORT: "9537"
+      PIXLVAULT_IMAGE_ROOT: "/data/images"
+      PIXLVAULT_CONFIG: "/data/config/server-config.json"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+
+volumes:
+  pixlvault-data:

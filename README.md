@@ -105,6 +105,81 @@ Then open:
 http://localhost:9537
 ```
 
+## Option 4: Docker (GPU — Linux / WSL2 on Windows)
+
+Use this if you want a fully self-contained image with CUDA support, or you are running PixlVault on Windows via WSL2.
+
+### Prerequisites
+
+#### On Linux (native Docker)
+
+1. Install [Docker Engine](https://docs.docker.com/engine/install/).
+2. Install the NVIDIA Container Toolkit:
+
+```bash
+distribution=$(. /etc/os-release; echo $ID$VERSION_ID)
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+    | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -sL "https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list" \
+    | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+    | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+3. Verify GPU access:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.6.3-base-ubuntu24.04 nvidia-smi
+```
+
+#### On Windows (WSL2)
+
+1. Install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) with Ubuntu 24.04.
+2. Install an NVIDIA Windows driver ≥ 525 from [nvidia.com/drivers](https://www.nvidia.com/drivers) — **do not** install a driver inside WSL2 itself; the Windows driver is shared automatically.
+3. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) with the **WSL2 backend** enabled, or install Docker Engine directly inside WSL2 as per the Linux steps above.
+4. Install the NVIDIA Container Toolkit inside your WSL2 distro (same commands as the Linux section above).
+5. Verify GPU access from WSL2:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.6.3-base-ubuntu24.04 nvidia-smi
+```
+
+### Build and run
+
+Clone the repository and start the server:
+
+```bash
+git clone https://github.com/Pixelurgy/pixlvault.git
+cd pixlvault
+
+docker compose up --build
+```
+
+Then open:
+
+```text
+http://localhost:9537
+```
+
+All data (images, database, config, logs) is stored in a Docker named volume (`pixlvault-data`) and persists across container restarts.
+
+### Configuration
+
+On first start, the container writes a default `server-config.json` to `/data/config/` inside the volume. Edit it and restart the container to apply changes — the file is not overwritten on subsequent starts.
+
+You can override the most common settings with environment variables in `docker-compose.yml`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `PIXLVAULT_HOST` | `0.0.0.0` | Address the server binds to |
+| `PIXLVAULT_PORT` | `9537` | TCP port |
+| `PIXLVAULT_IMAGE_ROOT` | `/data/images` | Where imported images are stored |
+| `PIXLVAULT_CONFIG` | `/data/config/server-config.json` | Path to the config file |
+
+To run without GPU (CPU-only mode), remove the `deploy.resources` block from `docker-compose.yml` and set `"default_device": "cpu"` in your `server-config.json`.
+
 
 ## First run and data location
 

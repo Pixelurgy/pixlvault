@@ -41,6 +41,62 @@ PixlVault uses Alembic for schema changes. The server runs migrations on startup
 - Build Python package: `python -m build`
 - Upload: `twine upload dist/*`
 
+## Docker
+
+The Docker image is a two-stage build — Node builds the frontend, then Python + CUDA form the runtime layer.
+
+### Build
+
+```bash
+docker build -t pixlvault:dev .
+```
+
+Or via Compose (also starts the container):
+
+```bash
+docker compose up --build
+```
+
+### Run (without rebuilding)
+
+```bash
+docker compose up
+```
+
+### Useful flags during development
+
+```bash
+# Rebuild only the runtime stage (faster if only Python source changed)
+docker build --target frontend-builder -t pixlvault:frontend .
+docker build -t pixlvault:dev .
+
+# Open a shell inside a running container
+docker exec -it pixlvault bash
+
+# Tail logs
+docker logs -f pixlvault
+
+# Inspect the persistent data volume
+docker volume inspect pixlvault_pixlvault-data
+```
+
+### GPU access
+
+The image expects the NVIDIA Container Toolkit to be installed on the host. See the **Option 4: Docker** section in [README.md](README.md) for setup instructions.
+
+To test GPU visibility inside the container:
+
+```bash
+docker run --rm --gpus all pixlvault:dev python -c \
+  "import torch; print(torch.cuda.get_device_name(0))"
+```
+
+### CPU-only build (no GPU required)
+
+Remove the `deploy.resources` block from `docker-compose.yml` and set `"default_device": "cpu"` in the generated `server-config.json` (located in the `pixlvault-data` volume at `/data/config/server-config.json`).
+
+
+
 ### GitHub tagged releases to PyPI
 
 - Workflow file: [.github/workflows/publish-pypi.yml](.github/workflows/publish-pypi.yml)
