@@ -668,10 +668,20 @@ def find_pictures_by_smart_score(
                 cand_list, good_list, bad_list
             )
 
+            # Quantize to 2 decimal places so that images whose scores differ
+            # only in lower-significance bits are treated as equal. Within each
+            # quantized bucket, sort by picture ID (ascending) to guarantee a
+            # fully deterministic, stable order that doesn't shift when an
+            # unrelated image's score changes by a tiny amount.
+            quantized = np.round(scores, 2)
+            ids_array = np.array(cand_ids, dtype=np.int64)
             if descending:
-                sorted_indices = np.argsort(-scores)
+                # lexsort key order: last key is primary.
+                # Primary: -quantized (highest score first)
+                # Secondary: id (lowest id first within tied bucket)
+                sorted_indices = np.lexsort((ids_array, -quantized))
             else:
-                sorted_indices = np.argsort(scores)
+                sorted_indices = np.lexsort((ids_array, quantized))
 
             scored_ids = [cand_ids[i] for i in sorted_indices]
             score_map = {cand_ids[i]: float(scores[i]) for i in range(len(scores))}

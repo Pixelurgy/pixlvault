@@ -32,15 +32,15 @@ class SmartScoreUtils:
             np.ndarray: Array of floating point scores corresponding to candidates.
         """
         cfg = {
-            "w_good": 0.60,
-            "w_bad": 0.20,
+            "w_good": 0.7,
+            "w_bad": 0.1,
             "w_aest": 0.2,
             "w_resolution": 0.06,
             "w_noise": 0.08,
             "w_edge": 0.05,
             "w_tags": 0.08,
-            "w_penalised_tag": 0.40,
-            "penalised_tag_cap": 3.5,
+            "w_penalised_tag": 0.30,
+            "penalised_tag_cap": 2.5,
             "tag_bonus_cap": 10,
             "topk": 3,
             "sim_knee": 0.5,
@@ -52,6 +52,8 @@ class SmartScoreUtils:
             "res_min_mpx": 0.2,
             "res_max_mpx": 4.0,
             "res_use_log": True,
+            "noise_missing_default": 0.75,
+            "edge_missing_default": 0.75,
         }
         if config:
             cfg.update(config)
@@ -206,7 +208,11 @@ class SmartScoreUtils:
         )
         noise_vals = np.where(np.isfinite(noise_vals), noise_vals, np.nan)
         noise_vals = np.where(noise_vals < 0, np.nan, noise_vals)
-        noise_vals = np.where(np.isnan(noise_vals), 0.5, noise_vals)
+        noise_vals = np.where(
+            np.isnan(noise_vals),
+            float(cfg.get("noise_missing_default", 0.75)),
+            noise_vals,
+        )
         noise_vals = np.clip(noise_vals, 0.0, 1.0)
         noise_component = cfg["w_noise"] * (1.0 - noise_vals)
         scores += noise_component
@@ -217,7 +223,9 @@ class SmartScoreUtils:
         )
         edge_vals = np.where(np.isfinite(edge_vals), edge_vals, np.nan)
         edge_vals = np.where(edge_vals < 0, np.nan, edge_vals)
-        edge_vals = np.where(np.isnan(edge_vals), 0.5, edge_vals)
+        edge_vals = np.where(
+            np.isnan(edge_vals), float(cfg.get("edge_missing_default", 0.75)), edge_vals
+        )
         edge_vals = np.clip(edge_vals, 0.0, 1.0)
         edge_component = cfg["w_edge"] * edge_vals
         scores += edge_component
