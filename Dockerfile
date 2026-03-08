@@ -108,8 +108,6 @@ USER pixlvault
 COPY --chown=pixlvault:pixlvault pyproject.toml setup.py MANIFEST.in alembic.ini ./
 COPY --chown=pixlvault:pixlvault pixlvault/ pixlvault/
 COPY --chown=pixlvault:pixlvault migrations/ migrations/
-COPY --chown=pixlvault:pixlvault cpu/ cpu/
-COPY --chown=pixlvault:pixlvault cuda/ cuda/
 
 # Install the pixlvault package itself (no deps — already installed above)
 RUN pip install --no-cache-dir --no-deps -e .
