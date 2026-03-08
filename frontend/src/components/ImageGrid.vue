@@ -992,6 +992,14 @@ watch(
     const dPayloadIds = pictureIds
       .map((id) => getPictureId(id))
       .filter((id) => id != null);
+    if (isSmartScoreSortActive()) {
+      // Tag changes affect penalised-tag penalties, so a full sorted refetch
+      // is needed. Preserve scroll so the user stays at their current position
+      // and thumbnails load for the correct viewport range.
+      preserveScrollOnNextFetch.value = true;
+      debouncedFetchAllGridImages({ force: true });
+      return;
+    }
     for (const id of dPayloadIds) {
       refreshGridImage(id);
     }
@@ -3786,6 +3794,16 @@ function handleStackReorderDrop(img, event) {
 // ============================================================
 async function fetchAllGridImages(options = {}) {
   const force = options?.force === true;
+  // Capture scroll-preservation intent *synchronously* before any await so
+  // that it is not affected by the gridVersion watcher clearing it later.
+  const fetchStartedWithPreserveScroll = preserveScrollOnNextFetch.value;
+  if (
+    fetchStartedWithPreserveScroll &&
+    pendingScrollTop.value === null &&
+    scrollWrapper.value
+  ) {
+    pendingScrollTop.value = scrollWrapper.value.scrollTop;
+  }
   const fetchKey = buildGridFetchKey();
   const now = Date.now();
   if (!force && imagesLoading.value && lastFetchKey.value === fetchKey) {
@@ -3945,11 +3963,21 @@ async function fetchAllGridImages(options = {}) {
     highlightNextFetch.value = false;
     hasLoadedOnce.value = true;
     const newImages = mapGridImages(images);
+    resetThumbnailState();
     allGridImages.value = newImages;
     const cols = props.columns || 1;
     const windowCount = Math.max(cols, divisibleViewWindow.value || cols);
-    visibleStart.value = 0;
-    visibleEnd.value = Math.min(newImages.length, windowCount);
+    if (!fetchStartedWithPreserveScroll) {
+      // Normal (non-preserve) fetch: jump to top so thumbnails load from index 0.
+      visibleStart.value = 0;
+      visibleEnd.value = Math.min(newImages.length, windowCount);
+    } else {
+      // Scroll-preserving fetch: keep visibleStart/End as-is so
+      // updateVisibleThumbnails loads the range the user is actually viewing.
+      visibleEnd.value = Math.min(visibleEnd.value, newImages.length);
+      if (visibleStart.value > visibleEnd.value)
+        visibleStart.value = Math.max(0, visibleEnd.value - 1);
+    }
     if (initialRender.value) {
       const prefetchEnd = Math.min(
         newImages.length,
@@ -4390,16 +4418,27 @@ async function fetchThumbnailsBatch(start, end, meta = {}) {
       thumbnail_width: img?.thumbnail_width,
       thumbnail_height: img?.thumbnail_height,
     }));
-    // Now fetch thumbnails only for IDs missing a thumbnail
-    ids = gridImages
-      .filter(
-        (img) => img.id !== null && img.id !== undefined && !img.thumbnail,
-      )
-      .map((img) => img.id);
+    // Separate images: those missing a thumbnail need a full fetch; those that
+    // already have one still need penalised_tags refreshed (e.g. after a tag
+    // removal on a stack-head image whose thumbnail was carried over from the
+    // previous grid state and was therefore never re-fetched).
+    const missingThumbIds = new Set(
+      gridImages
+        .filter(
+          (img) => img.id !== null && img.id !== undefined && !img.thumbnail,
+        )
+        .map((img) => String(img.id)),
+    );
+    ids = Array.from(
+      new Set(
+        gridImages
+          .filter((img) => img.id !== null && img.id !== undefined)
+          .map((img) => String(img.id)),
+      ),
+    );
     const requestedIdPreview = ids.slice(0, 8);
     let overlayNeedsRedraw = false;
     if (ids.length) {
-      ids = Array.from(new Set(ids.map((id) => String(id))));
       const thumbRes = await apiClient.post(
         `${props.backendUrl}/pictures/thumbnails`,
         JSON.stringify({ ids }),
@@ -4414,46 +4453,50 @@ async function fetchThumbnailsBatch(start, end, meta = {}) {
           continue;
         }
         const thumbObj = thumbData[String(gridImg.id)];
-        const thumbnailUrl =
-          thumbObj && thumbObj.thumbnail ? thumbObj.thumbnail : null;
-        const previousThumbnail = gridImg.thumbnail || null;
-        gridImg.thumbnail = thumbnailUrl
-          ? thumbnailUrl.startsWith("http")
-            ? thumbnailUrl
-            : `${props.backendUrl}${thumbnailUrl}`
-          : null;
-        if (
-          gridImg.id != null &&
-          gridImg.thumbnail &&
-          gridImg.thumbnail !== previousThumbnail
-        ) {
-          thumbnailAssignedAtMap[gridImg.id] = performance.now();
+        // Only overwrite thumbnail URL for images that didn't already have one.
+        if (missingThumbIds.has(String(gridImg.id))) {
+          const thumbnailUrl =
+            thumbObj && thumbObj.thumbnail ? thumbObj.thumbnail : null;
+          const previousThumbnail = gridImg.thumbnail || null;
+          gridImg.thumbnail = thumbnailUrl
+            ? thumbnailUrl.startsWith("http")
+              ? thumbnailUrl
+              : `${props.backendUrl}${thumbnailUrl}`
+            : null;
+          if (
+            gridImg.id != null &&
+            gridImg.thumbnail &&
+            gridImg.thumbnail !== previousThumbnail
+          ) {
+            thumbnailAssignedAtMap[gridImg.id] = performance.now();
+          }
+          if (gridImg.id != null && thumbObj && thumbObj.thumbnail) {
+            thumbnailLoadedMap[gridImg.id] =
+              (thumbnailLoadedMap[gridImg.id] || 0) + 1;
+          }
+          gridImg.faces =
+            thumbObj && Array.isArray(thumbObj.faces) ? thumbObj.faces : [];
+          gridImg.hands =
+            thumbObj && Array.isArray(thumbObj.hands) ? thumbObj.hands : [];
+          if (props.showFaceBboxes && gridImg.faces.length) {
+            overlayNeedsRedraw = true;
+          }
+          if (thumbObj) {
+            const thumbWidth = Number(thumbObj.thumbnail_width);
+            const thumbHeight = Number(thumbObj.thumbnail_height);
+            if (!Number.isNaN(thumbWidth) && thumbWidth > 0) {
+              gridImg.thumbnail_width = thumbWidth;
+            }
+            if (!Number.isNaN(thumbHeight) && thumbHeight > 0) {
+              gridImg.thumbnail_height = thumbHeight;
+            }
+          }
         }
-        if (gridImg.id != null && thumbObj && thumbObj.thumbnail) {
-          thumbnailLoadedMap[gridImg.id] =
-            (thumbnailLoadedMap[gridImg.id] || 0) + 1;
-        }
-        gridImg.faces =
-          thumbObj && Array.isArray(thumbObj.faces) ? thumbObj.faces : [];
-        gridImg.hands =
-          thumbObj && Array.isArray(thumbObj.hands) ? thumbObj.hands : [];
-        if (props.showFaceBboxes && gridImg.faces.length) {
-          overlayNeedsRedraw = true;
-        }
+        // Always refresh penalised_tags regardless of thumbnail cache state.
         gridImg.penalised_tags =
           thumbObj && Array.isArray(thumbObj.penalised_tags)
             ? thumbObj.penalised_tags
             : [];
-        if (thumbObj) {
-          const thumbWidth = Number(thumbObj.thumbnail_width);
-          const thumbHeight = Number(thumbObj.thumbnail_height);
-          if (!Number.isNaN(thumbWidth) && thumbWidth > 0) {
-            gridImg.thumbnail_width = thumbWidth;
-          }
-          if (!Number.isNaN(thumbHeight) && thumbHeight > 0) {
-            gridImg.thumbnail_height = thumbHeight;
-          }
-        }
       }
     }
     // Insert/update images at their correct indices
