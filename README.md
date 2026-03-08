@@ -220,12 +220,13 @@ PixlVault can run fully on CPU, but GPU acceleration requires **CUDA 12.8** plus
    nvcc --version
    nvidia-smi
    ```
-4. Install PyTorch with CUDA 12.8:  
+4. Install PyTorch with CUDA 12.8 (from the pixlvault install folder):
    ```bash
+   venv\Scripts\Activate
    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
    ```  
    
-5. Install ONNX Runtime GPU:  
+6. Install ONNX Runtime GPU:  
    ```bash
    pip uninstall -y onnxruntime
    pip install onnxruntime-gpu
