@@ -430,7 +430,9 @@ class StartupChecks:
                     "build from source"
                 )
         except Exception:
-            pass
+            # Best-effort diagnostic only: if we cannot query GPU capability,
+            # fall back to no additional note rather than failing startup.
+            return ""
         return ""
 
     def _detect_onnxruntime_package(self) -> str:
