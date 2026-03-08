@@ -15,6 +15,8 @@ import UserSettingsDialog from "./UserSettingsDialog.vue";
 import unknownPerson from "../assets/unknown-person.png"; // Fallback avatar for characters without thumbnails
 import { apiClient } from "../utils/apiClient";
 
+const appVersion = __APP_VERSION__;
+
 const props = defineProps({
   collapsed: { type: Boolean, default: false },
   selectedCharacter: { type: [String, Number, null], default: null },
@@ -1127,6 +1129,9 @@ defineExpose({ refreshSidebar, openSettingsDialog, startLocalImport });
         <span v-if="!props.collapsed" class="sidebar-brand-title"
           >PixlVault</span
         >
+        <span v-if="!props.collapsed" class="sidebar-brand-version"
+          >v{{ appVersion }}</span
+        >
       </div>
       <v-btn
         icon
@@ -1703,6 +1708,15 @@ defineExpose({ refreshSidebar, openSettingsDialog, startLocalImport });
   font-family: "PressStart2P", monospace;
   font-size: 0.95em;
   color: rgb(var(--v-theme-sidebar-text));
+}
+
+.sidebar-brand-version {
+  font-size: 0.68rem;
+  opacity: 0.6;
+  color: rgb(var(--v-theme-sidebar-text));
+  margin-left: -6px;
+  align-self: flex-end;
+  padding-bottom: 2px;
 }
 
 .sidebar-brand-toggle {
