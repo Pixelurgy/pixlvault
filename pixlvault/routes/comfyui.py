@@ -37,7 +37,9 @@ DEFAULT_COMFYUI_URL = "http://127.0.0.1:8188/"
 
 def _workflow_builtin_dir() -> str:
     return os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "data", "comfyui-workflows", "built-in")
+        os.path.join(
+            os.path.dirname(__file__), "..", "data", "comfyui-workflows", "built-in"
+        )
     )
 
 

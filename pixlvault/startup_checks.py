@@ -385,7 +385,7 @@ class StartupChecks:
 
         PictureTagger.FORCE_CPU = False
         if device_value == "auto":
-            self._server_config["default_device"] = "cuda"
+            self._server_config["default_device"] = "auto"
         outcome.notes.append(
             f"GPU check passed ({free_mb:.0f} MB free VRAM); using CUDA inference."
         )
@@ -394,9 +394,14 @@ class StartupChecks:
         self,
         outcome: StartupCheckOutcome,
         warning: str,
+        is_auto_mode: bool = False,
     ) -> None:
         PictureTagger.FORCE_CPU = True
-        self._server_config["default_device"] = "cpu"
+        # Only persist "cpu" when it was an explicit user choice.  When in auto
+        # mode we keep "auto" in the config so that the next startup re-evaluates
+        # CUDA availability (e.g. after upgrading the CUDA runtime or drivers).
+        if not is_auto_mode:
+            self._server_config["default_device"] = "cpu"
         outcome.forced_cpu = True
         outcome.warnings.append(warning)
 
@@ -411,7 +416,9 @@ class StartupChecks:
         if is_explicit_gpu and not is_auto_mode:
             outcome.hard_failures.append(explicit_gpu_failure)
             return
-        self._force_cpu_with_warning(outcome, fallback_warning)
+        self._force_cpu_with_warning(
+            outcome, fallback_warning, is_auto_mode=is_auto_mode
+        )
 
     def _detect_gpu_arch_note(self) -> str:
         """Return a human-readable note if the GPU arch may be unsupported by ORT."""
