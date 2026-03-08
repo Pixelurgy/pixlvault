@@ -40,15 +40,18 @@ class SmartScoreUtils:
             "w_penalised_tag": 0.40,
             "penalised_tag_cap": 3.5,
             "topk": 3,
-            "sim_knee": 0.5,
-            "sim_power": 2.0,
-            "bad_sim_knee": 0.5,
-            "bad_sim_power": 2.0,
+            "sim_knee": 0.3,
+            "sim_power": 1.5,
+            "bad_sim_knee": 0.3,
+            "bad_sim_power": 1.5,
             "aest_min": 2.0,
             "aest_max": 7.0,
             "res_min_mpx": 0.2,
             "res_max_mpx": 4.0,
             "res_use_log": True,
+            "batch_normalize": True,
+            "batch_normalize_lo_pct": 5.0,
+            "batch_normalize_hi_pct": 95.0,
         }
         if config:
             cfg.update(config)
@@ -217,6 +220,17 @@ class SmartScoreUtils:
         )
         penalised_component = cfg["w_penalised_tag"] * penalised_equivalent
         scores -= penalised_component
+
+        # Soft batch normalization: stretch scores so the distribution fills [0,1]
+        # using robust percentiles so individual outliers don't dominate.
+        if cfg.get("batch_normalize", True) and len(scores) >= 4:
+            lo_pct = float(cfg.get("batch_normalize_lo_pct", 5.0))
+            hi_pct = float(cfg.get("batch_normalize_hi_pct", 95.0))
+            p_lo = np.percentile(scores, lo_pct)
+            p_hi = np.percentile(scores, hi_pct)
+            span = p_hi - p_lo
+            if span > 0.01:
+                scores = (scores - p_lo) / span
 
         # Rescale [0, 1] to [1, 5]
         clipped = np.clip(scores, 0.0, 1.0)
