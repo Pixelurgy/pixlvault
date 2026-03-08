@@ -149,7 +149,7 @@ class Server:
         if self._server_config.get("require_ssl", False):
             self._ensure_ssl_certificates()
 
-        logger.info(
+        logger.debug(
             "Creating Vault instance with image root: "
             + str(self._server_config["image_root"])
         )
@@ -327,7 +327,7 @@ class Server:
 
         total = len(missing)
         if total == 0:
-            logger.info("All thumbnails already exist.")
+            logger.debug("All thumbnails already exist.")
             return
 
         logger.info("Generating %s missing thumbnails at startup.", total)
@@ -376,9 +376,24 @@ class Server:
 
     def run(self):
         self._shutdown_on_lifespan = True
+        version = self._get_version()
+        host = self._server_config.get("host", "127.0.0.1")
+        port = self._server_config.get("port", 9537)
+        server_url = f"http://{host}:{port}"
+        _w = 51
+        _b = "═" * _w
+        print(
+            f"\n"
+            f"  ╔{_b}╗\n"
+            f"  ║{'  PixlVault  v' + version:<{_w}}║\n"
+            f"  ╠{_b}╣\n"
+            f"  ║{'  GitHub : https://github.com/Pixelurgy/pixlvault':<{_w}}║\n"
+            f"  ║{'  Server : ' + server_url:<{_w}}║\n"
+            f"  ╚{_b}╝\n"
+        )
         uvicorn_kwargs = dict(
-            host=self._server_config.get("host", "127.0.0.1"),
-            port=self._server_config.get("port", 9537),
+            host=host,
+            port=port,
             log_config=uvicorn_log_config,
         )
         if self._server_config.get("require_ssl", False):

@@ -70,7 +70,7 @@ class StartupChecks:
         self._check_device_and_vram(outcome)
 
         for note in outcome.notes:
-            self._logger.info("[startup-check] %s", note)
+            self._logger.debug("[startup-check] %s", note)
         for warning in outcome.warnings:
             self._logger.warning("[startup-check] %s", warning)
 
@@ -446,7 +446,9 @@ class StartupChecks:
                 continue
         return "unknown"
 
-    def _onnx_cuda_remediation_hint(self, onnx_package: str, gpu_arch_note: str = "") -> str:
+    def _onnx_cuda_remediation_hint(
+        self, onnx_package: str, gpu_arch_note: str = ""
+    ) -> str:
         config_hint = (
             f"Server config path: {self._server_config_path}.\n"
             "Set `default_device` to `cpu` or `auto` there to avoid strict CUDA startup checks."

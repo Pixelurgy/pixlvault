@@ -102,7 +102,7 @@ class WorkPlanner:
             target=self._run, name="WorkPlanner", daemon=True
         )
         self._thread.start()
-        logger.info("WorkPlanner started with %s finders.", len(self._task_finders))
+        logger.debug("WorkPlanner started with %s finders.", len(self._task_finders))
 
     def stop(self):
         self._stop.set()

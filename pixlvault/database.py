@@ -323,7 +323,7 @@ class VaultDatabase:
         self._db_path = db_path
         self.image_root = os.path.dirname(self._db_path)
         db_exists = os.path.exists(self._db_path)
-        logger.info(f"Vault init, db_path={self._db_path}, db_exists={db_exists}")
+        logger.debug(f"Vault init, db_path={self._db_path}, db_exists={db_exists}")
 
         self._engine = create_engine(f"sqlite:///{self._db_path}", echo=False)
         event.listen(self._engine, "connect", init_database)

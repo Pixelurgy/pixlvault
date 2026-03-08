@@ -166,7 +166,7 @@ class PictureTagger:
                     "PictureTagger initialising with CPU inference (CUDA is not available)."
                 )
 
-        logger.info(f"PictureTagger initialised with device: {self._device}")
+        logger.debug(f"PictureTagger initialised with device: {self._device}")
         self._custom_tagger_path = CUSTOM_TAGGER_PATH
         self._use_custom_tagger = True
         self._custom_tagger_threshold_full = CUSTOM_TAGGER_THRESHOLD_FULL
@@ -294,7 +294,7 @@ class PictureTagger:
     def set_max_vram_usage_gb(self, max_vram_gb: float | None):
         if self._device != "cuda":
             self._max_vram_usage_mb = None
-            logger.info(
+            logger.debug(
                 "Ignoring tagger VRAM budget because inference device is %s.",
                 self._device,
             )
@@ -316,10 +316,21 @@ class PictureTagger:
             self._max_vram_usage_mb = max(1, min(requested_mb, total_mb))
         else:
             self._max_vram_usage_mb = requested_mb
+        try:
+            free_bytes, _ = torch.cuda.mem_get_info()
+            free_gb = free_bytes / 1024**3
+            free_str = f"{free_gb:.1f} GB free VRAM"
+        except Exception:
+            free_str = "VRAM unknown"
+        try:
+            gpu_name = torch.cuda.get_device_name(0)
+        except Exception:
+            gpu_name = "GPU"
         logger.info(
-            "Tagger VRAM budget set to %.2f GB (%s MB)",
+            "CUDA inference: %s, %s, budget %.2f GB",
+            gpu_name,
+            free_str,
             self._max_vram_usage_mb / 1024.0,
-            self._max_vram_usage_mb,
         )
 
     def _vram_limited_batch_cap(self, base_mb: int, per_item_mb: int) -> int:
