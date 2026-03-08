@@ -1335,7 +1335,16 @@ class PictureTagger:
         # hf_hub_download
 
         # https://github.com/toriato/stable-diffusion-webui-wd14-tagger/issues/22
-        if not os.path.exists(self._model_location) or force_download:
+        # Check for the actual model files, not just the directory. The directory may
+        # have been created by a previously failed download attempt, in which case we
+        # still need to download the files.
+        onnx_model_path = os.path.join(self._model_location, "model.onnx")
+        tags_csv_path = os.path.join(self._model_location, "selected_tags.csv")
+        files_present = os.path.exists(onnx_model_path) and os.path.exists(
+            tags_csv_path
+        )
+
+        if not files_present or force_download:
             os.makedirs(self._model_location, exist_ok=True)
             logger.debug(
                 f"downloading wd14 tagger model from hf_hub. id: {DEFAULT_WD14_TAGGER_REPO}"
@@ -1344,8 +1353,6 @@ class PictureTagger:
             from huggingface_hub import hf_hub_download
 
             # Download ONNX model
-            onnx_model_path = os.path.join(self._model_location, "model.onnx")
-            tags_csv_path = os.path.join(self._model_location, "selected_tags.csv")
             logger.debug(f"Downloading ONNX model to {onnx_model_path}")
             hf_hub_download(
                 repo_id=DEFAULT_WD14_TAGGER_REPO,
