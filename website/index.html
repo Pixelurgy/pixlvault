@@ -633,7 +633,13 @@
               <span class="pip-label">Install with pip</span>
               <div class="pip-cmd">
                 <code>pip install pixlvault</code>
-                <button class="pip-copy-btn" id="pip-copy-btn" title="Copy to clipboard">Copy</button>
+                <button
+                  class="pip-copy-btn"
+                  id="pip-copy-btn"
+                  title="Copy to clipboard"
+                >
+                  Copy
+                </button>
               </div>
               <span id="pip-copied" class="pip-copied"></span>
             </div>
@@ -827,6 +833,13 @@
               image processing.
             </p>
           </div>
+          <div class="feature-card">
+            <h3>Keyboard shortcuts</h3>
+            <p>
+              Navigate and control PixlVault efficiently using standard keyboard
+              shortcuts for selection, scoring, deletion, etc.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -981,11 +994,13 @@
         if (info.mode === "windows") {
           try {
             const resp = await fetch(
-              "https://api.github.com/repos/Pixelurgy/pixlvault/releases/latest"
+              "https://api.github.com/repos/Pixelurgy/pixlvault/releases/latest",
             );
             if (resp.ok) {
               const release = await resp.json();
-              const asset = release.assets?.find((a) => a.name.endsWith(".exe"));
+              const asset = release.assets?.find((a) =>
+                a.name.endsWith(".exe"),
+              );
               if (asset) {
                 downloadBtn.href = asset.browser_download_url;
               }
