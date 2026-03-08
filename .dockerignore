@@ -1,0 +1,43 @@
+# Version control
+.git
+.gitignore
+
+# Python caches and build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# Frontend source (built in Stage 1; only dist is copied into runtime)
+frontend/node_modules/
+frontend/dist/
+
+# Tests and dev tooling
+tests/
+scripts/
+.ruff_cache/
+.pytest_cache/
+pytest.ini
+CONTRIBUTING.md
+TODO.txt
+tasksystem.md
+docs/
+website/
+tmp/
+
+# Docker files themselves (avoid recursive context issues)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Downloaded models (large; mount or download at runtime)
+downloaded_models/
+
+# Installer artefacts
+installer/
