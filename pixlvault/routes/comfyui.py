@@ -24,6 +24,8 @@ from pixlvault.stacking import (
     build_stack_filename_prefix,
     get_or_create_stack_for_picture,
 )
+from platformdirs import user_data_dir
+
 from pixlvault.pixl_logging import get_logger
 
 logger = get_logger(__name__)
@@ -33,17 +35,14 @@ PLACEHOLDER_CAPTION = "{{caption}}"
 DEFAULT_COMFYUI_URL = "http://127.0.0.1:8188/"
 
 
-def _workflow_base_dir() -> str:
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    return os.path.join(base_dir, "comfyui-workflows")
-
-
 def _workflow_builtin_dir() -> str:
-    return os.path.join(_workflow_base_dir(), "built-in")
+    return os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "data", "comfyui-workflows", "built-in")
+    )
 
 
 def _workflow_user_dir() -> str:
-    return os.path.join(_workflow_base_dir(), "user")
+    return os.path.join(user_data_dir("pixlvault"), "comfyui-workflows", "user")
 
 
 def _workflow_dirs() -> list[tuple[str, str]]:
@@ -649,7 +648,6 @@ def create_router(server) -> APIRouter:
         description="Lists discovered built-in and user workflows with placeholder validation metadata.",
     )
     async def list_comfyui_workflows():
-        workflow_dir = _workflow_base_dir()
         workflow_dirs = {
             "built_in": _workflow_builtin_dir(),
             "user": _workflow_user_dir(),
@@ -685,7 +683,6 @@ def create_router(server) -> APIRouter:
         workflows.sort(key=lambda item: item.get("name", ""))
         return {
             "workflows": workflows,
-            "workflow_dir": workflow_dir,
             "workflow_dirs": workflow_dirs,
         }
 

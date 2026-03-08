@@ -143,8 +143,8 @@
                     v-if="!validComfyWorkflows.length"
                     class="overlay-comfy-warning"
                   >
-                    No valid workflows found in comfyui-workflows/ (needs
-                    {{ imagePlaceholderLabel }}).
+                    No valid workflows found. Workflows need a
+                    {{ imagePlaceholderLabel }} placeholder.
                   </div>
                   <label class="overlay-comfy-field-label">Workflow</label>
                   <select

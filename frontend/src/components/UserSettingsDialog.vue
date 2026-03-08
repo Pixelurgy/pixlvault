@@ -1592,7 +1592,7 @@ const workflowImportCaptionPreview = computed(() => {
               <div class="settings-section">
                 <div class="settings-section-title">Saved Workflows</div>
                 <div class="settings-section-desc">
-                  Manage workflows available in comfyui-workflows/.
+                  Manage your saved ComfyUI workflows.
                 </div>
                 <div class="settings-form">
                   <div v-if="workflowListLoading" class="settings-success">
