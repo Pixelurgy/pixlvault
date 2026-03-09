@@ -478,6 +478,7 @@ class AuthService:
             "/favicon.ico",
             "/",
             "/version",
+            "/version/latest",
             "/check-session",
             "/logout",
         ]
