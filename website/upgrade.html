@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Upgrade PixlVault</title>
+    <meta
+      name="description"
+      content="How to upgrade PixlVault — pip, Windows installer, Docker, or from source."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #d3d5d7;
+        --bg-2: #d3d5d7;
+        --panel: rgba(255, 255, 255, 0.94);
+        --panel-strong: rgba(225, 229, 235, 0.9);
+        --text: #393f46;
+        --muted: rgba(57, 63, 70, 0.7);
+        --accent: #8ea604;
+        --accent-2: #7f8f1a;
+        --accent-3: #2f8b5f;
+        --warning: #c4942f;
+        --shadow: rgba(17, 20, 26, 0.18);
+        --toolbar: #696f76;
+        --toolbar-text: #f2f5fa;
+        --mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+        --sans: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+        --radius-lg: 22px;
+        --radius-md: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        color: var(--text);
+        background:
+          radial-gradient(
+            circle at 15% 10%,
+            rgba(159, 177, 31, 0.18),
+            transparent 45%
+          ),
+          radial-gradient(
+            circle at 85% 0%,
+            rgba(47, 139, 95, 0.16),
+            transparent 40%
+          ),
+          linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+        min-height: 100vh;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .shell {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 8px 16px 80px;
+      }
+
+      /* ── Nav ── */
+      .nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        background: var(--toolbar);
+        color: var(--toolbar-text);
+        padding: 14px 18px;
+        border-radius: 16px;
+        box-shadow: 0 16px 34px rgba(17, 20, 26, 0.12);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-weight: 600;
+        font-size: 1.1rem;
+        color: var(--toolbar-text);
+      }
+
+      .brand img {
+        width: 48px;
+        height: 48px;
+        object-fit: contain;
+      }
+
+      .brand-name {
+        font-family: "Press Start 2P", monospace;
+        font-size: 1.1rem;
+        letter-spacing: 0.02em;
+        color: var(--toolbar-text);
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 0.95rem;
+        color: var(--toolbar-text);
+      }
+
+      .nav-links a:hover {
+        color: var(--accent);
+      }
+
+      /* ── Hero ── */
+      .page-hero {
+        margin-top: 48px;
+        margin-bottom: 48px;
+        text-align: center;
+      }
+
+      .page-hero h1 {
+        font-size: clamp(2rem, 4vw, 3.2rem);
+        margin: 0 0 14px;
+        line-height: 1.1;
+      }
+
+      .page-hero p {
+        font-size: 1.1rem;
+        color: var(--muted);
+        line-height: 1.6;
+        margin: 0 auto;
+        max-width: 560px;
+      }
+
+      /* ── Method cards ── */
+      .method-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
+        gap: 20px;
+      }
+
+      .method-card {
+        background: var(--panel);
+        border-radius: var(--radius-lg);
+        border: 1px solid rgba(34, 38, 44, 0.11);
+        box-shadow: 0 8px 32px var(--shadow);
+        padding: 28px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .method-header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .method-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.6rem;
+        flex-shrink: 0;
+      }
+
+      .method-icon--pip    { background: rgba(142, 166, 4, 0.14); }
+      .method-icon--win    { background: rgba(0, 120, 212, 0.12); }
+      .method-icon--docker { background: rgba(29, 99, 237, 0.1); }
+      .method-icon--git    { background: rgba(240, 80, 50, 0.1); }
+
+      .method-title {
+        font-size: 1.2rem;
+        font-weight: 700;
+        margin: 0 0 3px;
+      }
+
+      .method-subtitle {
+        font-size: 0.85rem;
+        color: var(--muted);
+        margin: 0;
+      }
+
+      .method-steps {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .step {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .step-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .cmd-block {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--panel-strong);
+        border-radius: 10px;
+        padding: 10px 14px;
+        border: 1px solid rgba(34, 38, 44, 0.1);
+      }
+
+      .cmd-block code {
+        font-family: var(--mono);
+        font-size: 0.88rem;
+        color: var(--text);
+        flex: 1;
+        white-space: pre;
+        overflow-x: auto;
+      }
+
+      .copy-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: var(--accent);
+        font-family: var(--sans);
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 2px 6px;
+        border-radius: 6px;
+        flex-shrink: 0;
+        transition: background 0.15s;
+      }
+
+      .copy-btn:hover {
+        background: rgba(142, 166, 4, 0.1);
+      }
+
+      .copy-btn.copied {
+        color: var(--accent-3);
+      }
+
+      .step-note {
+        font-size: 0.83rem;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .step-note a {
+        color: var(--accent-2);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+
+      .step-note a:hover {
+        color: var(--accent);
+      }
+
+      .method-warning {
+        background: rgba(196, 148, 47, 0.1);
+        border: 1px solid rgba(196, 148, 47, 0.28);
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 0.84rem;
+        color: #7a5a18;
+        line-height: 1.5;
+      }
+
+      /* ── Footer ── */
+      .page-footer {
+        margin-top: 72px;
+        text-align: center;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+
+      .page-footer a {
+        color: var(--accent-2);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <nav class="nav">
+        <a href="index.html" class="brand">
+          <img src="assets/logo.png" alt="PixlVault logo" />
+          <span class="brand-name">PixlVault</span>
+        </a>
+        <div class="nav-links">
+          <a href="index.html#features">Features</a>
+          <a href="index.html#workflows">Use cases</a>
+          <a href="https://github.com/Pixelurgy/pixlvault">GitHub</a>
+        </div>
+      </nav>
+
+      <div class="page-hero">
+        <h1>Upgrading PixlVault</h1>
+        <p>
+          Choose the box that matches how you installed PixlVault and follow
+          the steps to get the latest version.
+        </p>
+      </div>
+
+      <div class="method-grid">
+
+        <!-- pip -->
+        <div class="method-card">
+          <div class="method-header">
+            <div class="method-icon method-icon--pip">🐍</div>
+            <div>
+              <p class="method-title">pip install</p>
+              <p class="method-subtitle">Python virtual environment / PyPI</p>
+            </div>
+          </div>
+          <div class="method-steps">
+            <div class="step">
+              <span class="step-label">1 — Activate your virtual environment</span>
+              <div class="cmd-block">
+                <code># Linux / macOS
+source .venv/bin/activate
+
+# Windows
+.venv\Scripts\activate</code>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-label">2 — Upgrade</span>
+              <div class="cmd-block">
+                <code>pip install --upgrade pixlvault</code>
+                <button class="copy-btn" data-copy="pip install --upgrade pixlvault">Copy</button>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-label">3 — Restart the server</span>
+              <p class="step-note">
+                Stop the running server and start it again with
+                <code>pixlvault-server</code> (or however you normally launch it).
+                The new version is active immediately.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Windows installer -->
+        <div class="method-card">
+          <div class="method-header">
+            <div class="method-icon method-icon--win">🪟</div>
+            <div>
+              <p class="method-title">Windows installer</p>
+              <p class="method-subtitle">One-click installer / .exe bundle</p>
+            </div>
+          </div>
+          <div class="method-steps">
+            <div class="step">
+              <span class="step-label">1 — Download the new installer</span>
+              <p class="step-note">
+                Go to the
+                <a href="https://github.com/Pixelurgy/pixlvault/releases/latest" target="_blank" rel="noopener">
+                  latest release on GitHub
+                </a>
+                and download the Windows <code>.exe</code> installer.
+              </p>
+            </div>
+            <div class="step">
+              <span class="step-label">2 — Stop the running server</span>
+              <p class="step-note">
+                Close the PixlVault server window or stop the background service
+                before running the installer.
+              </p>
+            </div>
+            <div class="step">
+              <span class="step-label">3 — Run the installer</span>
+              <p class="step-note">
+                Double-click the downloaded installer and follow the prompts.
+                It will replace the existing installation in-place. Your image
+                library and settings are preserved.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Docker -->
+        <div class="method-card">
+          <div class="method-header">
+            <div class="method-icon method-icon--docker">🐳</div>
+            <div>
+              <p class="method-title">Docker</p>
+              <p class="method-subtitle">docker-compose or standalone container</p>
+            </div>
+          </div>
+          <div class="method-steps">
+            <div class="step">
+              <span class="step-label">1 — Pull the latest image</span>
+              <div class="cmd-block">
+                <code>docker pull ghcr.io/pixelurgy/pixlvault:latest</code>
+                <button class="copy-btn" data-copy="docker pull ghcr.io/pixelurgy/pixlvault:latest">Copy</button>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-label">2 — Restart the container</span>
+              <div class="cmd-block">
+                <code># docker-compose
+docker compose down &amp;&amp; docker compose up -d
+
+# standalone
+docker stop pixlvault
+docker rm pixlvault
+docker run -d ... ghcr.io/pixelurgy/pixlvault:latest</code>
+              </div>
+            </div>
+            <div class="method-warning">
+              ⚠️ Make sure your image root and config are mounted as volumes so
+              they survive the container replacement.
+            </div>
+          </div>
+        </div>
+
+        <!-- Git / from source -->
+        <div class="method-card">
+          <div class="method-header">
+            <div class="method-icon method-icon--git">📦</div>
+            <div>
+              <p class="method-title">From source</p>
+              <p class="method-subtitle">git clone / editable install</p>
+            </div>
+          </div>
+          <div class="method-steps">
+            <div class="step">
+              <span class="step-label">1 — Pull the latest code</span>
+              <div class="cmd-block">
+                <code>cd pixlvault
+git pull</code>
+                <button class="copy-btn" data-copy="git pull">Copy</button>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-label">2 — Re-install dependencies</span>
+              <div class="cmd-block">
+                <code>pip install -e .</code>
+                <button class="copy-btn" data-copy="pip install -e .">Copy</button>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-label">3 — Rebuild the frontend</span>
+              <div class="cmd-block">
+                <code>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code>
+                <button class="copy-btn" data-copy="cd frontend && npm ci && npm run build">Copy</button>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-label">4 — Restart the server</span>
+              <p class="step-note">
+                Stop and restart <code>pixlvault-server</code> (or
+                <code>python -m pixlvault.app</code>) to load the new code.
+              </p>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /method-grid -->
+
+      <div class="page-footer">
+        <p>
+          See the
+          <a href="https://github.com/Pixelurgy/pixlvault/releases" target="_blank" rel="noopener">full changelog</a>
+          for what's new in each release. &nbsp;·&nbsp;
+          <a href="index.html">Back to PixlVault home</a>
+        </p>
+      </div>
+    </div>
+
+    <script>
+      document.querySelectorAll(".copy-btn[data-copy]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          navigator.clipboard.writeText(btn.dataset.copy).then(() => {
+            const original = btn.textContent;
+            btn.textContent = "Copied!";
+            btn.classList.add("copied");
+            setTimeout(() => {
+              btn.textContent = original;
+              btn.classList.remove("copied");
+            }, 2000);
+          });
+        });
+      });
+    </script>
+  </body>
+</html>
