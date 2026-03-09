@@ -7,7 +7,7 @@
       :color="
         n <= dScore
           ? 'rgba(var(--v-theme-accent))'
-          : 'rgba(var(--v-theme-background), 0.1)'
+          : 'rgba(var(--v-theme-on-background), 0.2)'
       "
       style="cursor: pointer"
       @click.stop="handleClick(n)"
