@@ -172,10 +172,18 @@
         flex-shrink: 0;
       }
 
-      .method-icon--pip    { background: rgba(142, 166, 4, 0.14); }
-      .method-icon--win    { background: rgba(0, 120, 212, 0.12); }
-      .method-icon--docker { background: rgba(29, 99, 237, 0.1); }
-      .method-icon--git    { background: rgba(240, 80, 50, 0.1); }
+      .method-icon--pip {
+        background: rgba(142, 166, 4, 0.14);
+      }
+      .method-icon--win {
+        background: rgba(0, 120, 212, 0.12);
+      }
+      .method-icon--docker {
+        background: rgba(29, 99, 237, 0.1);
+      }
+      .method-icon--git {
+        background: rgba(240, 80, 50, 0.1);
+      }
 
       .method-title {
         font-size: 1.2rem;
@@ -308,13 +316,12 @@
       <div class="page-hero">
         <h1>Upgrading PixlVault</h1>
         <p>
-          Choose the box that matches how you installed PixlVault and follow
-          the steps to get the latest version.
+          Choose the box that matches how you installed PixlVault and follow the
+          steps to get the latest version.
         </p>
       </div>
 
       <div class="method-grid">
-
         <!-- pip -->
         <div class="method-card">
           <div class="method-header">
@@ -326,28 +333,34 @@
           </div>
           <div class="method-steps">
             <div class="step">
-              <span class="step-label">1 — Activate your virtual environment</span>
+              <span class="step-label"
+                >1 — Activate your virtual environment</span
+              >
               <div class="cmd-block">
-                <code># Linux / macOS
-source .venv/bin/activate
-
-# Windows
-.venv\Scripts\activate</code>
+                <code
+                  ># Linux / macOS source .venv/bin/activate # Windows
+                  .venv\Scripts\activate</code
+                >
               </div>
             </div>
             <div class="step">
               <span class="step-label">2 — Upgrade</span>
               <div class="cmd-block">
                 <code>pip install --upgrade pixlvault</code>
-                <button class="copy-btn" data-copy="pip install --upgrade pixlvault">Copy</button>
+                <button
+                  class="copy-btn"
+                  data-copy="pip install --upgrade pixlvault"
+                >
+                  Copy
+                </button>
               </div>
             </div>
             <div class="step">
               <span class="step-label">3 — Restart the server</span>
               <p class="step-note">
                 Stop the running server and start it again with
-                <code>pixlvault-server</code> (or however you normally launch it).
-                The new version is active immediately.
+                <code>pixlvault-server</code> (or however you normally launch
+                it). The new version is active immediately.
               </p>
             </div>
           </div>
@@ -367,7 +380,11 @@ source .venv/bin/activate
               <span class="step-label">1 — Download the new installer</span>
               <p class="step-note">
                 Go to the
-                <a href="https://github.com/Pixelurgy/pixlvault/releases/latest" target="_blank" rel="noopener">
+                <a
+                  href="https://github.com/Pixelurgy/pixlvault/releases/latest"
+                  target="_blank"
+                  rel="noopener"
+                >
                   latest release on GitHub
                 </a>
                 and download the Windows <code>.exe</code> installer.
@@ -383,8 +400,8 @@ source .venv/bin/activate
             <div class="step">
               <span class="step-label">3 — Run the installer</span>
               <p class="step-note">
-                Double-click the downloaded installer and follow the prompts.
-                It will replace the existing installation in-place. Your image
+                Double-click the downloaded installer and follow the prompts. It
+                will replace the existing installation in-place. Your image
                 library and settings are preserved.
               </p>
             </div>
@@ -397,7 +414,9 @@ source .venv/bin/activate
             <div class="method-icon method-icon--docker">🐳</div>
             <div>
               <p class="method-title">Docker</p>
-              <p class="method-subtitle">docker-compose or standalone container</p>
+              <p class="method-subtitle">
+                docker-compose or standalone container
+              </p>
             </div>
           </div>
           <div class="method-steps">
@@ -405,19 +424,23 @@ source .venv/bin/activate
               <span class="step-label">1 — Pull the latest image</span>
               <div class="cmd-block">
                 <code>docker pull ghcr.io/pixelurgy/pixlvault:latest</code>
-                <button class="copy-btn" data-copy="docker pull ghcr.io/pixelurgy/pixlvault:latest">Copy</button>
+                <button
+                  class="copy-btn"
+                  data-copy="docker pull ghcr.io/pixelurgy/pixlvault:latest"
+                >
+                  Copy
+                </button>
               </div>
             </div>
             <div class="step">
               <span class="step-label">2 — Restart the container</span>
               <div class="cmd-block">
-                <code># docker-compose
-docker compose down &amp;&amp; docker compose up -d
-
-# standalone
-docker stop pixlvault
-docker rm pixlvault
-docker run -d ... ghcr.io/pixelurgy/pixlvault:latest</code>
+                <code
+                  ># docker-compose docker compose down &amp;&amp; docker
+                  compose up -d # standalone docker stop pixlvault docker rm
+                  pixlvault docker run -d ...
+                  ghcr.io/pixelurgy/pixlvault:latest</code
+                >
               </div>
             </div>
             <div class="method-warning">
@@ -440,8 +463,7 @@ docker run -d ... ghcr.io/pixelurgy/pixlvault:latest</code>
             <div class="step">
               <span class="step-label">1 — Pull the latest code</span>
               <div class="cmd-block">
-                <code>cd pixlvault
-git pull</code>
+                <code>cd pixlvault git pull</code>
                 <button class="copy-btn" data-copy="git pull">Copy</button>
               </div>
             </div>
@@ -449,14 +471,23 @@ git pull</code>
               <span class="step-label">2 — Re-install dependencies</span>
               <div class="cmd-block">
                 <code>pip install -e .</code>
-                <button class="copy-btn" data-copy="pip install -e .">Copy</button>
+                <button class="copy-btn" data-copy="pip install -e .">
+                  Copy
+                </button>
               </div>
             </div>
             <div class="step">
               <span class="step-label">3 — Rebuild the frontend</span>
               <div class="cmd-block">
-                <code>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code>
-                <button class="copy-btn" data-copy="cd frontend && npm ci && npm run build">Copy</button>
+                <code
+                  >cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code
+                >
+                <button
+                  class="copy-btn"
+                  data-copy="cd frontend && npm ci && npm run build"
+                >
+                  Copy
+                </button>
               </div>
             </div>
             <div class="step">
@@ -468,13 +499,18 @@ git pull</code>
             </div>
           </div>
         </div>
-
-      </div><!-- /method-grid -->
+      </div>
+      <!-- /method-grid -->
 
       <div class="page-footer">
         <p>
           See the
-          <a href="https://github.com/Pixelurgy/pixlvault/releases" target="_blank" rel="noopener">full changelog</a>
+          <a
+            href="https://github.com/Pixelurgy/pixlvault/releases"
+            target="_blank"
+            rel="noopener"
+            >full changelog</a
+          >
           for what's new in each release. &nbsp;·&nbsp;
           <a href="index.html">Back to PixlVault home</a>
         </p>
