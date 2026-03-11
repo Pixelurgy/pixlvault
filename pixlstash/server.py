@@ -429,8 +429,23 @@ class Server:
                 return data["info"]["version"]
 
         try:
-            self._latest_version = await loop.run_in_executor(None, _fetch)
-            logger.info("Latest PixlStash version on PyPI: %s", self._latest_version)
+            from packaging.version import Version
+
+            pypi_version = await loop.run_in_executor(None, _fetch)
+            current_version = self._get_version()
+            if Version(pypi_version) > Version(current_version):
+                self._latest_version = pypi_version
+                logger.info(
+                    "Newer PixlStash version available on PyPI: %s (current: %s)",
+                    pypi_version,
+                    current_version,
+                )
+            else:
+                logger.info(
+                    "PixlStash is up to date (current: %s, PyPI: %s)",
+                    current_version,
+                    pypi_version,
+                )
         except Exception as exc:
             logger.warning(
                 "Failed to fetch latest PixlStash version from PyPI: %s", exc
