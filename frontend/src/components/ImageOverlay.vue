@@ -3,11 +3,10 @@
     <div
       class="overlay-shell"
       :class="{ 'chrome-hidden': chromeHidden, 'sidebar-open': sidebarOpen }"
-      @mousemove="handleUserActivity"
-      @mousedown="handleUserActivity"
+      @mousemove="handleMouseActivity"
+      @mousedown="handleMouseActivity"
       @click="handleOverlayClick"
       @wheel.passive="handleUserActivity"
-      @touchstart.passive="handleUserActivity"
     >
       <header
         ref="topbarRef"
@@ -28,7 +27,11 @@
             {{ descriptionTeaser || "Add a description" }}
           </button>
         </div>
-        <div v-for="(face, idx) in faceBboxes" :key="idx">
+        <div
+          class="overlay-character-names"
+          v-for="(face, idx) in faceBboxes"
+          :key="idx"
+        >
           <span
             v-if="face.character_name"
             :style="{ color: faceBoxColor(idx) }"
@@ -222,12 +225,64 @@
             @added="(payload) => emit('added-to-set', payload)"
           />
           <StarRatingOverlay
-            v-if="image"
+            v-if="image && !isMobile"
             :class="{ hidden: chromeHidden }"
             :score="image?.score || 0"
             icon-size="large"
             @set-score="setScore"
           />
+          <v-menu
+            v-if="image && isMobile"
+            location="bottom end"
+            origin="top end"
+            transition="scale-transition"
+          >
+            <template #activator="{ props: menuProps }">
+              <button
+                v-bind="menuProps"
+                class="overlay-icon-btn overlay-star-mobile-btn"
+                type="button"
+                aria-label="Set rating"
+                :class="{ hidden: chromeHidden }"
+              >
+                <v-icon size="18" color="rgba(var(--v-theme-accent))"
+                  >mdi-star</v-icon
+                >
+                <span class="overlay-star-mobile-label">{{
+                  image?.score || 0
+                }}</span>
+              </button>
+            </template>
+            <div class="overlay-star-menu">
+              <button
+                v-for="n in [0, 1, 2, 3, 4, 5]"
+                :key="n"
+                class="overlay-star-menu-item"
+                :class="{
+                  'overlay-star-menu-item--active': (image?.score || 0) === n,
+                }"
+                type="button"
+                @click.stop="setScore(n)"
+              >
+                <span class="overlay-star-menu-stars">
+                  <v-icon
+                    v-for="s in 5"
+                    :key="s"
+                    size="16"
+                    :color="
+                      s <= n
+                        ? 'rgba(var(--v-theme-accent))'
+                        : 'rgba(255,255,255,0.2)'
+                    "
+                    >mdi-star</v-icon
+                  >
+                </span>
+                <span class="overlay-star-menu-label">{{
+                  n === 0 ? "No rating" : n
+                }}</span>
+              </button>
+            </div>
+          </v-menu>
           <button
             class="overlay-icon-btn"
             type="button"
@@ -242,6 +297,7 @@
             <v-icon size="20">mdi-face-recognition</v-icon>
           </button>
           <button
+            v-if="!isMobile"
             class="overlay-icon-btn"
             type="button"
             title="Draw face bounding box"
@@ -263,10 +319,9 @@
             @click="toggleZoom"
           >
             <v-icon>mdi-magnify</v-icon>
-            <span class="zoom-btn-label">{{ zoomHudLabel }}</span>
           </button>
           <button
-            class="overlay-icon-btn"
+            class="overlay-icon-btn overlay-topbar-sidebar-toggle"
             type="button"
             title="Toggle sidebar"
             aria-label="Toggle sidebar"
@@ -331,24 +386,6 @@
           @dblclick="toggleZoom"
           @wheel.prevent="onWheelZoom"
         >
-          <button
-            class="overlay-canvas-copy"
-            type="button"
-            title="Copy image"
-            aria-label="Copy image"
-            :disabled="!canCopyOverlay"
-            :class="{ hidden: chromeHidden }"
-            @click.stop="copyOverlayImage"
-          >
-            <v-icon size="16">
-              {{
-                overlayCopyState === "copied"
-                  ? "mdi-check-bold"
-                  : "mdi-content-copy"
-              }}
-            </v-icon>
-            <span>Copy</span>
-          </button>
           <div
             class="overlay-media"
             :style="mediaTransformStyle"
@@ -447,7 +484,10 @@
             <v-icon>mdi-chevron-right</v-icon>
           </button>
 
-          <div class="zoom-hud" :class="{ hidden: chromeHidden }">
+          <div
+            class="zoom-hud"
+            :class="{ hidden: chromeHidden || zoomMode === 'fit' }"
+          >
             {{ zoomHudLabel }}
           </div>
 
@@ -2204,6 +2244,8 @@ const touchStart = ref({ x: 0, y: 0, time: 0 });
 const touchLatest = ref({ x: 0, y: 0 });
 const swipeHintVisible = ref(false);
 let swipeHintTimer = null;
+let touchTapConsumed = false;
+let lastTouchEndTime = 0;
 let filmstripWheelAccumulator = 0;
 let filmstripWheelLastStepTs = 0;
 let zoomWheelAccumulator = 0;
@@ -2269,7 +2311,16 @@ function handleUserActivity() {
   chromeRevealTimestamp.value = Date.now();
 }
 
+function handleMouseActivity() {
+  if (Date.now() - lastTouchEndTime < 600) return;
+  handleUserActivity();
+}
+
 function handleOverlayClick(event) {
+  if (touchTapConsumed) {
+    touchTapConsumed = false;
+    return;
+  }
   const target = event?.target;
   if (!target || !(target instanceof HTMLElement)) {
     handleUserActivity();
@@ -2348,8 +2399,10 @@ function onPanMove(event) {
 
 function onPanEnd(event) {
   isPanning.value = false;
-  if (event?.currentTarget?.releasePointerCapture) {
-    event.currentTarget.releasePointerCapture(event.pointerId);
+  try {
+    event?.currentTarget?.releasePointerCapture(event.pointerId);
+  } catch (_) {
+    /* pointer already released */
   }
 }
 
@@ -2481,7 +2534,10 @@ const filmstripCanvasData = computed(() => {
     return { items: [], topBufferSlots: 0 };
   }
 
-  const visibleCount = Math.min(FILMSTRIP_VISIBLE_COUNT, images.length);
+  const visibleCount = Math.min(
+    isMobile.value ? 5 : FILMSTRIP_VISIBLE_COUNT,
+    images.length,
+  );
   let visibleStart = currentIndex - Math.floor(visibleCount / 2);
   let visibleEnd = visibleStart + visibleCount - 1;
   if (visibleStart < 0) {
@@ -2494,15 +2550,10 @@ const filmstripCanvasData = computed(() => {
     visibleEnd = images.length - 1;
   }
 
-  const canvasCount = Math.min(
-    visibleCount + FILMSTRIP_BUFFER_COUNT * 2,
-    images.length,
-  );
-  let canvasStart = Math.max(0, visibleStart - FILMSTRIP_BUFFER_COUNT);
-  let canvasEnd = Math.min(
-    images.length - 1,
-    visibleEnd + FILMSTRIP_BUFFER_COUNT,
-  );
+  const bufferCount = isMobile.value ? 0 : FILMSTRIP_BUFFER_COUNT;
+  const canvasCount = Math.min(visibleCount + bufferCount * 2, images.length);
+  let canvasStart = Math.max(0, visibleStart - bufferCount);
+  let canvasEnd = Math.min(images.length - 1, visibleEnd + bufferCount);
   while (canvasEnd - canvasStart + 1 < canvasCount && canvasStart > 0) {
     canvasStart -= 1;
   }
@@ -2700,8 +2751,10 @@ async function onDrawEnd(event) {
   const x2 = Math.max(state.startX, state.currentX);
   const y2 = Math.max(state.startY, state.currentY);
   drawState.value = { ...drawState.value, active: false };
-  if (event.currentTarget?.releasePointerCapture) {
-    event.currentTarget.releasePointerCapture(event.pointerId);
+  try {
+    event?.currentTarget?.releasePointerCapture(event.pointerId);
+  } catch (_) {
+    /* pointer already released */
   }
   if (Math.abs(x2 - x1) < 5 || Math.abs(y2 - y1) < 5) {
     clearDrawMode();
@@ -2732,8 +2785,10 @@ async function onDrawEnd(event) {
 }
 
 function onDrawCancel(event) {
-  if (event?.currentTarget?.releasePointerCapture) {
-    event.currentTarget.releasePointerCapture(event.pointerId);
+  try {
+    event?.currentTarget?.releasePointerCapture(event.pointerId);
+  } catch (_) {
+    /* pointer already released */
   }
   clearDrawMode();
 }
@@ -2844,7 +2899,6 @@ function onTouchStart(event) {
     time: Date.now(),
   };
   touchLatest.value = { x: touch.clientX, y: touch.clientY };
-  handleUserActivity();
 }
 
 function onTouchMove(event) {
@@ -2852,9 +2906,10 @@ function onTouchMove(event) {
   const touch = event.touches?.[0];
   if (!touch) return;
   touchLatest.value = { x: touch.clientX, y: touch.clientY };
+  handleUserActivity();
 }
 
-function onTouchEnd() {
+function onTouchEnd(event) {
   if (!isMobile.value) return;
   const dx = touchLatest.value.x - touchStart.value.x;
   const dy = touchLatest.value.y - touchStart.value.y;
@@ -2864,12 +2919,43 @@ function onTouchEnd() {
   const swipeThreshold = 50;
   const maxVertical = 80;
   const maxTime = 600;
+  const tapThreshold = 10;
 
   if (absX >= swipeThreshold && absY <= maxVertical && elapsed <= maxTime) {
     if (dx > 0) {
       showPrevImage();
     } else {
       showNextImage();
+    }
+    return;
+  }
+
+  // Tap: toggle chrome visibility
+  if (absX < tapThreshold && absY < tapThreshold) {
+    lastTouchEndTime = Date.now();
+    touchTapConsumed = true;
+    const target = event?.changedTouches?.[0]
+      ? document.elementFromPoint(
+          event.changedTouches[0].clientX,
+          event.changedTouches[0].clientY,
+        )
+      : null;
+    const interactiveSelector =
+      "button, a, input, select, textarea, label, summary, details";
+    const interactiveContainerSelector =
+      ".overlay-sidebar, .overlay-rail, .overlay-nav";
+    if (
+      target &&
+      (target.closest(interactiveSelector) ||
+        target.closest(interactiveContainerSelector))
+    ) {
+      handleUserActivity();
+      return;
+    }
+    if (chromeHidden.value) {
+      handleUserActivity();
+    } else {
+      chromeHidden.value = true;
     }
   }
 }
@@ -3186,6 +3272,27 @@ function hasCharacterOption(face) {
   );
 }
 
+// Keep preload Image objects alive so the browser doesn't discard the
+// in-flight requests. Replaced on every navigation.
+let _preloadImages = [];
+
+function preloadAdjacentImages() {
+  const images = filmstripImages.value;
+  if (!images.length || !image.value) return;
+  const idx = images.findIndex((i) => i.id === image.value.id);
+  if (idx === -1) return;
+  const candidates = [];
+  if (idx + 1 < images.length) candidates.push(images[idx + 1]);
+  if (idx - 1 >= 0) candidates.push(images[idx - 1]);
+  _preloadImages = candidates.map((img) => {
+    const url = buildMediaUrl({ backendUrl: backendUrl.value, image: img });
+    if (!url) return null;
+    const probe = new Image();
+    probe.src = url;
+    return probe;
+  });
+}
+
 watch(
   () => image.value?.id,
   (newId) => {
@@ -3201,6 +3308,7 @@ watch(
       scheduleOverlayDimsUpdate();
       fetchFaceBboxes(newId);
       fetchOverlayMetadata(newId);
+      preloadAdjacentImages();
     } else {
       faceBboxes.value = [];
     }
@@ -4230,6 +4338,61 @@ function downloadComfyWorkflow(workflow) {
   color: rgb(var(--v-theme-primary));
 }
 
+.overlay-star-mobile-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.overlay-star-mobile-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: rgb(var(--v-theme-on-dark-surface));
+  min-width: 10px;
+}
+
+.overlay-star-menu {
+  background: rgba(var(--v-theme-dark-surface), 0.97);
+  border-radius: 10px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.overlay-star-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: rgb(var(--v-theme-on-dark-surface));
+  width: 100%;
+  text-align: left;
+}
+
+.overlay-star-menu-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.overlay-star-menu-item--active {
+  background: rgba(var(--v-theme-accent), 0.15);
+}
+
+.overlay-star-menu-stars {
+  display: flex;
+  gap: 2px;
+}
+
+.overlay-star-menu-label {
+  font-size: 0.82rem;
+  color: rgba(var(--v-theme-on-dark-surface), 0.8);
+}
+
 .overlay-comfy-activator {
   gap: 6px;
 }
@@ -4369,17 +4532,6 @@ function downloadComfyWorkflow(workflow) {
   flex: 0 0 18px;
 }
 
-.zoom-btn-label {
-  min-width: 48px;
-  text-align: left;
-}
-
-.zoom-btn-label {
-  font-size: 0.8rem;
-  font-weight: 600;
-  line-height: 1;
-}
-
 .overlay-main {
   flex: 1;
   display: grid;
@@ -4398,37 +4550,6 @@ function downloadComfyWorkflow(workflow) {
   height: 100%;
   min-height: 0;
   user-select: none;
-}
-
-.overlay-canvas-copy {
-  position: absolute;
-  top: calc(var(--topbar-height) + 12px);
-  right: calc(16px + var(--sidebar-width));
-  border: 1px solid rgba(var(--v-theme-on-dark-surface), 0.2);
-  background: rgba(var(--v-theme-shadow), 0.4);
-  color: rgb(var(--v-theme-on-dark-surface));
-  padding: 6px 12px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.75rem;
-  cursor: pointer;
-  z-index: 6000;
-}
-
-.overlay-canvas-copy:hover {
-  background: rgba(var(--v-theme-shadow), 0.55);
-}
-
-.overlay-canvas-copy:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.overlay-canvas-copy.hidden {
-  opacity: 0;
-  pointer-events: none;
 }
 
 .overlay-media {
@@ -4517,7 +4638,7 @@ function downloadComfyWorkflow(workflow) {
 .zoom-hud {
   position: absolute;
   bottom: 16px;
-  right: calc(16px + var(--sidebar-width));
+  left: calc(16px + var(--filmstrip-rail-width, 0px));
   padding: 4px 10px;
   border-radius: 999px;
   background: rgba(var(--v-theme-shadow), 0.55);
@@ -4525,7 +4646,7 @@ function downloadComfyWorkflow(workflow) {
   font-size: 0.75rem;
   transition:
     opacity 0.2s ease,
-    right 0.2s ease;
+    left 0.2s ease;
   z-index: 4;
 }
 
@@ -5187,6 +5308,42 @@ function downloadComfyWorkflow(workflow) {
   color: rgba(255, 255, 255, 0.45);
 }
 
+@media (max-width: 900px) {
+  .overlay-sidebar {
+    display: none !important;
+  }
+
+  .overlay-topbar-sidebar-toggle {
+    display: none !important;
+  }
+
+  .overlay-close span {
+    display: none;
+  }
+
+  .overlay-comfy-activator-label {
+    display: none;
+  }
+
+  .overlay-title {
+    display: none;
+  }
+
+  .overlay-character-names {
+    display: none;
+  }
+
+  :deep(.add-to-set-label) {
+    display: none;
+  }
+
+  .zoom-btn {
+    min-width: 32px;
+    width: 32px;
+    padding: 6px;
+  }
+}
+
 @media (max-width: 720px) {
   .overlay-shell.sidebar-open {
     --sidebar-width: 78%;
@@ -5217,7 +5374,7 @@ function downloadComfyWorkflow(workflow) {
     min-height: 0;
     flex-direction: row;
     overflow: visible;
-    width: auto;
+    width: 100%;
     transform: none !important;
     transition: none;
   }
@@ -5230,8 +5387,11 @@ function downloadComfyWorkflow(workflow) {
   }
 
   .filmstrip-thumb {
-    width: 80px;
-    flex: 0 0 auto;
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+    height: 100%;
+    aspect-ratio: unset;
   }
 
   .filmstrip-thumb img {

@@ -2417,7 +2417,9 @@ function closeOverlay() {
   overlayOpen.value = false;
   overlayImageId.value = null;
   overlayInitialExpandedStackIds.value = [];
-  comfyuiPendingOverlayRefresh.value = false;
+  if (comfyuiRunner.value?.comfyuiPendingOverlayRefresh) {
+    comfyuiRunner.value.comfyuiPendingOverlayRefresh.value = false;
+  }
 }
 
 // ============================================================

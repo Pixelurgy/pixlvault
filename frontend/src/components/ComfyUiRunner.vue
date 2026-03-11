@@ -777,6 +777,7 @@ defineExpose({
   clientId,
   progress,
   progressPercent,
+  comfyuiPendingOverlayRefresh,
 });
 </script>
 
