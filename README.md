@@ -3,7 +3,7 @@
   <img src="website/assets/ScreenshotGrid.jpg" alt="PixlStash Screenshot" width="800"/>
 </p>
 
-PixlStash is a local picture library server for organizing, filtering, and reviewing large image collections.
+PixlStash is a local picture library server for organizing, filtering, and reviewing large image collections. It was just renamed from PixlVault due to name conflicts.
 
 It provides:
 
