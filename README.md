@@ -80,7 +80,7 @@ Requirements:
 Steps:
 
 ```bash
-git clone https://github.com/Pixelurgy/pixlstash.git
+git clone https://github.com/pikselkroken/pixlstash.git
 cd pixlstash
 
 python -m venv .venv
@@ -160,7 +160,7 @@ docker run -d \
   -p 9537:9537 \
   -v pixlstash-home:/home/pixlstash \
   --name pixlstash \
-  ghcr.io/pixelurgy/pixlstash:latest
+  ghcr.io/pikselkroken/pixlstash:latest
 ```
 
 Open `http://localhost:9537` in your browser.
@@ -170,12 +170,12 @@ All data (images, database, config, downloaded models) is stored in the `pixlsta
 To update to the latest release:
 
 ```bash
-docker pull ghcr.io/pixelurgy/pixlstash:latest
+docker pull ghcr.io/pikselkroken/pixlstash:latest
 docker rm -f pixlstash
 # re-run the docker run command above
 ```
 
-To pin to a specific release, replace `latest` with a version tag, e.g. `ghcr.io/pixelurgy/pixlstash:0.9.1`.
+To pin to a specific release, replace `latest` with a version tag, e.g. `ghcr.io/pikselkroken/pixlstash:0.9.1`.
 
 #### Optional: docker-compose.yml
 
@@ -184,7 +184,7 @@ If you prefer Compose for easier management:
 ```yaml
 services:
   pixlstash:
-    image: ghcr.io/pixelurgy/pixlstash:latest
+    image: ghcr.io/pikselkroken/pixlstash:latest
     runtime: nvidia
     ports:
       - "9537:9537"
@@ -212,7 +212,7 @@ docker compose pull && docker compose up -d
 Use this if you need a custom build or want to run unreleased changes.
 
 ```bash
-git clone https://github.com/Pixelurgy/pixlstash.git
+git clone https://github.com/pikselkroken/pixlstash.git
 cd pixlstash
 
 docker compose up --build

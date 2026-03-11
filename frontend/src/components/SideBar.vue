@@ -1137,7 +1137,7 @@ defineExpose({ refreshSidebar, openSettingsDialog, startLocalImport });
       <div class="sidebar-brand-left">
         <a
           v-if="!props.collapsed"
-          href="https://pixelurgy.github.io/pixlstash/"
+          href="https://pikselkroken.github.io/pixlstash/"
           target="_blank"
           rel="noopener noreferrer"
           class="sidebar-brand-logo-link"

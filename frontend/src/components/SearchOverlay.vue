@@ -17,7 +17,7 @@
           outlined
           clearable
           autocomplete="off"
-          name="pixelurgy_search_unique"
+          name="pikselkroken_search_unique"
           @click:clear="clearInput"
           append-icon="mdi-magnify"
           @click:append="emitSearch"

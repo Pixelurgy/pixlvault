@@ -639,7 +639,7 @@ def test_version_latest_with_newer_version():
             data = response.json()
             assert data["latest_version"] == "99.0.0"
             assert data["release_url"] == (
-                "https://pixelurgy.github.io/pixlstash/upgrade"
+                "https://pikselkroken.github.io/pixlstash/upgrade"
             )
     gc.collect()
     log_resources("END test_version_latest_with_newer_version")

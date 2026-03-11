@@ -390,7 +390,7 @@ class Server:
             f"  ╔{_b}╗\n"
             f"  ║{'  PixlStash  v' + version:<{_w}}║\n"
             f"  ╠{_b}╣\n"
-            f"  ║{'  GitHub : https://github.com/Pixelurgy/pixlstash':<{_w}}║\n"
+            f"  ║{'  GitHub : https://github.com/pikselkroken/pixlstash':<{_w}}║\n"
             f"  ║{'  Server : ' + server_url:<{_w}}║\n"
             f"  ╚{_b}╝\n"
         )
@@ -715,7 +715,7 @@ class Server:
         async def read_latest_version():
             latest = self._latest_version
             release_url = (
-                "https://pixelurgy.github.io/pixlstash/upgrade" if latest else None
+                "https://pikselkroken.github.io/pixlstash/upgrade" if latest else None
             )
             return {"latest_version": latest, "release_url": release_url}
 

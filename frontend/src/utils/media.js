@@ -1,4 +1,4 @@
-// media.js - Shared media/file helpers for Pixelurgy Vault frontend
+// media.js - Shared media/file helpers for PixlStash frontend
 
 export const PIL_IMAGE_EXTENSIONS = [
   'jpg',  'jpeg', 'png', 'bmp',  'gif', 'tiff', 'tif',  'webp', 'ppm', 'pgm',

@@ -68,10 +68,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://pixelurgy.github.io/pixlstash"
-Repository = "https://github.com/Pixelurgy/pixlstash"
-"Bug Tracker" = "https://github.com/Pixelurgy/pixlstash/issues"
-Changelog = "https://github.com/Pixelurgy/pixlstash/releases"
+Homepage = "https://pikselkroken.github.io/pixlstash"
+Repository = "https://github.com/pikselkroken/pixlstash"
+"Bug Tracker" = "https://github.com/pikselkroken/pixlstash/issues"
+Changelog = "https://github.com/pikselkroken/pixlstash/releases"
 
 [project.optional-dependencies]
 test = [
