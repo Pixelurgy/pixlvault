@@ -1663,6 +1663,8 @@ def create_router(server) -> APIRouter:
             ".bmp",
             ".tiff",
             ".tif",
+            ".heic",
+            ".heif",
             ".mp4",
             ".webm",
             ".mov",
