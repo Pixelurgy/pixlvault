@@ -490,6 +490,21 @@
               <code>ghcr.io/pikselkroken/pixlstash:0.9.5</code>.
             </div>
 
+            <div class="method-info">
+              💡 To have the container start automatically on boot (and restart
+              if it crashes), add <code>--restart unless-stopped</code> to your
+              <code>docker run</code> command, right after <code>-d</code>:
+              <div class="cmd-block" style="margin-top: 10px">
+                <code>--restart unless-stopped</code>
+                <button
+                  class="copy-btn"
+                  data-copy="--restart unless-stopped"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+
             <div class="divider"></div>
 
             <div class="step">
@@ -707,6 +722,69 @@ sudo systemctl restart docker"
               hundred MB). An internet connection is required this first time —
               subsequent starts use the cached models.
             </div>
+
+            <div class="divider"></div>
+
+            <div class="step">
+              <p class="sub-heading">Run as a systemd service (Linux)</p>
+              <p class="step-note">
+                To have PixlStash start automatically on boot, create a systemd
+                unit file. Replace <code>YOUR_USERNAME</code> and
+                <code>/path/to/venv</code> with your actual values.
+              </p>
+              <div class="cmd-block">
+                <code
+                  >[Unit]<br />
+                  Description=PixlStash Server<br />
+                  After=network.target<br />
+                  <br />
+                  [Service]<br />
+                  Type=simple<br />
+                  User=YOUR_USERNAME<br />
+                  ExecStart=/path/to/venv/bin/pixlstash-server<br />
+                  Restart=on-failure<br />
+                  RestartSec=5<br />
+                  <br />
+                  [Install]<br />
+                  WantedBy=multi-user.target</code
+                >
+                <button
+                  class="copy-btn"
+                  data-copy="[Unit]
+Description=PixlStash Server
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+ExecStart=/path/to/venv/bin/pixlstash-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target"
+                >
+                  Copy
+                </button>
+              </div>
+              <p class="step-note" style="margin-top: 12px">
+                Save it to
+                <code>/etc/systemd/system/pixlstash.service</code>, then enable
+                and start it:
+              </p>
+              <div class="cmd-block">
+                <code
+                  >sudo systemctl daemon-reload &amp;&amp; sudo systemctl enable
+                  --now pixlstash</code
+                >
+                <button
+                  class="copy-btn"
+                  data-copy="sudo systemctl daemon-reload && sudo systemctl enable --now pixlstash"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -825,6 +903,70 @@ cd .."
               💡 On first startup PixlStash downloads AI model weights (several
               hundred MB). An internet connection is required this first time —
               subsequent starts use the cached models.
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="step">
+              <p class="sub-heading">Run as a systemd service (Linux)</p>
+              <p class="step-note">
+                To have PixlStash start automatically on boot, create a systemd
+                unit file. Replace <code>YOUR_USERNAME</code> and
+                <code>/path/to/venv</code> with your actual values (the path to
+                the <code>venv</code> directory you created in step 2).
+              </p>
+              <div class="cmd-block">
+                <code
+                  >[Unit]<br />
+                  Description=PixlStash Server<br />
+                  After=network.target<br />
+                  <br />
+                  [Service]<br />
+                  Type=simple<br />
+                  User=YOUR_USERNAME<br />
+                  ExecStart=/path/to/venv/bin/pixlstash-server<br />
+                  Restart=on-failure<br />
+                  RestartSec=5<br />
+                  <br />
+                  [Install]<br />
+                  WantedBy=multi-user.target</code
+                >
+                <button
+                  class="copy-btn"
+                  data-copy="[Unit]
+Description=PixlStash Server
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+ExecStart=/path/to/venv/bin/pixlstash-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target"
+                >
+                  Copy
+                </button>
+              </div>
+              <p class="step-note" style="margin-top: 12px">
+                Save it to
+                <code>/etc/systemd/system/pixlstash.service</code>, then enable
+                and start it:
+              </p>
+              <div class="cmd-block">
+                <code
+                  >sudo systemctl daemon-reload &amp;&amp; sudo systemctl enable
+                  --now pixlstash</code
+                >
+                <button
+                  class="copy-btn"
+                  data-copy="sudo systemctl daemon-reload && sudo systemctl enable --now pixlstash"
+                >
+                  Copy
+                </button>
+              </div>
             </div>
 
             <div class="divider"></div>
