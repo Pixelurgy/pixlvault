@@ -13,6 +13,8 @@ It provides:
 - Character and set organization
 - Local storage of your library data
 - Simple keyboard shortcuts for scoring, selection, deletion and navigation.
+- Integration with ComfyUI for running workflows on selected images within PixlStash.
+- Plugin system for defining new filter operations that can be performed on a set of images.
 
 PixlStash runs on your machine and serves the UI at a local web address.
 
