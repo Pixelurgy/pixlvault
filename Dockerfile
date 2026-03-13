@@ -109,6 +109,10 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 USER pixlstash
 
+# Ensure $HOME always points at the mounted volume regardless of which UID
+# --user maps to at runtime (the UID may match a different user in /etc/passwd).
+ENV HOME=/home/pixlstash
+
 # Volume for persistent data
 VOLUME ["/home/pixlstash"]
 
@@ -238,6 +242,10 @@ USER root
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 USER pixlstash
+
+# Ensure $HOME always points at the mounted volume regardless of which UID
+# --user maps to at runtime (the UID may match a different user in /etc/passwd).
+ENV HOME=/home/pixlstash
 
 # Volume for persistent data — mount /home/pixlstash to persist config, images,
 # downloaded models, and the database across container restarts.
