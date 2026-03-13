@@ -21,6 +21,7 @@ jobs:
       - name: Fetch metrics
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          METRICS_TOKEN: ${{ secrets.METRICS_TOKEN }}
         run: python .github/scripts/collect_metrics.py
 
       - name: Commit updated history

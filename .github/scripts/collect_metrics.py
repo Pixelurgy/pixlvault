@@ -16,8 +16,9 @@ PYPI_PACKAGE = "pixlstash"
 HISTORY_PATH = "metrics/history.json"
 
 
-def gh_get(path):
-    token = os.environ["GITHUB_TOKEN"]
+def gh_get(path, token=None):
+    if token is None:
+        token = os.environ["GITHUB_TOKEN"]
     req = urllib.request.Request(
         f"https://api.github.com{path}",
         headers={
@@ -45,7 +46,16 @@ def fetch_stars_and_forks():
 
 
 def fetch_clones_today():
-    data = gh_get(f"/repos/{OWNER}/{REPO}/traffic/clones?per=day")
+    # Traffic API requires a PAT with repo scope (GITHUB_TOKEN is insufficient).
+    token = os.environ.get("METRICS_TOKEN")
+    if not token:
+        print("WARNING: METRICS_TOKEN not set — skipping clone traffic.")
+        return {"count": None, "uniques": None}
+    try:
+        data = gh_get(f"/repos/{OWNER}/{REPO}/traffic/clones?per=day", token=token)
+    except urllib.error.HTTPError as e:
+        print(f"WARNING: Could not fetch clone traffic ({e}) — skipping.")
+        return {"count": None, "uniques": None}
     today = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
     for entry in data.get("clones", []):
         if entry["timestamp"] == today:
