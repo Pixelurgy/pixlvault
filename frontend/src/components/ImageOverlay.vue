@@ -3310,12 +3310,15 @@ function preloadAdjacentImages() {
   const candidates = [];
   if (idx + 1 < images.length) candidates.push(images[idx + 1]);
   if (idx - 1 >= 0) candidates.push(images[idx - 1]);
-  _preloadImages = candidates.map((img) => {
+  _preloadImages = candidates.flatMap((img) => {
+    // Only preload still images — video files are large; let the browser
+    // fetch them on demand rather than pre-requesting gigabytes of video.
+    if (isSupportedVideoFile(getOverlayFormat(img))) return [];
     const url = buildMediaUrl({ backendUrl: backendUrl.value, image: img });
-    if (!url) return null;
+    if (!url) return [];
     const probe = new Image();
     probe.src = url;
-    return probe;
+    return [probe];
   });
 }
 

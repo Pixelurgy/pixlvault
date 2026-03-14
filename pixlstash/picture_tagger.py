@@ -61,6 +61,20 @@ def _env_float(name: str, default: float | None) -> float | None:
         return default
 
 
+def _from_pretrained_local_first(cls, model_name, **kwargs):
+    """Load a HuggingFace model/processor from local cache when possible.
+
+    Tries ``local_files_only=True`` first so no network requests are made
+    when the model is already cached.  Falls back to a normal (online) load
+    only on the first run, when the files aren't present yet.
+    """
+    try:
+        return cls.from_pretrained(model_name, local_files_only=True, **kwargs)
+    except OSError:
+        logger.info("Downloading %s for the first time...", model_name)
+        return cls.from_pretrained(model_name, **kwargs)
+
+
 DEFAULT_WD14_TAGGER_REPO = "SmilingWolf/wd-convnext-tagger-v3"
 FILES = ["keras_metadata.pb", "saved_model.pb", "selected_tags.csv"]
 FILES_ONNX = ["model.onnx"]
@@ -71,8 +85,8 @@ MODEL_DIR = os.path.join(user_data_dir("pixlstash"), "downloaded_models")
 BATCH_SIZE = 1
 MAX_CONCURRENT_IMAGES_GPU = _env_int("PIXLSTASH_TAGGER_MAX_CONCURRENT_GPU", 64)
 MAX_CONCURRENT_IMAGES_CPU = _env_int("PIXLSTASH_TAGGER_MAX_CONCURRENT_CPU", 8)
-FLORENCE_BATCH_SIZE_GPU = 4
-FLORENCE_BATCH_SIZE_CPU = 2
+FLORENCE_BATCH_SIZE_GPU = _env_int("PIXLSTASH_FLORENCE_BATCH_GPU", 32)
+FLORENCE_BATCH_SIZE_CPU = _env_int("PIXLSTASH_FLORENCE_BATCH_CPU", 2)
 TAGGER_DATALOADER_TIMEOUT = 30
 GENERAL_THRESHOLD = 0.8
 UNDESIRED_TAGS = "solo, general, male_focus, meme, sensitive"
@@ -152,10 +166,15 @@ class PictureTagger:
         if self._device == "cuda":
             providers = ort.get_available_providers()
             if "CUDAExecutionProvider" not in providers:
+                # Only the WD14 ONNX tagger needs CUDAExecutionProvider; PyTorch
+                # models (Florence, CLIP, SentenceTransformer) work fine without
+                # it.  Log a note here but keep self._device as "cuda" — the ONNX
+                # loader at model-init time already has its own provider fallback.
                 logger.warning(
-                    "No GPU ort providers available, forcing CPUExecutionProvider"
+                    "CUDAExecutionProvider unavailable for onnxruntime "
+                    "(WD14 tagger will use CPU; all PyTorch models still use CUDA). "
+                    "Fix with: pip uninstall -y onnxruntime && pip install onnxruntime-gpu"
                 )
-                self._device = "cpu"
 
         if self._device == "cpu" and not PictureTagger.FORCE_CPU:
             if torch.cuda.is_available():
@@ -806,14 +825,16 @@ class PictureTagger:
         if not isinstance(device, torch.device):
             device = torch.device(device)
 
-        self._florence_processor = Florence2Processor.from_pretrained(
+        self._florence_processor = _from_pretrained_local_first(
+            Florence2Processor,
             self._florence_model_name,
         )
 
         # Try SDPA first, fall back to eager if not supported
         attn_impl = "sdpa"
         try:
-            self._florence_model = Florence2ForConditionalGeneration.from_pretrained(
+            self._florence_model = _from_pretrained_local_first(
+                Florence2ForConditionalGeneration,
                 self._florence_model_name,
                 torch_dtype=dtype,
                 attn_implementation=attn_impl,
@@ -821,7 +842,8 @@ class PictureTagger:
         except (TypeError, AttributeError) as e:
             logger.debug(f"SDPA not supported, falling back to eager attention: {e}")
             attn_impl = "eager"
-            self._florence_model = Florence2ForConditionalGeneration.from_pretrained(
+            self._florence_model = _from_pretrained_local_first(
+                Florence2ForConditionalGeneration,
                 self._florence_model_name,
                 torch_dtype=dtype,
                 attn_implementation=attn_impl,
@@ -1279,6 +1301,10 @@ class PictureTagger:
         self._custom_model = self._build_custom_tagger_model(arch, len(labels))
         self._custom_model.load_state_dict(state_dict)
         self._custom_model.to(self._custom_device)
+        # Normalise to FP32: weights from safetensors may be FP16 while the
+        # freshly-built classifier head stays FP32, creating mixed-precision
+        # biases that cause "Input type (c10::Half) and bias type (float)" errors.
+        self._custom_model.float()
         self._custom_model.eval()
         self._custom_transform_cache = {}
         self._custom_transform = self._build_custom_transform(
@@ -1597,7 +1623,7 @@ class PictureTagger:
             inputs = torch.stack(batch_tensors)
             custom_device = getattr(self, "_custom_device", self._device)
             try:
-                inputs = inputs.to(custom_device)
+                inputs = inputs.to(custom_device).float()
                 with torch.inference_mode():
                     logits = self._custom_model(inputs)
                     probs = torch.sigmoid(logits).cpu().numpy()
@@ -1611,7 +1637,7 @@ class PictureTagger:
                     )
                     if self._reload_custom_tagger_on_cpu():
                         logger.warning("Custom tagger is now running on CPU.")
-                        inputs = inputs.to("cpu")
+                        inputs = inputs.to("cpu").float()
                         with torch.inference_mode():
                             logits = self._custom_model(inputs)
                             probs = torch.sigmoid(logits).cpu().numpy()
@@ -1989,7 +2015,13 @@ class PictureTagger:
         # Generate text embedding using SBERT
         sbert_model = getattr(self, "_sbert_model", None)
         if sbert_model is None:
-            sbert_model = SentenceTransformer("all-MiniLM-L6-v2", device=self._device)
+            try:
+                sbert_model = SentenceTransformer(
+                    "all-MiniLM-L6-v2", device=self._device, local_files_only=True
+                )
+            except OSError:
+                logger.info("Downloading all-MiniLM-L6-v2 for the first time...")
+                sbert_model = SentenceTransformer("all-MiniLM-L6-v2", device=self._device)
             self._sbert_model = sbert_model
 
         logger.debug(
@@ -2006,7 +2038,12 @@ class PictureTagger:
                 logger.warning(
                     f"SBERT embedding failed on CUDA: {e}. Falling back to CPU."
                 )
-                sbert_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+                try:
+                    sbert_model = SentenceTransformer(
+                        "all-MiniLM-L6-v2", device="cpu", local_files_only=True
+                    )
+                except OSError:
+                    sbert_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
                 self._sbert_model = sbert_model
                 logger.info("Falling back to CPU for SBERT embeddings.")
                 text_embeddings = sbert_model.encode(texts, show_progress_bar=False)

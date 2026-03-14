@@ -42,6 +42,17 @@ class TaskRunner:
     SPILLOVER_GRACE_SECONDS = 1.5
     SPILLOVER_TOLERANCE_MB = 256
 
+    # Cache nvidia-smi results: (timestamp, value). A fresh query is only made
+    # if the cached value is older than this many seconds, preventing all 4
+    # worker threads from spawning simultaneous nvidia-smi subprocesses.
+    _VRAM_CACHE_TTL_S = 1.5
+    _vram_cache_lock = threading.Lock()
+    _vram_cache_value: int = 0
+    _vram_cache_ts: float = 0.0
+    # Timeout for nvidia-smi calls: prevents workers from hanging indefinitely
+    # when nvidia-smi stalls under heavy GPU load.
+    _NVIDIA_SMI_TIMEOUT_S = 5
+
     def __init__(self, name: str = "TaskRunner", num_workers: int = 1):
         self._name = name
         self._num_workers = max(1, int(num_workers))
@@ -89,6 +100,7 @@ class TaskRunner:
                 ],
                 stderr=subprocess.DEVNULL,
                 text=True,
+                timeout=TaskRunner._NVIDIA_SMI_TIMEOUT_S,
             )
             totals = []
             for line in output.splitlines():
@@ -100,8 +112,24 @@ class TaskRunner:
         except Exception:
             return 0
 
-    @staticmethod
-    def _get_process_vram_mb() -> int:
+    @classmethod
+    def _get_process_vram_mb(cls) -> int:
+        """Return this process's VRAM usage in MB.
+
+        Results are cached for ``_VRAM_CACHE_TTL_S`` seconds so that
+        concurrent worker threads don't all spawn nvidia-smi at once, and so
+        that a stalled nvidia-smi (which can happen under heavy GPU load) only
+        blocks one thread rather than all of them.
+        """
+        now = time.perf_counter()
+        with cls._vram_cache_lock:
+            if now - cls._vram_cache_ts < cls._VRAM_CACHE_TTL_S:
+                return cls._vram_cache_value
+            # Set the timestamp far enough into the future to cover the full
+            # subprocess timeout, so concurrent threads don't race to spawn
+            # additional nvidia-smi processes while one is already in-flight.
+            cls._vram_cache_ts = now + cls._NVIDIA_SMI_TIMEOUT_S
+
         pid = os.getpid()
         try:
             output = subprocess.check_output(
@@ -112,6 +140,7 @@ class TaskRunner:
                 ],
                 stderr=subprocess.DEVNULL,
                 text=True,
+                timeout=cls._NVIDIA_SMI_TIMEOUT_S,
             )
             used_mb = 0
             for line in output.splitlines():
@@ -125,9 +154,21 @@ class TaskRunner:
                     continue
                 if line_pid == pid:
                     used_mb += line_used_mb
-            return used_mb
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "nvidia-smi timed out after %ss; reusing last VRAM reading.",
+                cls._NVIDIA_SMI_TIMEOUT_S,
+            )
+            with cls._vram_cache_lock:
+                return cls._vram_cache_value
         except Exception:
-            return 0
+            with cls._vram_cache_lock:
+                return cls._vram_cache_value
+
+        with cls._vram_cache_lock:
+            cls._vram_cache_value = used_mb
+            cls._vram_cache_ts = time.perf_counter()
+        return used_mb
 
     def _wait_for_vram_budget(self, task: BaseTask) -> int:
         """Wait until VRAM budget allows the task and return the MB reserved.

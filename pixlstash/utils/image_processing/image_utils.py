@@ -73,6 +73,9 @@ class ImageUtils:
         """Extract embedded EXIF and PNG metadata from an image file."""
         if not file_path or not os.path.exists(file_path):
             return {}
+        # Pillow cannot open video files — skip metadata extraction for them.
+        if VideoUtils.is_video_file(file_path):
+            return {}
         metadata = {}
         try:
             with Image.open(file_path) as img:
@@ -539,25 +542,40 @@ class ImageUtils:
             raise ValueError("Failed to generate thumbnail for image bytes")
 
         if is_video:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-                tmp.write(image_bytes)
-                tmp_path = tmp.name
-            cap = cv2.VideoCapture(tmp_path)
-            ret, frame = cap.read()
-            if not ret:
-                logger.error("Could not read first frame from video for thumbnail.")
-                raise ValueError("Failed to read first frame from video")
-            else:
+            # Use the real extension as the temp-file suffix so that cv2 picks
+            # the correct demuxer/codec (e.g. QuickTime for .mov).
+            video_suffix = f".{inferred_ext}" if inferred_ext else ".mp4"
+            tmp_path = None
+            cap = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    delete=False, suffix=video_suffix
+                ) as tmp:
+                    tmp.write(image_bytes)
+                    tmp_path = tmp.name
+                cap = cv2.VideoCapture(tmp_path)
+                ret, frame = cap.read()
+                if not ret:
+                    logger.error("Could not read first frame from video for thumbnail.")
+                    raise ValueError("Failed to read first frame from video")
                 height, width = frame.shape[:2]
                 thumbnail_bytes = ImageUtils.generate_thumbnail_bytes(frame)
                 if thumbnail_bytes is None:
                     raise ValueError("Failed to generate thumbnail for video")
-            cap.release()
+            finally:
+                if cap is not None:
+                    cap.release()
+                if tmp_path is not None and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError as rm_err:
+                        logger.warning(
+                            "Failed to remove video temp file %s: %s", tmp_path, rm_err
+                        )
             if inferred_ext:
                 img_format = inferred_ext.upper()
             else:
                 img_format = "MP4"
-            os.remove(tmp_path)
 
         if not picture_uuid:
             picture_uuid = str(uuid.uuid4()) + f".{img_format.lower()}"
