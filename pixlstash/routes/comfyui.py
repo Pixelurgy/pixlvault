@@ -928,8 +928,27 @@ def create_router(server) -> APIRouter:
         workflow_instance = _replace_placeholders(
             deepcopy(workflow_payload), replacements
         )
-        if seed_mode == "fixed" and fixed_seed is not None:
-            _apply_fixed_seed(workflow_instance, int(fixed_seed))
+        if seed_mode == "fixed":
+            if fixed_seed is None or (
+                isinstance(fixed_seed, str) and fixed_seed.strip() == ""
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid seed: when seed_mode is 'fixed', seed must be an integer between 0 and 4294967295.",
+                )
+            try:
+                seed_int = int(fixed_seed)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid seed: when seed_mode is 'fixed', seed must be an integer between 0 and 4294967295.",
+                )
+            if not (0 <= seed_int <= 2**32 - 1):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid seed: must be between 0 and 4294967295.",
+                )
+            _apply_fixed_seed(workflow_instance, seed_int)
         else:
             _randomize_seeds(workflow_instance)
 
