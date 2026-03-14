@@ -668,6 +668,8 @@ def create_router(server) -> APIRouter:
             try:
                 async for message in upstream:
                     await websocket.send_text(message)
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 pass
 
@@ -677,17 +679,23 @@ def create_router(server) -> APIRouter:
                     message = await websocket.receive_text()
                     if message:
                         await upstream.send(message)
+            except asyncio.CancelledError:
+                raise
             except WebSocketDisconnect:
                 pass
             except Exception:
                 pass
 
         try:
-            async with websockets.connect(ws_url, ping_interval=None) as upstream:
+            async with websockets.connect(
+                ws_url, ping_interval=None, close_timeout=2
+            ) as upstream:
                 await asyncio.gather(
                     forward_upstream(upstream),
                     forward_downstream(upstream),
                 )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             logger.warning("ComfyUI progress proxy failed: %s", exc)
         finally:
