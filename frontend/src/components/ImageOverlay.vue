@@ -3564,8 +3564,8 @@ const comfyMetadata = computed(() => {
 
   const workflowStats = workflow ? summarizeComfyWorkflow(workflow) : null;
   const isApiFormat =
-    !Array.isArray(workflow.nodes) &&
-    !Array.isArray(workflow.links) &&
+    !workflow.nodes &&
+    !workflow.links &&
     typeof workflow.last_node_id !== "number" &&
     typeof workflow.last_link_id !== "number";
 
