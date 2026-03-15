@@ -448,7 +448,9 @@ def create_router(server) -> APIRouter:
                     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                     image = Image.fromarray(frame_rgb)
                 else:
-                    image = Image.open(picture_path).convert("RGB")
+                    raw = Image.open(picture_path)
+                    raw.load()  # force HEIF/lazy decoders to materialise before conversion
+                    image = raw.convert("RGB").copy()  # detach from any HEIF CtxImage context
             except Exception:
                 raise HTTPException(
                     status_code=404, detail="Failed to crop face thumbnail"

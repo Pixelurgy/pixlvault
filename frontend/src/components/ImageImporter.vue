@@ -18,6 +18,8 @@ const emit = defineEmits([
 const importInProgress = ref(false);
 const importProgress = ref(0);
 const importTotal = ref(0);
+const uploadBytesUploaded = ref(0);
+const uploadBytesTotal = ref(0);
 const importError = ref(null);
 const importPhase = ref("");
 const cancelImport = ref(false);
@@ -28,9 +30,9 @@ let hideTimerId = null;
 const importPhaseMessage = computed(() => {
   switch (importPhase.value) {
     case "uploading":
-      return "Uploading images...";
+      return "Uploading...";
     case "processing":
-      return "Processing import...";
+      return "Importing...";
     case "done":
       return "Import complete!";
     case "duplicates":
@@ -43,6 +45,15 @@ const importPhaseMessage = computed(() => {
       return "";
   }
 });
+
+function formatBytes(bytes) {
+  if (!bytes) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 const showCancelButton = computed(
   () =>
@@ -93,7 +104,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function pollImportStatus(taskId, uploadedCount) {
+async function pollImportStatus(taskId, importProgressAccum, importTotalAccum) {
   const maxAttempts = 600;
   const intervalMs = 1000;
 
@@ -112,17 +123,10 @@ async function pollImportStatus(taskId, uploadedCount) {
     const serverTotal = statusRes?.data?.total ?? 0;
 
     importPhase.value = "processing";
-    // Use the real image count from the server (accounts for zip expansion).
-    // Total = one "unit" per uploaded file object (for the upload phase) +
-    //         the actual number of images the server is processing.
-    const totalUnits = uploadedCount + serverTotal;
-    if (totalUnits > importTotal.value) {
-      importTotal.value = totalUnits;
+    if (serverTotal > 0) {
+      importTotal.value = importTotalAccum + serverTotal;
     }
-    importProgress.value = Math.min(
-      importTotal.value,
-      uploadedCount + processed,
-    );
+    importProgress.value = importProgressAccum + processed;
 
     if (status === "completed") {
       return statusRes.data;
@@ -148,9 +152,9 @@ async function startImport(files, options = {}) {
   cancelImport.value = false;
   importInProgress.value = true;
   importProgress.value = 0;
-  // Use file-object count as a placeholder; pollImportStatus will update
-  // importTotal once the server reveals the real image count (e.g. from zips).
-  importTotal.value = files.length;
+  importTotal.value = 0;
+  uploadBytesUploaded.value = 0;
+  uploadBytesTotal.value = files.reduce((sum, f) => sum + (f.size || 0), 0);
   importError.value = null;
   importPhase.value = "uploading";
   currentImportController.value = null;
@@ -164,7 +168,9 @@ async function startImport(files, options = {}) {
       ? options.timeoutMs
       : null;
 
-  let uploadedCount = 0;
+  let uploadedBytesAccum = 0;
+  let importProgressAccum = 0;
+  let importTotalAccum = 0;
   let importedCount = 0;
   const allResults = [];
 
@@ -176,6 +182,7 @@ async function startImport(files, options = {}) {
       }
 
       const batch = files.slice(i, i + BATCH_SIZE);
+      const batchBytes = batch.reduce((sum, f) => sum + (f.size || 0), 0);
       const batchTimeoutMs =
         overrideTimeout ??
         Math.max(MIN_TIMEOUT_MS, batch.length * TIMEOUT_PER_FILE_MS);
@@ -205,6 +212,13 @@ async function startImport(files, options = {}) {
               timeout: batchTimeoutMs,
               headers: {
                 "Content-Type": "multipart/form-data", // Ensure this is set correctly
+              },
+              onUploadProgress: (progressEvent) => {
+                const loaded = progressEvent.loaded ?? 0;
+                uploadBytesUploaded.value = Math.min(
+                  uploadBytesTotal.value,
+                  uploadedBytesAccum + loaded,
+                );
               },
             },
           );
@@ -260,8 +274,8 @@ async function startImport(files, options = {}) {
         return;
       }
 
-      uploadedCount += batch.length;
-      importProgress.value = uploadedCount;
+      uploadedBytesAccum += batchBytes;
+      uploadBytesUploaded.value = uploadedBytesAccum;
       await nextTick();
 
       const taskId = res?.data?.task_id;
@@ -271,7 +285,11 @@ async function startImport(files, options = {}) {
       }
 
       importPhase.value = "processing";
-      const statusPayload = await pollImportStatus(taskId, uploadedCount);
+      const statusPayload = await pollImportStatus(
+        taskId,
+        importProgressAccum,
+        importTotalAccum,
+      );
       if (!statusPayload) {
         return;
       }
@@ -284,11 +302,11 @@ async function startImport(files, options = {}) {
         (r) => r.status === "success",
       ).length;
 
-      const processedCount = statusPayload.total ?? batch.length;
-      importProgress.value = Math.min(
-        importTotal.value,
-        uploadedCount + processedCount,
-      );
+      const batchTotal = statusPayload.total ?? batch.length;
+      importTotalAccum += batchTotal;
+      importProgressAccum += batchTotal;
+      importProgress.value = importProgressAccum;
+      importTotal.value = importTotalAccum;
       await nextTick();
     }
 
@@ -303,6 +321,7 @@ async function startImport(files, options = {}) {
     }
 
     importProgress.value = importTotal.value;
+    uploadBytesUploaded.value = uploadBytesTotal.value;
     currentImportController.value = null;
     cancelImport.value = false;
     hideTimerId = setTimeout(() => {
@@ -330,22 +349,48 @@ defineExpose({ startImport });
   <div v-if="importInProgress" class="import-progress-modal">
     <div class="import-progress-content">
       <div class="import-progress-title">{{ importPhaseMessage }}</div>
-      <div class="import-progress-bar-bg">
-        <div
-          class="import-progress-bar"
-          :style="{
-            width:
-              (importTotal ? (importProgress / importTotal) * 100 : 0) + '%',
-          }"
-        ></div>
+      <!-- Upload progress bar -->
+      <div class="import-progress-bar-section">
+        <div class="import-progress-bar-label">
+          Upload
+          {{ formatBytes(uploadBytesUploaded) }} /
+          {{ formatBytes(uploadBytesTotal) }}
+        </div>
+        <div class="import-progress-bar-bg">
+          <div
+            class="import-progress-bar upload-bar"
+            :style="{
+              width:
+                (uploadBytesTotal
+                  ? (uploadBytesUploaded / uploadBytesTotal) * 100
+                  : 0) + '%',
+            }"
+          ></div>
+        </div>
+      </div>
+      <!-- Import progress bar -->
+      <div class="import-progress-bar-section">
+        <div class="import-progress-bar-label">
+          <template v-if="importTotal > 0">
+            Import {{ importProgress }} / {{ importTotal }} images
+          </template>
+          <template v-else-if="importPhase === 'processing'">
+            Waiting for server...
+          </template>
+          <template v-else> Pending... </template>
+        </div>
+        <div class="import-progress-bar-bg">
+          <div
+            class="import-progress-bar import-bar"
+            :style="{
+              width:
+                (importTotal ? (importProgress / importTotal) * 100 : 0) + '%',
+            }"
+          ></div>
+        </div>
       </div>
       <div class="import-progress-label">
-        <template v-if="importPhase === 'uploading'">
-          Uploading {{ importProgress }} / {{ importTotal }}
-        </template>
-        <template v-else-if="importPhase === 'done'">
-          Import complete!
-        </template>
+        <template v-if="importPhase === 'done'"> Import complete! </template>
         <template v-else-if="importPhase === 'duplicates'">
           All files are duplicates.
         </template>
@@ -392,7 +437,7 @@ defineExpose({ startImport });
   padding: 32px 48px;
   border-radius: 16px;
   box-shadow: 0 4px 32px rgba(var(--v-theme-shadow), 0.65);
-  min-width: 320px;
+  min-width: 380px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -410,18 +455,40 @@ defineExpose({ startImport });
   background: rgba(var(--v-theme-on-surface), 0.2);
   border-radius: 9px;
   overflow: hidden;
-  margin-bottom: 16px;
+}
+
+.import-progress-bar-section {
+  width: 100%;
+  margin-bottom: 14px;
+}
+
+.import-progress-bar-label {
+  font-size: 0.9rem;
+  color: rgba(var(--v-theme-on-dark-surface), 0.75);
+  margin-bottom: 6px;
+  min-height: 1.2em;
 }
 
 .import-progress-bar {
   height: 100%;
+  border-radius: 9px 0 0 9px;
+  transition: width 0.3s ease;
+}
+
+.upload-bar {
+  background: linear-gradient(
+    90deg,
+    rgb(var(--v-theme-primary)) 0%,
+    rgb(var(--v-theme-secondary)) 100%
+  );
+}
+
+.import-bar {
   background: linear-gradient(
     90deg,
     rgb(var(--v-theme-warning)) 0%,
     rgb(var(--v-theme-accent)) 100%
   );
-  border-radius: 9px 0 0 9px;
-  transition: width 0.2s;
 }
 
 .import-progress-label {

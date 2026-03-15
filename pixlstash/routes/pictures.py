@@ -116,11 +116,18 @@ def _fetch_hidden_picture_ids(server, request: Request, picture_ids: list[int]):
     )
 
 
-def _create_picture_imports(server, uploaded_files, dest_folder):
+def _create_picture_imports(server, uploaded_files, dest_folder, progress_callback=None):
     """
     Given a list of (img_bytes, ext), create Picture objects for new images,
     skipping duplicates based on pixel_sha hash.
     Returns (shas, existing_map, new_pictures)
+
+    Args:
+        server: The server instance.
+        uploaded_files: List of (img_bytes, ext) tuples.
+        dest_folder: Destination folder for images.
+        progress_callback: Optional callable invoked after each image is written
+            to disk. Receives no arguments. Used for incremental progress tracking.
     """
 
     def create_sha(img_bytes):
@@ -144,21 +151,20 @@ def _create_picture_imports(server, uploaded_files, dest_folder):
     ]
 
     if importable:
-
-        def create_one_picture(args):
-            file_entry, sha = args
+        new_pictures = []
+        for file_entry, sha in importable:
             img_bytes, ext = file_entry
             pic_uuid = str(uuid.uuid4()) + ext
             logger.debug(f"Importing picture from uploaded bytes as id={pic_uuid}")
-            return ImageUtils.create_picture_from_bytes(
+            pic = ImageUtils.create_picture_from_bytes(
                 image_root_path=dest_folder,
                 image_bytes=img_bytes,
                 picture_uuid=pic_uuid,
                 pixel_sha=sha,
             )
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            new_pictures = list(executor.map(create_one_picture, importable))
+            new_pictures.append(pic)
+            if progress_callback is not None:
+                progress_callback()
     else:
         new_pictures = []
 
@@ -1883,9 +1889,19 @@ def create_router(server) -> APIRouter:
 
         def run_import_task(server):
             try:
+                task = server.import_tasks[task_id]
+
+                def _on_picture_written():
+                    task["processed"] = task.get("processed", 0) + 1
+
                 shas, existing_map, new_pictures = _create_picture_imports(
-                    server, uploaded_files, dest_folder
+                    server, uploaded_files, dest_folder, progress_callback=_on_picture_written
                 )
+
+                # Duplicates are instantly "processed" — credit them now so that
+                # the progress bar stays accurate even when most files are dupes.
+                duplicate_count_initial = sum(1 for sha in shas if sha in existing_map)
+                task["processed"] = len(new_pictures) + duplicate_count_initial
 
                 logger.debug(
                     f"Importing {len(new_pictures)} new pictures out of {len(uploaded_files)} uploaded."
