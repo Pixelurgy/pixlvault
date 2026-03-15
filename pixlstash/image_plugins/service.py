@@ -19,6 +19,88 @@ logger = get_logger(__name__)
 
 _VIDEO_FORMATS = {"MP4", "WEBM", "MOV", "AVI", "MKV"}
 
+# Standard TIFF/EXIF tag id for the Orientation field.
+_EXIF_ORIENTATION_TAG = 0x0112
+
+
+def _get_exif_bbox_transform(
+    file_path: str,
+    src_w: int,
+    src_h: int,
+) -> tuple[Any, int, int]:
+    """Return ``(transform, after_w, after_h)`` for the EXIF orientation of *file_path*.
+
+    ``transform`` is a callable ``bbox -> bbox`` that maps raw pixel coordinates
+    (as stored by the face-extraction worker which uses ``cv2.imread``) to the
+    coordinate space produced by ``PIL.ImageOps.exif_transpose``.  Returns
+    ``(None, src_w, src_h)`` when no orientation correction is needed.
+
+    ``after_w`` / ``after_h`` are the image dimensions **after** the EXIF
+    transform — identical to *src_w* / *src_h* for orientations that do not
+    swap axes, and swapped for 90 °/270 ° rotations.
+    """
+    try:
+        with Image.open(file_path) as img:
+            exif = img.getexif()
+            orientation = int(exif.get(_EXIF_ORIENTATION_TAG, 1)) if exif else 1
+    except Exception:
+        return None, src_w, src_h
+
+    # Orientation 1 (or missing): no transform.
+    if orientation == 1:
+        return None, src_w, src_h
+
+    # For each orientation we return the bbox transform and the post-transform
+    # image dimensions.  Orientations 5-8 swap width and height.
+    #
+    # Maths: for a continuous bbox [x1, y1, x2, y2] with x1<x2, y1<y2,
+    # apply the point transform to all four corners and take axis-aligned bounds.
+
+    if orientation == 2:  # FLIP_LEFT_RIGHT: (x,y) -> (W-x, y) — dims unchanged
+        def _t2(b: list[int]) -> list[int]:
+            x1, y1, x2, y2 = b
+            return [src_w - x2, y1, src_w - x1, y2]
+        return _t2, src_w, src_h
+
+    if orientation == 3:  # ROTATE_180: (x,y) -> (W-x, H-y) — dims unchanged
+        def _t3(b: list[int]) -> list[int]:
+            x1, y1, x2, y2 = b
+            return [src_w - x2, src_h - y2, src_w - x1, src_h - y1]
+        return _t3, src_w, src_h
+
+    if orientation == 4:  # FLIP_TOP_BOTTOM: (x,y) -> (x, H-y) — dims unchanged
+        def _t4(b: list[int]) -> list[int]:
+            x1, y1, x2, y2 = b
+            return [x1, src_h - y2, x2, src_h - y1]
+        return _t4, src_w, src_h
+
+    if orientation == 5:  # TRANSPOSE (flip+90°CCW): (x,y) -> (y, x) — swaps dims
+        def _t5(b: list[int]) -> list[int]:
+            x1, y1, x2, y2 = b
+            return [y1, x1, y2, x2]
+        return _t5, src_h, src_w
+
+    if orientation == 6:  # ROTATE_270 (90°CW): (x,y) -> (H-y, x) — swaps dims
+        def _t6(b: list[int]) -> list[int]:
+            x1, y1, x2, y2 = b
+            return [src_h - y2, x1, src_h - y1, x2]
+        return _t6, src_h, src_w
+
+    if orientation == 7:  # TRANSVERSE (flip+90°CW): (x,y) -> (H-y, W-x) — swaps dims
+        def _t7(b: list[int]) -> list[int]:
+            x1, y1, x2, y2 = b
+            return [src_h - y2, src_w - x2, src_h - y1, src_w - x1]
+        return _t7, src_h, src_w
+
+    if orientation == 8:  # ROTATE_90 (90°CCW): (x,y) -> (y, W-x) — swaps dims
+        def _t8(b: list[int]) -> list[int]:
+            x1, y1, x2, y2 = b
+            return [y1, src_w - x2, y2, src_w - x1]
+        return _t8, src_h, src_w
+
+    # Unknown orientation value — leave bboxes as-is.
+    return None, src_w, src_h
+
 
 def _load_input_images(
     server,
@@ -377,22 +459,37 @@ def _copy_face_associations(
             out_w = int(output_pic.width or 0) if output_pic else 0
             out_h = int(output_pic.height or 0) if output_pic else 0
 
-            # Ask the plugin for a bbox transform.  Plugins that apply a
-            # geometric operation (rotate, scale, …) return a callable;
-            # others return None and we fall back to simple ratio scaling.
+            # Step 1: account for the EXIF orientation applied by load_image_or_video.
+            # Face bboxes are in raw pixel space (cv2.imread ignores EXIF), but the
+            # plugin saw — and the output image contains — exif_transpose()'d pixels.
+            # We must first map bboxes through the same EXIF transform, then through
+            # whatever geometric transform the plugin applies.
+            exif_transform = None
+            inter_w, inter_h = src_w, src_h  # dimensions after EXIF transform
+            if src_w > 0 and src_h > 0 and source_pic is not None:
+                source_file = ImageUtils.resolve_picture_path(
+                    server.vault.image_root, source_pic.file_path
+                )
+                if source_file:
+                    exif_transform, inter_w, inter_h = _get_exif_bbox_transform(
+                        source_file, src_w, src_h
+                    )
+
+            # Step 2: ask the plugin for its geometric bbox transform, using the
+            # post-EXIF (intermediate) dimensions as the logical source size.
             bbox_transform = None
-            if plugin is not None and src_w > 0 and src_h > 0 and out_w > 0 and out_h > 0:
+            if plugin is not None and inter_w > 0 and inter_h > 0 and out_w > 0 and out_h > 0:
                 bbox_transform = plugin.get_bbox_transform(
                     params,
-                    (src_w, src_h),
+                    (inter_w, inter_h),
                     (out_w, out_h),
                 )
 
-            # Fallback: proportional scale when dimensions differ.
-            if bbox_transform is None and src_w > 0 and src_h > 0 and out_w > 0 and out_h > 0:
-                if src_w != out_w or src_h != out_h:
-                    scale_x = out_w / src_w
-                    scale_y = out_h / src_h
+            # Step 3: fallback — proportional scale when dimensions differ.
+            if bbox_transform is None and inter_w > 0 and inter_h > 0 and out_w > 0 and out_h > 0:
+                if inter_w != out_w or inter_h != out_h:
+                    scale_x = out_w / inter_w
+                    scale_y = out_h / inter_h
 
                     def _make_scale_transform(sx: float, sy: float):
                         def _transform(bbox: list[int]) -> list[int]:
@@ -414,10 +511,14 @@ def _copy_face_associations(
 
                 scaled_bbox = None
                 if face.bbox and len(face.bbox) == 4:
+                    # Apply exif transform first (raw → post-exif space),
+                    # then the plugin transform (post-exif → output space).
+                    b = face.bbox
+                    if exif_transform is not None:
+                        b = exif_transform(b)
                     if bbox_transform is not None:
-                        scaled_bbox = bbox_transform(face.bbox)
-                    else:
-                        scaled_bbox = list(face.bbox)
+                        b = bbox_transform(b)
+                    scaled_bbox = b
 
                 new_face = Face(
                     picture_id=output_id,
