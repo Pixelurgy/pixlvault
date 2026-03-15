@@ -489,20 +489,15 @@ class Quality(SQLModel, table=True):
         lo = max(0, bg_level - margin)
         hi = min(255, bg_level + margin)
         bg_fraction = float(hist[lo : hi + 1].sum()) / area
-        # Ramp from 0 below 0.50 to 1.0 at 0.80.  Landscapes are typically 0.10–0.45;
-        # a scanned document is typically 0.65–0.92.
-        bg_score = float(np.clip((bg_fraction - 0.50) / 0.30, 0.0, 1.0))
+        # Ramp from 0 below 0.60 to 1.0 at 0.90.  Textured natural photos (stone walls,
+        # foliage, fabric) typically land at 0.35–0.58; a scanned document at 0.70–0.92.
+        # The higher lower bound is critical: stone/brick walls produce a moderately
+        # dominant background colour but not as tight a peak as white paper.
+        bg_score = float(np.clip((bg_fraction - 0.60) / 0.30, 0.0, 1.0))
 
-        # Also check for a large near-white region — handles receipts photographed on a
-        # dark surface where the dominant histogram peak is the backdrop, not the paper.
-        # Ramp: 20 % paper coverage → score 0; 55 % coverage → score 1.
-        paper_fraction = float((gray > 160).sum()) / area
-        paper_score = float(np.clip((paper_fraction - 0.20) / 0.35, 0.0, 1.0))
-        bg_score = max(bg_score, paper_score)
-
-        # Early exit: no point counting components if the background isn't document-like.
-        if bg_score == 0.0:
-            return 0.0
+        # Early exit for light scenes: if the dominant background isn't document-like
+        # there is no point proceeding.  The paper_score boost is only meaningful in
+        # the dark-scene path below (bright document on dark backdrop).
 
         # --- Signal 2: character-component density ---
         # The binarisation strategy depends on whether the document background is light
@@ -510,9 +505,20 @@ class Quality(SQLModel, table=True):
         # (receipt laid on a table and photographed from above).
         if bg_level > 128:
             # Light background, dark text — standard case.
-            _, binary = cv2.threshold(
+            # Run Otsu first: the threshold value itself is the strongest discriminant.
+            thresh_val, binary = cv2.threshold(
                 gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
             )
+            # Genuine ink-on-white documents split at 130–190: large white spike (~240)
+            # vs dark ink / UI chrome (~0–80).  Mid-grey natural scenes (stone walls,
+            # pool decks) split at 80–125 — the two "halves" are just texture, not ink.
+            if thresh_val < 130:
+                return 0.0
+            # A very high Otsu split (≥ 140) is strong evidence of document bimodality
+            # — e.g. a PDF screenshot where phone chrome squeezes bg_fraction below 0.60.
+            # In that case waive the bg_score requirement; otherwise require it.
+            if bg_score == 0.0 and thresh_val < 140:
+                return 0.0
             fg_fraction = float(np.count_nonzero(binary)) / area
             # Sparse ink on paper: 2–40 % foreground.
             # Textured photos split ~50/50 (no true bimodal distribution) → reject.
@@ -521,6 +527,13 @@ class Quality(SQLModel, table=True):
             analysis_binary = binary
         else:
             # Dark scene with a bright document region.
+            # Check for a large near-white area — the paper is brighter than the backdrop.
+            # Ramp: 20 % paper coverage → 0; 55 % coverage → 1.
+            paper_fraction = float((gray > 160).sum()) / area
+            paper_score = float(np.clip((paper_fraction - 0.20) / 0.35, 0.0, 1.0))
+            bg_score = max(bg_score, paper_score)
+            if bg_score == 0.0:
+                return 0.0
             # Step 1: isolate the paper (bright) region.
             _, paper_mask = cv2.threshold(
                 gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU

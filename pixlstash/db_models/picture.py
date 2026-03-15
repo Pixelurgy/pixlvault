@@ -41,6 +41,7 @@ logger = get_logger(__name__)
 class SortMechanism:
     class Keys(Enum):
         DATE = auto()
+        IMPORTED_AT = auto()
         SCORE = auto()
         CHARACTER_LIKENESS = auto()
         PICTURE_STACKS = auto()
@@ -52,6 +53,10 @@ class SortMechanism:
         Keys.DATE: {
             "field": "created_at",
             "description": "Date Created",
+        },
+        Keys.IMPORTED_AT: {
+            "field": "imported_at",
+            "description": "Date Imported",
         },
         Keys.SCORE: {
             "field": "score",
@@ -619,6 +624,7 @@ class Picture(SQLModel, table=True):
             "format",
             "score",
             "created_at",
+            "imported_at",
             "stack_id",
             "stack_position",
         }

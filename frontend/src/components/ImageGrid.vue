@@ -1399,6 +1399,11 @@ function getThumbnailInfoItems(img) {
       key: "search_likeness",
       text: `Search likeness: ${img.likeness_score.toFixed(2)}`,
     });
+  } else if (selectedSort === "IMPORTED_AT" && img.imported_at) {
+    items.push({
+      key: "imported_at",
+      text: formatUserDate(img.imported_at, props.dateFormat),
+    });
   } else if (selectedSort.includes("DATE") && img.created_at) {
     items.push({
       key: "created_at",

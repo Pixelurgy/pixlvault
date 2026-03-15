@@ -933,6 +933,7 @@ const sortTypeIcon = computed(() => {
 
 const SORT_ICON_MAP = {
   DATE: "mdi-calendar",
+  IMPORTED_AT: "mdi-calendar-import",
   CHARACTER_LIKENESS: "mdi-account-search",
   SMART_SCORE: "mdi-brain",
   SCORE: "mdi-star",
