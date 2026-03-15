@@ -780,9 +780,10 @@ const comfyuiProgress = computed(
       message: "",
     },
 );
-const comfyuiProgressPercent = computed(
-  () => comfyuiRunner.value?.progressPercent?.value ?? 0,
-);
+const comfyuiProgressPercent = computed(() => {
+  const p = comfyuiProgress.value;
+  return Math.min(100, Math.max(0, Math.round(Number(p?.percent) || 0)));
+});
 
 function handleComfyuiRun(payload) {
   comfyuiRunner.value?.handleComfyuiRun(payload);
