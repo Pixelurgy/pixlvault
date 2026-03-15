@@ -293,6 +293,27 @@ class TaskRunner:
                 )
                 last_log_s = waited_s
 
+            # Escape hatch: if nothing is currently in flight (reserved_mb==0),
+            # waiting longer cannot help — the overflow comes from loaded models
+            # that won't be freed.  Pass the gate after a grace period so tasks
+            # are not blocked forever.
+            if reserved_mb == 0 and waited_s >= self.SPILLOVER_GRACE_SECONDS:
+                logger.warning(
+                    "Task %s (%s) VRAM gate escape: no tasks in flight after %.1fs; "
+                    "running despite overflow (used=%sMB estimated=%sMB budget=%sMB overflow=%sMB). "
+                    "VRAM baseline exceeds budget — models likely loaded into memory.",
+                    task.id,
+                    task.type,
+                    waited_s,
+                    used_mb,
+                    estimated_mb,
+                    budget_mb,
+                    overflow_mb,
+                )
+                with self._vram_gate_lock:
+                    self._vram_reserved_mb += estimated_mb
+                return estimated_mb
+
             if spillover_allowed and waited_s < self.SPILLOVER_GRACE_SECONDS:
                 time.sleep(0.1)
                 continue
